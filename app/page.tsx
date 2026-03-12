@@ -379,7 +379,7 @@ function prevMonth() {
   if (!loaded || !settings) {
     return (
       <main className="flex-1 bg-harbor-offwhite flex items-center justify-center">
-        <p className="text-harbor-navy/50">Loading your budget...</p>
+        <p className="text-harbor-navy/50">Dropping anchor...</p>
       </main>
     );
   }
@@ -417,7 +417,7 @@ function prevMonth() {
               </span>
             </div>
             <div className="hidden md:block text-right">
-              <label className="text-xs text-slate-400 block">Override Balance</label>
+              <label className="text-xs text-slate-400 block">Override Anchor</label>
               <input
                 type="number"
                 className="border-2 border-harbor-teal-light focus:border-harbor-teal rounded-lg px-3 py-2 w-36 text-right font-semibold text-slate-600 focus:outline-none transition-colors"
@@ -533,10 +533,9 @@ function prevMonth() {
                               placeholder="—"
                               value={val === 0 ? "" : val}
                               onChange={(e) => setAmount(item.id, wi, e.target.value === "" ? "" : Number(e.target.value))}
-                              className={`w-24 text-right rounded-lg border px-2 py-1 text-sm focus:outline-none focus:ring-2
-                                ${item.isIncome
-                                  ? "text-harbor-green border-l-2 border-l-harbor-green border-slate-200 focus:ring-harbor-teal/20"
-                                  : "text-harbor-red border-l-2 border-l-harbor-red border-slate-200 focus:ring-harbor-red/20"}`}
+                              className={item.isIncome
+                                ? "w-24 text-right rounded-lg border-l-2 border-l-harbor-green border-t border-r border-b border-slate-200 px-2 py-1 text-sm text-harbor-green focus:outline-none focus:ring-1 focus:ring-harbor-teal/20"
+                                : "w-24 text-right rounded-lg border-l-2 border-l-harbor-red border-t border-r border-b border-slate-200 px-2 py-1 text-sm text-harbor-red focus:outline-none focus:ring-1 focus:ring-harbor-red/20"}
                             />
                           ) : (
                             <span className="text-slate-200 text-xs">—</span>
@@ -551,7 +550,7 @@ function prevMonth() {
               {/* Summary section header */}
               <tr className="bg-harbor-teal-light/50">
                 <td colSpan={3 + weeks.length} className="px-3 py-1 text-xs text-harbor-navy/50 uppercase tracking-wide font-semibold">
-                  Summary
+                  Dock Summary
                 </td>
               </tr>
 
@@ -593,7 +592,7 @@ function prevMonth() {
               {/* Week net */}
               <tr className="bg-harbor-teal-light font-semibold">
                 <td className="px-3 py-2 sticky left-0 bg-harbor-teal-light text-xs uppercase tracking-wide text-harbor-navy" colSpan={2}>
-                  Week Net
+                  Net
                 </td>
                 <td />
                 {weekTotals.map((t, i) => (
@@ -606,7 +605,7 @@ function prevMonth() {
               {/* Projected balance */}
               <tr className="bg-harbor-navy text-white font-bold">
                 <td className="px-3 py-3 sticky left-0 bg-harbor-navy text-xs uppercase tracking-wide" colSpan={2}>
-                  Projected Balance
+                  Projected Anchor
                 </td>
                 <td />
                 {projectedBalances.map((b, i) => (
@@ -689,7 +688,7 @@ function prevMonth() {
             {/* Summary card */}
             <div className="bg-white rounded-2xl shadow-sm border border-harbor-teal-light overflow-hidden">
               <div className="bg-harbor-teal-light px-4 py-2">
-                <span className="font-semibold text-harbor-navy text-xs uppercase tracking-wide">Summary</span>
+                <span className="font-semibold text-harbor-navy text-xs uppercase tracking-wide">Dock Summary</span>
               </div>
               <div className="divide-y divide-slate-100">
                 {settings.creditCards.map((card) => {
@@ -708,13 +707,13 @@ function prevMonth() {
                   );
                 })}
                 <div className="flex items-center justify-between px-4 py-2.5">
-                  <span className="text-sm font-semibold text-harbor-navy uppercase tracking-wide">Week Net</span>
+                  <span className="text-sm font-semibold text-harbor-navy uppercase tracking-wide">Net</span>
                   <span className={`text-sm font-bold ${(weekTotals[activeWeekIdx] ?? 0) >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
                     {formatMoney(weekTotals[activeWeekIdx] ?? 0)}
                   </span>
                 </div>
                 <div className="flex items-center justify-between px-4 py-3 bg-harbor-navy rounded-b-2xl">
-                  <span className="text-sm font-bold text-white uppercase tracking-wide">Projected Balance</span>
+                  <span className="text-sm font-bold text-white uppercase tracking-wide">Projected Anchor</span>
                   <span className={`text-base font-bold ${(projectedBalances[activeWeekIdx] ?? 0) >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
                     {formatMoney(projectedBalances[activeWeekIdx] ?? 0)}
                   </span>

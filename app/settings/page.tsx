@@ -215,7 +215,7 @@ export default function Settings() {
                   ? "bg-harbor-navy text-white"
                   : "bg-white text-slate-600 hover:bg-harbor-teal-light shadow-sm border border-harbor-teal-light"}`}
             >
-              {tab === "items" ? "Line Items" : tab === "categories" ? "Categories" : "Credit Cards"}
+              {tab === "items" ? "Waves & Ripples" : tab === "categories" ? "Categories" : "Credit Cards"}
             </button>
           ))}
         </div>
