@@ -1,0 +1,36 @@
+
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 600">
+  <defs>
+    <linearGradient id="beam" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#5FA8D3" stop-opacity="0.9"/>
+      <stop offset="100%" stop-color="#5FA8D3" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Light beams -->
+  <polygon points="390,120 250,150 390,160" fill="url(#beam)"/>
+  <polygon points="410,120 550,150 410,160" fill="url(#beam)"/>
+
+  <!-- Lighthouse body -->
+  <polygon points="360,350 440,350 415,180 385,180" fill="#0A2540"/>
+
+  <!-- Lighthouse stripes -->
+  <polygon points="382,260 420,240 420,270 382,290" fill="#ffffff"/>
+  <polygon points="380,310 420,290 420,315 380,335" fill="#ffffff"/>
+
+  <!-- Lantern room -->
+  <rect x="385" y="150" width="30" height="25" fill="#0A2540"/>
+  <rect x="390" y="155" width="20" height="15" fill="#ffffff"/>
+
+  <!-- Roof -->
+  <polygon points="380,150 420,150 400,130" fill="#0A2540"/>
+
+  <!-- Waves -->
+  <path d="M280 360 Q350 340 420 360 T560 360" fill="none" stroke="#0A2540" stroke-width="20"/>
+  <path d="M300 380 Q370 360 440 380 T580 380" fill="none" stroke="#2B7BBB" stroke-width="20"/>
+
+  <!-- Text -->
+  <text x="400" y="470" font-family="Arial, Helvetica, sans-serif" font-size="70" text-anchor="middle" fill="#0A2540" letter-spacing="6">
+    HARBOR
+  </text>
+</svg>

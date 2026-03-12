@@ -11,6 +11,9 @@ const geistSans = Geist({
 export const metadata: Metadata = {
   title: "Harbor",
   description: "Plan ahead. Stay ahead.",
+  icons: {
+    icon: "/harbor-logo.svg",
+  },
 };
 
 export default function RootLayout({

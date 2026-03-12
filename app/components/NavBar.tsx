@@ -15,16 +15,15 @@ export default function NavBar() {
 
   return (
     <nav className="bg-harbor-navy text-white px-6 h-14 flex items-center justify-between shadow-lg flex-shrink-0">
-      <div className="flex items-center gap-3">
-        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-harbor-teal">
-          <path d="M12 2v6M8 6l4-4 4 4" />
-          <path d="M3 18c0-4 9-4 9-10M21 18c0-4-9-4-9-10" />
-          <path d="M2 22h20" />
-        </svg>
-        <div className="flex items-center gap-2">
-          <span className="font-bold text-lg tracking-tight">Harbor</span>
-          <span className="hidden sm:inline text-xs text-harbor-teal opacity-90">Plan ahead. Stay ahead.</span>
-        </div>
+      <div className="flex items-center gap-2">
+        <img
+          src="/harbor-logo.svg"
+          alt="Harbor"
+          className="h-8 w-auto brightness-0 invert"
+        />
+        <span className="font-bold text-white text-lg tracking-wide">
+          HARBOR
+        </span>
       </div>
       <div className="flex items-center gap-1">
         {NAV_LINKS.map(({ href, label }) => {
