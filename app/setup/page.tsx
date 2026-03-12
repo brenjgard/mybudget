@@ -189,7 +189,7 @@ export default function Setup() {
         {step === 1 && (
           <div className="space-y-6">
             <div>
-              <h2 className="text-2xl font-bold">Welcome! 👋</h2>
+              <h2 className="text-2xl font-bold">Welcome to Harbor 👋</h2>
               <p className="text-slate-500 mt-1">Let's set up your budget. First, what's your current checking account balance?</p>
             </div>
             <div>
@@ -257,7 +257,7 @@ export default function Setup() {
         {step === 3 && (
           <div className="space-y-6">
             <div>
-              <h2 className="text-2xl font-bold">Budget Categories 📋</h2>
+              <h2 className="text-2xl font-bold">Dock Categories 📋</h2>
               <p className="text-slate-500 mt-1">Pick the categories that apply to you, or add your own.</p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -297,7 +297,7 @@ export default function Setup() {
           <div className="space-y-5">
             <div>
               <h2 className="text-2xl font-bold">Line Items 📝</h2>
-              <p className="text-slate-500 mt-1">Add your income and expenses for each category.</p>
+              <p className="text-slate-500 mt-1">Add your waves and ripples for each category.</p>
             </div>
 
             {/* Category tabs */}
@@ -358,13 +358,13 @@ export default function Setup() {
                         onClick={() => setForm((p) => ({ ...p, isIncome: false }))}
                         className={`flex-1 py-2 rounded-xl text-sm font-medium border-2 ${!form.isIncome ? "bg-red-50 border-red-400 text-red-700" : "border-slate-200 text-slate-500"}`}
                       >
-                        Expense
+                        Ripple
                       </button>
                       <button
                         onClick={() => setForm((p) => ({ ...p, isIncome: true }))}
                         className={`flex-1 py-2 rounded-xl text-sm font-medium border-2 ${form.isIncome ? "bg-green-50 border-green-400 text-green-700" : "border-slate-200 text-slate-500"}`}
                       >
-                        Income
+                        Wave
                       </button>
                     </div>
                   </div>
@@ -464,7 +464,7 @@ export default function Setup() {
             </div>
             <div className="space-y-3">
               <div className="bg-slate-50 rounded-2xl p-4 flex justify-between">
-                <span className="text-slate-600">Starting Balance</span>
+                <span className="text-slate-600">Anchor</span>
                 <span className="font-bold text-green-700">${Number(checkingBalance).toLocaleString()}</span>
               </div>
               <div className="bg-slate-50 rounded-2xl p-4 flex justify-between">
@@ -480,11 +480,11 @@ export default function Setup() {
                 <span className="font-medium">{lineItems.length} items</span>
               </div>
               <div className="bg-slate-50 rounded-2xl p-4 flex justify-between">
-                <span className="text-slate-600">Income Sources</span>
+                <span className="text-slate-600">Wave Sources</span>
                 <span className="font-medium text-green-700">{lineItems.filter(i => i.isIncome).length}</span>
               </div>
               <div className="bg-slate-50 rounded-2xl p-4 flex justify-between">
-                <span className="text-slate-600">Expense Items</span>
+                <span className="text-slate-600">Ripple Items</span>
                 <span className="font-medium text-red-600">{lineItems.filter(i => !i.isIncome).length}</span>
               </div>
             </div>
@@ -516,7 +516,7 @@ export default function Setup() {
               onClick={finish}
               className="px-8 py-2 rounded-xl bg-harbor-green text-white hover:bg-[#24b047] font-semibold transition-colors"
             >
-              Launch My Budget 🚀
+              Set Sail 🚀
             </button>
           )}
         </div>

@@ -254,8 +254,8 @@ export default function Settings() {
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-sm">{item.name}</span>
                       {item.isIncome
-                        ? <span className="text-xs bg-harbor-green/15 text-harbor-green px-2 py-0.5 rounded-full font-medium">Income</span>
-                        : <span className="text-xs bg-harbor-red/10 text-harbor-red px-2 py-0.5 rounded-full font-medium">Expense</span>}
+                        ? <span className="text-xs bg-harbor-green/15 text-harbor-green px-2 py-0.5 rounded-full font-medium">Wave</span>
+                        : <span className="text-xs bg-harbor-red/10 text-harbor-red px-2 py-0.5 rounded-full font-medium">Ripple</span>}
                     </div>
                     <div className="text-xs text-slate-400 mt-0.5">
                       ${item.defaultAmount} · {FREQ_LABELS[item.frequency]} · {
@@ -317,13 +317,13 @@ export default function Settings() {
                         onClick={() => setEditingItem((p) => p && ({ ...p, isIncome: false }))}
                         className={`flex-1 py-2 rounded-xl text-sm font-medium border-2 ${!editingItem.isIncome ? "bg-harbor-red/10 border-harbor-red/50 text-harbor-red" : "bg-white border-slate-200 text-slate-500"}`}
                       >
-                        Expense
+                        Ripple
                       </button>
                       <button
                         onClick={() => setEditingItem((p) => p && ({ ...p, isIncome: true }))}
                         className={`flex-1 py-2 rounded-xl text-sm font-medium border-2 ${editingItem.isIncome ? "bg-harbor-green/10 border-harbor-green/50 text-harbor-green" : "bg-white border-slate-200 text-slate-500"}`}
                       >
-                        Income
+                        Wave
                       </button>
                     </div>
                   </div>

@@ -411,7 +411,7 @@ function prevMonth() {
           {/* Balance controls */}
           <div className="flex items-center gap-4">
             <div className="text-right">
-              <label className="text-xs text-slate-400 block">Starting Balance</label>
+              <label className="text-xs text-slate-400 block">Anchor</label>
               <span className={`font-semibold text-lg ${startingBalance >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
                 {formatMoney(startingBalance)}
               </span>
@@ -535,8 +535,8 @@ function prevMonth() {
                               onChange={(e) => setAmount(item.id, wi, e.target.value === "" ? "" : Number(e.target.value))}
                               className={`w-24 text-right rounded-lg border px-2 py-1 text-sm focus:outline-none focus:ring-2
                                 ${item.isIncome
-                                  ? "text-harbor-green bg-harbor-green/10 border-harbor-green/30 focus:ring-harbor-green/20"
-                                  : "text-harbor-red bg-harbor-red/10 border-harbor-red/30 focus:ring-harbor-red/20"}`}
+                                  ? "text-harbor-green border-l-2 border-l-harbor-green border-slate-200 focus:ring-harbor-teal/20"
+                                  : "text-harbor-red border-l-2 border-l-harbor-red border-slate-200 focus:ring-harbor-red/20"}`}
                             />
                           ) : (
                             <span className="text-slate-200 text-xs">—</span>
