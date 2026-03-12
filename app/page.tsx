@@ -150,6 +150,7 @@ export default function Home() {
 
   // ── Feature 5: Close Week tracking ───────────────────────────────────────
   const [closedWeeks, setClosedWeeks] = useState<Set<string>>(new Set());
+  const [activeWeekIdx, setActiveWeekIdx] = useState(0);
 
   // cardLookup available before early return (used in closeWeek)
   const cardLookup = useMemo(
@@ -210,6 +211,18 @@ export default function Home() {
     }
     setAmounts(next);
   }, [year, month, settings, loaded]);
+
+  // Auto-set active week to current week on mobile
+  useEffect(() => {
+    if (weeks.length === 0) return;
+    const today = new Date();
+    if (year === today.getFullYear() && month === today.getMonth()) {
+      const idx = weeks.findIndex((w) => today >= w.start && today <= w.end);
+      setActiveWeekIdx(idx >= 0 ? idx : 0);
+    } else {
+      setActiveWeekIdx(0);
+    }
+  }, [year, month, weeks.length]);
 
   const startingBalance = monthBalances[prevMonthKey] ?? currentBalance;
 
@@ -376,7 +389,7 @@ function prevMonth() {
       <div className="max-w-[1400px] mx-auto space-y-4">
 
         {/* Page controls */}
-        <div className="flex flex-wrap items-center justify-between gap-4 bg-white rounded-2xl p-4 shadow-sm border border-harbor-teal-light">
+        <div className="flex flex-col items-center md:flex-row md:flex-wrap md:justify-between gap-4 bg-white rounded-2xl p-4 shadow-sm border border-harbor-teal-light">
 
           {/* Month navigation */}
           <div className="flex items-center gap-2">
@@ -403,7 +416,7 @@ function prevMonth() {
                 {formatMoney(startingBalance)}
               </span>
             </div>
-            <div className="text-right">
+            <div className="hidden md:block text-right">
               <label className="text-xs text-slate-400 block">Override Balance</label>
               <input
                 type="number"
@@ -416,8 +429,8 @@ function prevMonth() {
 
         </div>
 
-        {/* Budget table */}
-        <div className="bg-white rounded-2xl shadow-sm overflow-x-auto border border-harbor-teal-light">
+        {/* Budget table — desktop only */}
+        <div className="hidden md:block bg-white rounded-2xl shadow-sm overflow-x-auto border border-harbor-teal-light">
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="bg-harbor-navy text-white">
@@ -605,6 +618,113 @@ function prevMonth() {
             </tbody>
           </table>
         </div>
+
+        {/* Mobile card view — visible only below md */}
+        {weeks.length > 0 && (
+          <div className="block md:hidden space-y-3">
+
+            {/* Week navigation */}
+            <div className="flex items-center justify-between bg-harbor-navy text-white rounded-2xl px-4 py-3">
+              <button
+                onClick={() => setActiveWeekIdx((i) => Math.max(0, i - 1))}
+                disabled={activeWeekIdx === 0}
+                className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 font-bold transition-colors"
+              >
+                ←
+              </button>
+              <div className="text-center">
+                <div className="text-xs opacity-60">Week {activeWeekIdx + 1} of {weeks.length}</div>
+                <div className="text-sm font-medium">{weeks[activeWeekIdx].label}</div>
+              </div>
+              <button
+                onClick={() => setActiveWeekIdx((i) => Math.min(weeks.length - 1, i + 1))}
+                disabled={activeWeekIdx === weeks.length - 1}
+                className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 font-bold transition-colors"
+              >
+                →
+              </button>
+            </div>
+
+            {/* Category cards */}
+            {settings.categories.map((cat) => {
+              const items = settings.lineItems.filter((i) => i.category === cat);
+              const applicableItems = items.filter((item) =>
+                itemAppliesToWeek(
+                  item.frequency,
+                  activeWeekIdx,
+                  weeks[activeWeekIdx].start,
+                  weeks[activeWeekIdx].end,
+                  item.anchorDate,
+                  item.anchorMonth,
+                  month
+                )
+              );
+              if (applicableItems.length === 0) return null;
+              return (
+                <div key={cat} className="bg-white rounded-2xl shadow-sm border border-harbor-teal-light overflow-hidden">
+                  <div className="bg-harbor-teal-light px-4 py-2">
+                    <span className="font-semibold text-harbor-navy text-xs uppercase tracking-wide">{cat}</span>
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    {applicableItems.map((item) => {
+                      const val = getAmount(item.id, activeWeekIdx);
+                      const displayVal = val !== "" && Number(val) !== 0 ? formatMoney(Number(val)) : "—";
+                      return (
+                        <div key={item.id} className="flex items-center justify-between px-4 py-2.5">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="text-sm text-slate-700 truncate">{item.name}</span>
+                            {item.isIncome && <span className="text-xs text-harbor-green font-medium flex-shrink-0">↑</span>}
+                          </div>
+                          <span className={`text-sm font-semibold flex-shrink-0 ml-2 ${item.isIncome ? "text-harbor-green" : "text-harbor-red"}`}>
+                            {displayVal}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Summary card */}
+            <div className="bg-white rounded-2xl shadow-sm border border-harbor-teal-light overflow-hidden">
+              <div className="bg-harbor-teal-light px-4 py-2">
+                <span className="font-semibold text-harbor-navy text-xs uppercase tracking-wide">Summary</span>
+              </div>
+              <div className="divide-y divide-slate-100">
+                {settings.creditCards.map((card) => {
+                  const total = creditTotals[activeWeekIdx]?.[card.id] ?? 0;
+                  if (total === 0) return null;
+                  const closeKey = `${year}-${month}-${card.id}-${activeWeekIdx}`;
+                  return (
+                    <div key={card.id} className="flex items-center justify-between px-4 py-2.5">
+                      <span className="text-sm font-semibold text-harbor-navy">{card.label}</span>
+                      {closedWeeks.has(closeKey) ? (
+                        <span className="text-xs text-harbor-green font-medium">✓ Closed</span>
+                      ) : (
+                        <span className="text-sm font-semibold text-harbor-navy">{formatMoney(total)}</span>
+                      )}
+                    </div>
+                  );
+                })}
+                <div className="flex items-center justify-between px-4 py-2.5">
+                  <span className="text-sm font-semibold text-harbor-navy uppercase tracking-wide">Week Net</span>
+                  <span className={`text-sm font-bold ${(weekTotals[activeWeekIdx] ?? 0) >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
+                    {formatMoney(weekTotals[activeWeekIdx] ?? 0)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between px-4 py-3 bg-harbor-navy rounded-b-2xl">
+                  <span className="text-sm font-bold text-white uppercase tracking-wide">Projected Balance</span>
+                  <span className={`text-base font-bold ${(projectedBalances[activeWeekIdx] ?? 0) >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
+                    {formatMoney(projectedBalances[activeWeekIdx] ?? 0)}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        )}
+
       </div>
     </main>
   );
