@@ -2,6 +2,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import {
   loadSettings, loadAmounts, saveAmounts,
   loadMonthBalances, saveMonthBalances,
@@ -389,37 +390,61 @@ function prevMonth() {
       <div className="max-w-[1400px] mx-auto space-y-4">
 
         {/* Page controls */}
-        <div className="flex flex-col items-center md:flex-row md:flex-wrap md:justify-between gap-4 bg-white rounded-2xl p-4 shadow-sm border border-harbor-teal-light">
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-harbor-teal-light space-y-3">
 
-          {/* Month navigation */}
-          <div className="flex items-center gap-2">
-            <button
-              onClick={prevMonth}
-              className="px-3 py-2 rounded-lg bg-harbor-teal-light hover:bg-harbor-teal/20 text-harbor-navy font-bold transition-colors"
-            >
-              ←
-            </button>
-            <span className="font-bold text-lg w-48 text-center text-harbor-navy">{monthName}</span>
-            <button
-              onClick={nextMonth}
-              className="px-3 py-2 rounded-lg bg-harbor-teal-light hover:bg-harbor-teal/20 text-harbor-navy font-bold transition-colors"
-            >
-              →
-            </button>
+          {/* Row 1: Month nav + quick-add */}
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="flex items-center gap-2">
+              <button
+                onClick={prevMonth}
+                className="w-9 h-9 flex items-center justify-center rounded-lg bg-harbor-teal-light hover:bg-harbor-teal/20 text-harbor-navy font-bold transition-colors"
+              >
+                ←
+              </button>
+              <span className="font-bold text-base md:text-lg w-44 text-center text-harbor-navy">{monthName}</span>
+              <button
+                onClick={nextMonth}
+                className="w-9 h-9 flex items-center justify-center rounded-lg bg-harbor-teal-light hover:bg-harbor-teal/20 text-harbor-navy font-bold transition-colors"
+              >
+                →
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <Link
+                href="/settings#waves"
+                className="flex items-center gap-1 px-3 py-2 rounded-lg border border-harbor-green/30 bg-harbor-green/5 text-harbor-green text-xs font-medium hover:bg-harbor-green/10 transition-colors"
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Add Wave
+              </Link>
+              <Link
+                href="/settings#ripples"
+                className="flex items-center gap-1 px-3 py-2 rounded-lg border border-harbor-red/30 bg-harbor-red/5 text-harbor-red text-xs font-medium hover:bg-harbor-red/10 transition-colors"
+              >
+                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Add Ripple
+              </Link>
+            </div>
           </div>
 
-          {/* Balance controls */}
-          <div className="flex items-center gap-4">
-            <div className="text-right">
+          {/* Row 2: Balance controls */}
+          <div className="flex items-center gap-4 flex-wrap">
+            <div>
               <label className="text-xs text-slate-400 block">Anchor</label>
               <span className={`font-semibold text-lg ${startingBalance >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
                 {formatMoney(startingBalance)}
               </span>
             </div>
-            <div className="hidden md:block text-right">
+            <div>
               <label className="text-xs text-slate-400 block">Override Anchor</label>
               <input
                 type="number"
+                inputMode="decimal"
                 className="border-2 border-harbor-teal-light focus:border-harbor-teal rounded-lg px-3 py-2 w-36 text-right font-semibold text-slate-600 focus:outline-none transition-colors"
                 value={currentBalance}
                 onChange={(e) => setCurrentBalance(Number(e.target.value))}
@@ -506,19 +531,35 @@ function prevMonth() {
                       </td>
                     )}
                     <td className="px-3 py-2 sticky left-28 bg-white border-r border-slate-100">
-                      {item.name}
-                      {item.isIncome && <span className="ml-1 text-xs text-harbor-green font-medium">↑</span>}
+                      <div className="flex items-center gap-1.5 group">
+                        <span>{item.name}</span>
+                        {item.isIncome && <span className="text-xs text-harbor-green font-medium">↑</span>}
+                        <Link
+                          href="/settings"
+                          className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-300 hover:text-harbor-teal flex-shrink-0"
+                          title="Edit in Settings"
+                        >
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                            <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                          </svg>
+                        </Link>
+                      </div>
                     </td>
                     <td className="px-2 py-2 text-center">
-                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
-                        item.paymentMethod === "checking"
-                          ? "bg-harbor-teal/15 text-harbor-teal"
-                          : "bg-harbor-navy/10 text-harbor-navy"
-                      }`}>
+                      <Link
+                        href="/settings"
+                        title="Change method in Settings"
+                        className={`text-xs px-2 py-0.5 rounded-full font-medium hover:ring-2 hover:ring-offset-1 transition-all ${
+                          item.paymentMethod === "checking"
+                            ? "bg-harbor-teal/15 text-harbor-teal hover:ring-harbor-teal/40"
+                            : "bg-harbor-navy/10 text-harbor-navy hover:ring-harbor-navy/30"
+                        }`}
+                      >
                         {item.paymentMethod === "checking"
                           ? "CHK"
                           : cardLookup[item.paymentMethod] ?? item.paymentMethod}
-                      </span>
+                      </Link>
                     </td>
                     {weeks.map((_, wi) => {
                       const applies = itemAppliesToWeek(item.frequency, wi, weeks[wi].start, weeks[wi].end, item.anchorDate, item.anchorMonth, month);
@@ -570,11 +611,11 @@ function prevMonth() {
                           closedWeeks.has(closeKey) ? (
                             <span className="text-xs text-harbor-green font-medium">✓ Closed</span>
                           ) : (
-                            <div className="inline-flex flex-col items-center gap-0.5">
+                            <div className="inline-flex flex-col items-center gap-1.5">
                               <span>{formatMoney(total)}</span>
                               <button
                                 onClick={() => closeWeek(card, wi)}
-                                className="text-xs text-harbor-navy/40 hover:text-harbor-teal transition-colors leading-none"
+                                className="text-xs bg-harbor-navy text-white hover:bg-harbor-teal px-2.5 py-0.5 rounded-full font-medium transition-colors leading-none whitespace-nowrap"
                               >
                                 Close Week
                               </button>
@@ -667,16 +708,26 @@ function prevMonth() {
                   <div className="divide-y divide-slate-100">
                     {applicableItems.map((item) => {
                       const val = getAmount(item.id, activeWeekIdx);
-                      const displayVal = val !== "" && Number(val) !== 0 ? formatMoney(Number(val)) : "—";
                       return (
-                        <div key={item.id} className="flex items-center justify-between px-4 py-2.5">
-                          <div className="flex items-center gap-1.5 min-w-0">
+                        <div key={item.id} className="flex items-center justify-between px-4 py-2.5 gap-3">
+                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
                             <span className="text-sm text-slate-700 truncate">{item.name}</span>
                             {item.isIncome && <span className="text-xs text-harbor-green font-medium flex-shrink-0">↑</span>}
                           </div>
-                          <span className={`text-sm font-semibold flex-shrink-0 ml-2 ${item.isIncome ? "text-harbor-green" : "text-harbor-red"}`}>
-                            {displayVal}
-                          </span>
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            min="0"
+                            step="0.01"
+                            placeholder="0"
+                            value={val === 0 ? "" : val}
+                            onChange={(e) => setAmount(item.id, activeWeekIdx, e.target.value === "" ? "" : Number(e.target.value))}
+                            className={`w-24 text-right rounded-lg border-l-2 px-2 py-2 text-sm flex-shrink-0 focus:outline-none focus:ring-1 ${
+                              item.isIncome
+                                ? "border-l-harbor-green border border-slate-200 text-harbor-green focus:ring-harbor-teal/20"
+                                : "border-l-harbor-red border border-slate-200 text-harbor-red focus:ring-harbor-red/20"
+                            }`}
+                          />
                         </div>
                       );
                     })}
@@ -696,12 +747,20 @@ function prevMonth() {
                   if (total === 0) return null;
                   const closeKey = `${year}-${month}-${card.id}-${activeWeekIdx}`;
                   return (
-                    <div key={card.id} className="flex items-center justify-between px-4 py-2.5">
+                    <div key={card.id} className="flex items-center justify-between px-4 py-3 gap-3">
                       <span className="text-sm font-semibold text-harbor-navy">{card.label}</span>
                       {closedWeeks.has(closeKey) ? (
                         <span className="text-xs text-harbor-green font-medium">✓ Closed</span>
                       ) : (
-                        <span className="text-sm font-semibold text-harbor-navy">{formatMoney(total)}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-harbor-navy">{formatMoney(total)}</span>
+                          <button
+                            onClick={() => closeWeek(card, activeWeekIdx)}
+                            className="text-xs bg-harbor-navy text-white hover:bg-harbor-teal px-2.5 py-1.5 rounded-full font-medium transition-colors whitespace-nowrap"
+                          >
+                            Close Week
+                          </button>
+                        </div>
                       )}
                     </div>
                   );
