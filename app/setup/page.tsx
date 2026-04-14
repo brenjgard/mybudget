@@ -2,6 +2,7 @@
 
 import { useState, type Dispatch, type SetStateAction } from "react";
 import { useRouter } from "next/navigation";
+import { localRepo } from "../lib/local-repo";
 import { AppSettings, FrequencyType, LineItem } from "../lib/types";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -317,7 +318,7 @@ export default function Setup() {
       categories,
       lineItems,
     };
-    localStorage.setItem("gardner_budget_settings", JSON.stringify(settings));
+    localRepo.saveSettings(settings);
     router.push("/");
   }
 

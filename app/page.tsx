@@ -3,11 +3,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import {
-  loadSettings, loadAmounts, saveAmounts,
-  loadMonthBalances, saveMonthBalances,
-  loadCCCharges, saveCCCharges, CCCharge,
-} from "./lib/storage";
+import { localRepo, type CCCharge } from "./lib/local-repo";
 import { getWeekRanges, itemAppliesToWeek } from "./lib/schedule";
 import { AppSettings } from "./lib/types";
 
@@ -48,19 +44,19 @@ export default function Home() {
 
   // Load on mount
   useEffect(() => {
-    const s = loadSettings();
+    const s = localRepo.loadSettings();
     if (!s) { router.push("/setup"); return; }
     setSettings(s);
     setCurrentBalance(s.checkingBalance);
-    setAmounts(loadAmounts(monthKey));
-    setMonthBalances(loadMonthBalances());
+    setAmounts(localRepo.loadAmounts(monthKey));
+    setMonthBalances(localRepo.loadMonthBalances());
     setLoaded(true);
     setAutoFill(true);
   }, []);
 
   // Save amounts whenever they change
   useEffect(() => {
-    if (loaded) saveAmounts(amounts, monthKey);
+    if (loaded) localRepo.saveAmounts(amounts, monthKey);
   }, [amounts, loaded]);
 
   const weeks = useMemo(() => getWeekRanges(year, month), [year, month]);
@@ -69,7 +65,7 @@ export default function Home() {
   useEffect(() => {
     if (!settings || !loaded) return;
     const currentMonthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
-    const saved = loadAmounts(currentMonthKey);
+    const saved = localRepo.loadAmounts(currentMonthKey);
     const next: Record<string, Record<number, number>> = {};
     for (const item of settings.lineItems) {
       next[item.id] = next[item.id] ?? {};
@@ -168,7 +164,7 @@ export default function Home() {
     const endingBalance = projectedBalances[projectedBalances.length - 1];
     const updated = { ...monthBalances, [monthKey]: endingBalance };
     setMonthBalances(updated);
-    saveMonthBalances(updated);
+    localRepo.saveMonthBalances(updated);
   }, [projectedBalances, loaded, monthKey]);
 
   function getAmount(itemId: string, weekIdx: number): number | "" {
@@ -226,7 +222,7 @@ function prevMonth() {
         dateMoved: new Date().toISOString(),
       }));
     if (newCharges.length > 0) {
-      saveCCCharges([...loadCCCharges(), ...newCharges]);
+      localRepo.saveCCCharges([...localRepo.loadCCCharges(), ...newCharges]);
     }
 
     // Find the CC payment line item for this card and roll total into next month week 3
@@ -235,7 +231,7 @@ function prevMonth() {
         month === 11
           ? `${year + 1}-01`
           : `${year}-${String(month + 2).padStart(2, "0")}`;
-      const nextAmounts = loadAmounts(nextMonthKey);
+      const nextAmounts = localRepo.loadAmounts(nextMonthKey);
       const item = settings.lineItems.find(
         (i) =>
           i.category === "Credit Cards" &&
@@ -245,7 +241,7 @@ function prevMonth() {
       if (item) {
         const existing = nextAmounts[item.id]?.[2] ?? 0;
         const newTotal = existing + total;
-        saveAmounts(
+        localRepo.saveAmounts(
           { ...nextAmounts, [item.id]: { ...nextAmounts[item.id], 2: newTotal } },
           nextMonthKey
         );

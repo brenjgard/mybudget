@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { loadSettings, saveSettings, saveAmounts, saveMonthBalances } from "../lib/storage";
+import { localRepo } from "../lib/local-repo";
 import { SEED_DATA } from "../data/seedData";
 import { AppSettings, FrequencyType, LineItem, PaymentMethod } from "../lib/types";
 
@@ -217,7 +217,7 @@ export default function Settings() {
   const categoriesRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const s = loadSettings();
+    const s = localRepo.loadSettings();
     if (!s) { router.push("/setup"); return; }
     setSettings(s);
 
@@ -240,16 +240,16 @@ export default function Settings() {
 
   function persist(updated: AppSettings) {
     setSettings(updated);
-    saveSettings(updated);
+    localRepo.saveSettings(updated);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }
 
   function loadDemoData() {
     if (!confirm("This will replace all current settings with demo data. Continue?")) return;
-    saveSettings(SEED_DATA);
-    saveAmounts({});
-    saveMonthBalances({});
+    localRepo.saveSettings(SEED_DATA);
+    localRepo.saveAmounts({});
+    localRepo.saveMonthBalances({});
     setSettings(SEED_DATA);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);

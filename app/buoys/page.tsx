@@ -1,30 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-
-// ── Types & Storage ───────────────────────────────────────────────────────────
-type Buoy = {
-  id: string;
-  name: string;
-  current: number;
-  goal: number;
-  autoSave?: number;     // amount to add each month
-  autoSaveDay?: number;  // day of month (1–28)
-  lastAutoSave?: string; // "YYYY-MM" — tracks when auto-save last ran
-};
-
-const BUOYS_KEY = "harbor_buoys";
-
-function loadBuoys(): Buoy[] {
-  try {
-    const raw = localStorage.getItem(BUOYS_KEY);
-    return raw ? (JSON.parse(raw) as Buoy[]) : [];
-  } catch { return []; }
-}
-
-function saveBuoys(buoys: Buoy[]) {
-  localStorage.setItem(BUOYS_KEY, JSON.stringify(buoys));
-}
+import { localRepo, type Buoy } from "../lib/local-repo";
 
 function formatMoney(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
@@ -249,7 +226,7 @@ export default function BuoysPage() {
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
-    const loaded = loadBuoys();
+    const loaded = localRepo.loadBuoys();
     // Apply auto-save for buoys whose day matches today and haven't run this month
     const today = new Date();
     const monthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
@@ -262,7 +239,7 @@ export default function BuoysPage() {
       }
       return b;
     });
-    if (changed) saveBuoys(updated);
+    if (changed) localRepo.saveBuoys(updated);
     setBuoys(updated);
     setLoaded(true);
   }, []);
@@ -315,7 +292,7 @@ export default function BuoysPage() {
       updated = [...buoys, newBuoy];
     }
 
-    saveBuoys(updated);
+    localRepo.saveBuoys(updated);
     setBuoys(updated);
     setShowModal(false);
     showToast(editingId ? "Buoy updated" : "New buoy created");
@@ -326,7 +303,7 @@ export default function BuoysPage() {
     const updated = buoys.map((b) =>
       b.id === id ? { ...b, current: b.current + amount } : b
     );
-    saveBuoys(updated);
+    localRepo.saveBuoys(updated);
     setBuoys(updated);
     showToast(`+${formatMoney(amount)} added`);
   }
@@ -335,7 +312,7 @@ export default function BuoysPage() {
   function handleDelete() {
     if (!deleteId) return;
     const updated = buoys.filter((b) => b.id !== deleteId);
-    saveBuoys(updated);
+    localRepo.saveBuoys(updated);
     setBuoys(updated);
     setDeleteId(null);
     showToast("Buoy removed");

@@ -2,26 +2,9 @@
 
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
-import {
-  loadSettings,
-  loadCCCharges,
-  loadAmounts,
-} from "../lib/storage";
+import { localRepo, type Buoy } from "../lib/local-repo";
 import { getWeekRanges, itemAppliesToWeek } from "../lib/schedule";
 import { AppSettings } from "../lib/types";
-
-// ── Buoys (savings goals) ─────────────────────────────────────────────────
-type Buoy = { id: string; name: string; current: number; goal: number };
-const BUOYS_KEY = "harbor_buoys";
-function loadBuoys(): Buoy[] {
-  try {
-    const raw = localStorage.getItem(BUOYS_KEY);
-    return raw ? (JSON.parse(raw) as Buoy[]) : [];
-  } catch { return []; }
-}
-function saveBuoys(buoys: Buoy[]) {
-  localStorage.setItem(BUOYS_KEY, JSON.stringify(buoys));
-}
 
 function formatMoney(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -52,7 +35,7 @@ export default function Dashboard() {
   const monthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
 
   const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [ccCharges, setCCCharges] = useState<ReturnType<typeof loadCCCharges>>([]);
+  const [ccCharges, setCCCharges] = useState<ReturnType<typeof localRepo.loadCCCharges>>([]);
   const [amounts, setAmounts] = useState<Record<string, Record<number, number>>>({});
   const [buoys, setBuoys] = useState<Buoy[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -62,10 +45,10 @@ export default function Dashboard() {
   const [buoyForm, setBuoyForm] = useState(BLANK_BUOY);
 
   useEffect(() => {
-    setSettings(loadSettings());
-    setCCCharges(loadCCCharges());
-    setAmounts(loadAmounts(monthKey));
-    setBuoys(loadBuoys());
+    setSettings(localRepo.loadSettings());
+    setCCCharges(localRepo.loadCCCharges());
+    setAmounts(localRepo.loadAmounts(monthKey));
+    setBuoys(localRepo.loadBuoys());
     setLoaded(true);
   }, [monthKey]);
 
@@ -145,7 +128,7 @@ export default function Dashboard() {
     };
     const updated = [...buoys, newBuoy];
     setBuoys(updated);
-    saveBuoys(updated);
+    localRepo.saveBuoys(updated);
     setBuoyForm(BLANK_BUOY);
     setShowBuoyForm(false);
   }
@@ -153,7 +136,7 @@ export default function Dashboard() {
   function removeBuoy(id: string) {
     const updated = buoys.filter((b) => b.id !== id);
     setBuoys(updated);
-    saveBuoys(updated);
+    localRepo.saveBuoys(updated);
   }
 
   if (!loaded) {

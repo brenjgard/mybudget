@@ -1,10 +1,7 @@
 "use client";
 
 import { useState } from "react";
-
-type FeedbackType = "bug" | "suggestion" | "praise" | "other";
-
-const FEEDBACK_KEY = "harbor_alpha_feedback";
+import { localRepo, type FeedbackType } from "../lib/local-repo";
 
 const TYPE_CONFIG: Record<FeedbackType, { label: string; emoji: string; color: string }> = {
   bug:        { label: "Bug",        emoji: "🐛", color: "text-harbor-red bg-harbor-red/10 border-harbor-red/30" },
@@ -12,14 +9,6 @@ const TYPE_CONFIG: Record<FeedbackType, { label: string; emoji: string; color: s
   praise:     { label: "Praise",     emoji: "⭐", color: "text-amber-500 bg-amber-50 border-amber-200" },
   other:      { label: "Other",      emoji: "💬", color: "text-slate-500 bg-slate-100 border-slate-200" },
 };
-
-function saveFeedbackLocally(type: FeedbackType, message: string, email: string) {
-  try {
-    const existing = JSON.parse(localStorage.getItem(FEEDBACK_KEY) ?? "[]");
-    existing.push({ type, message, email, submittedAt: new Date().toISOString() });
-    localStorage.setItem(FEEDBACK_KEY, JSON.stringify(existing));
-  } catch { /* ignore */ }
-}
 
 export default function FeedbackButton() {
   const [open, setOpen] = useState(false);
@@ -32,7 +21,12 @@ export default function FeedbackButton() {
     if (!message.trim()) return;
 
     // Save locally
-    saveFeedbackLocally(type, message.trim(), email.trim());
+    localRepo.saveFeedback({
+      type,
+      message: message.trim(),
+      email: email.trim(),
+      submittedAt: new Date().toISOString(),
+    });
 
     // Open mailto as delivery mechanism
     const subject = encodeURIComponent(`[Harbor Alpha] ${TYPE_CONFIG[type].label}: ${message.slice(0, 60)}${message.length > 60 ? "…" : ""}`);
