@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useState, useEffect, useRef } from "react";
 
 const NAV_LINKS = [
@@ -50,8 +50,10 @@ const NAV_LINKS = [
 
 export default function NavBar() {
   const pathname = usePathname();
+  const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+  const isAuthPage = pathname === "/login" || pathname === "/signup";
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -64,8 +66,12 @@ export default function NavBar() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [menuOpen]);
 
-  // Close menu on route change
-  useEffect(() => { setMenuOpen(false); }, [pathname]);
+  async function handleSignOut() {
+    await fetch("/auth/signout", { method: "POST" });
+    setMenuOpen(false);
+    router.push("/login");
+    router.refresh();
+  }
 
   return (
     <header className="flex-shrink-0 relative z-40" ref={menuRef}>
@@ -115,6 +121,7 @@ export default function NavBar() {
               <Link
                 key={href}
                 href={href}
+                onClick={() => setMenuOpen(false)}
                 className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                   isActive
                     ? "text-harbor-teal border-harbor-teal"
@@ -126,6 +133,14 @@ export default function NavBar() {
               </Link>
             );
           })}
+          {!isAuthPage && (
+            <button
+              onClick={handleSignOut}
+              className="flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-harbor-navy hover:border-slate-200 transition-colors whitespace-nowrap"
+            >
+              Sign Out
+            </button>
+          )}
         </div>
       </div>
 
@@ -138,6 +153,7 @@ export default function NavBar() {
               <Link
                 key={href}
                 href={href}
+                onClick={() => setMenuOpen(false)}
                 className={`flex items-center gap-3 px-5 py-3.5 text-sm font-medium border-b border-slate-50 last:border-0 transition-colors ${
                   isActive
                     ? "text-harbor-teal bg-harbor-teal-light"
@@ -152,6 +168,14 @@ export default function NavBar() {
               </Link>
             );
           })}
+          {!isAuthPage && (
+            <button
+              onClick={handleSignOut}
+              className="w-full text-left px-5 py-3.5 text-sm font-medium text-harbor-navy hover:bg-slate-50 transition-colors border-t border-slate-100"
+            >
+              Sign Out
+            </button>
+          )}
         </div>
       )}
 
