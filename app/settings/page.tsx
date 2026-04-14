@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { loadSettings, saveSettings, saveAmounts, saveMonthBalances } from "../lib/storage";
 import { SEED_DATA } from "../data/seedData";
-import { AppSettings, LineItem, PaymentMethod, FrequencyType } from "../setup/page";
+import { AppSettings, FrequencyType, LineItem, PaymentMethod } from "../lib/types";
 
 function uid() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);

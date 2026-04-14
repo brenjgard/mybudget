@@ -1,4 +1,4 @@
-import { AppSettings } from "../setup/page";
+import { AppSettings } from "./types";
 
 const SETTINGS_KEY = "gardner_budget_settings";
 const AMOUNTS_KEY = "gardner_budget_amounts";

@@ -1,7 +1,7 @@
 // Harbor Budget — Seed / Demo Data
 // Load via the "Load Demo Data" button in Settings
 
-import type { AppSettings, PaymentMethod } from "../setup/page";
+import type { AppSettings, PaymentMethod } from "../lib/types";
 
 export const SEED_DATA: AppSettings = {
   checkingBalance: 5000,
