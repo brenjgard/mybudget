@@ -3,6 +3,7 @@
 import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { loadSettingsWithSupabaseFallback } from "./lib/budget-settings";
 import { localRepo, type CCCharge } from "./lib/local-repo";
 import { getWeekRanges, itemAppliesToWeek } from "./lib/schedule";
 import { AppSettings } from "./lib/types";
@@ -44,14 +45,25 @@ export default function Home() {
 
   // Load on mount
   useEffect(() => {
-    const s = localRepo.loadSettings();
-    if (!s) { router.push("/setup"); return; }
-    setSettings(s);
-    setCurrentBalance(s.checkingBalance);
-    setAmounts(localRepo.loadAmounts(monthKey));
-    setMonthBalances(localRepo.loadMonthBalances());
-    setLoaded(true);
-    setAutoFill(true);
+    let cancelled = false;
+
+    async function loadInitialData() {
+      const s = await loadSettingsWithSupabaseFallback();
+      if (cancelled) return;
+      if (!s) { router.push("/setup"); return; }
+      setSettings(s);
+      setCurrentBalance(s.checkingBalance);
+      setAmounts(localRepo.loadAmounts(monthKey));
+      setMonthBalances(localRepo.loadMonthBalances());
+      setLoaded(true);
+      setAutoFill(true);
+    }
+
+    loadInitialData();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Save amounts whenever they change

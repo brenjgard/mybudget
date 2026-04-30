@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
+import { loadSettingsWithSupabaseFallback } from "../lib/budget-settings";
 import { localRepo, type Buoy } from "../lib/local-repo";
 import { getWeekRanges, itemAppliesToWeek } from "../lib/schedule";
 import { AppSettings } from "../lib/types";
@@ -45,11 +46,23 @@ export default function Dashboard() {
   const [buoyForm, setBuoyForm] = useState(BLANK_BUOY);
 
   useEffect(() => {
-    setSettings(localRepo.loadSettings());
-    setCCCharges(localRepo.loadCCCharges());
-    setAmounts(localRepo.loadAmounts(monthKey));
-    setBuoys(localRepo.loadBuoys());
-    setLoaded(true);
+    let cancelled = false;
+
+    async function loadInitialData() {
+      const s = await loadSettingsWithSupabaseFallback();
+      if (cancelled) return;
+      setSettings(s);
+      setCCCharges(localRepo.loadCCCharges());
+      setAmounts(localRepo.loadAmounts(monthKey));
+      setBuoys(localRepo.loadBuoys());
+      setLoaded(true);
+    }
+
+    loadInitialData();
+
+    return () => {
+      cancelled = true;
+    };
   }, [monthKey]);
 
   const weeks = useMemo(() => getWeekRanges(year, month), [year, month]);

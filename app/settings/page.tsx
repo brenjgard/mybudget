@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { loadSettingsWithSupabaseFallback } from "../lib/budget-settings";
 import { localRepo } from "../lib/local-repo";
 import { SEED_DATA } from "../data/seedData";
 import { AppSettings, FrequencyType, LineItem, PaymentMethod } from "../lib/types";
@@ -217,25 +218,36 @@ export default function Settings() {
   const categoriesRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const s = localRepo.loadSettings();
-    if (!s) { router.push("/setup"); return; }
-    setSettings(s);
+    let cancelled = false;
 
-    // Deep-link: scroll to section and auto-open form
-    const hash = window.location.hash;
-    if (hash === "#waves") {
-      setTimeout(() => {
-        wavesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-        setWavesForm(blankItem(true, s.categories[0] ?? ""));
-      }, 150);
-    } else if (hash === "#ripples") {
-      setTimeout(() => {
-        ripplesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-        setRipplesForm(blankItem(false, s.categories[0] ?? ""));
-      }, 150);
-    } else if (hash === "#fleet") {
-      setTimeout(() => fleetRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+    async function loadInitialData() {
+      const s = await loadSettingsWithSupabaseFallback();
+      if (cancelled) return;
+      if (!s) { router.push("/setup"); return; }
+      setSettings(s);
+
+      // Deep-link: scroll to section and auto-open form
+      const hash = window.location.hash;
+      if (hash === "#waves") {
+        setTimeout(() => {
+          wavesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+          setWavesForm(blankItem(true, s.categories[0] ?? ""));
+        }, 150);
+      } else if (hash === "#ripples") {
+        setTimeout(() => {
+          ripplesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+          setRipplesForm(blankItem(false, s.categories[0] ?? ""));
+        }, 150);
+      } else if (hash === "#fleet") {
+        setTimeout(() => fleetRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+      }
     }
+
+    loadInitialData();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   function persist(updated: AppSettings) {
