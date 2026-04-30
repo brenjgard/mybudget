@@ -18,8 +18,8 @@ export async function POST(request: Request) {
   if (!data.session) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("message", "Check your email to confirm your account.");
-    return NextResponse.redirect(loginUrl);
+    return NextResponse.redirect(loginUrl, 303);
   }
 
-  return NextResponse.redirect(new URL("/dashboard", request.url));
+  return NextResponse.redirect(new URL("/dashboard", request.url), 303);
 }

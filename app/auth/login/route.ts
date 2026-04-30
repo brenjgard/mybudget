@@ -22,8 +22,8 @@ export async function POST(request: Request) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("error", error.message);
     loginUrl.searchParams.set("next", next);
-    return NextResponse.redirect(loginUrl);
+    return NextResponse.redirect(loginUrl, 303);
   }
 
-  return NextResponse.redirect(new URL(next, request.url));
+  return NextResponse.redirect(new URL(next, request.url), 303);
 }
