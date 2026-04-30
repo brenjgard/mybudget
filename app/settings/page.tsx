@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { loadSettingsWithSupabaseFallback } from "../lib/budget-settings";
+import { loadSettingsWithSupabaseFallback, saveLocalSettingsToSupabase } from "../lib/budget-settings";
 import { localRepo } from "../lib/local-repo";
 import { SEED_DATA } from "../data/seedData";
 import { AppSettings, FrequencyType, LineItem, PaymentMethod } from "../lib/types";
@@ -267,6 +267,15 @@ export default function Settings() {
     setTimeout(() => setSaved(false), 2000);
   }
 
+  async function saveToCloud() {
+    try {
+      const result = await saveLocalSettingsToSupabase();
+      alert(`Saved to cloud. Added ${result.budgetSettingsInserted ? 1 : 0} settings row, ${result.paymentAccountsInserted} payment accounts, ${result.categoriesInserted} categories, and ${result.lineItemsInserted} line items.`);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "Could not save to cloud.");
+    }
+  }
+
   // ── Item CRUD ────────────────────────────────────────────────────────────────
   function saveItem(form: EditingItem) {
     if (!settings || !form.name.trim()) return;
@@ -366,6 +375,12 @@ export default function Settings() {
               className="px-3 py-1.5 text-xs border-2 border-dashed border-slate-200 text-slate-500 rounded-lg hover:border-harbor-teal hover:text-harbor-teal transition-colors"
             >
               Load Demo Data
+            </button>
+            <button
+              onClick={saveToCloud}
+              className="px-3 py-1.5 text-xs border-2 border-dashed border-slate-200 text-slate-500 rounded-lg hover:border-harbor-teal hover:text-harbor-teal transition-colors"
+            >
+              Save to Cloud
             </button>
           </div>
         </div>
