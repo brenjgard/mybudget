@@ -1,7 +1,8 @@
 import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
+import type { NextResponse } from "next/server";
 
-export async function createClient() {
+export async function createClient(response?: NextResponse) {
   const cookieStore = await cookies();
 
   return createServerClient(
@@ -20,6 +21,10 @@ export async function createClient() {
           } catch {
             // Ignore when called from a Server Component that cannot set cookies.
           }
+
+          cookiesToSet.forEach(({ name, value, options }) => {
+            response?.cookies.set(name, value, options);
+          });
         },
       },
     },

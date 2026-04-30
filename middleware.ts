@@ -7,6 +7,10 @@ function isPublicPath(pathname: string) {
   return PUBLIC_PATHS.includes(pathname) || pathname.startsWith("/auth/");
 }
 
+function isAuthEntryPath(pathname: string) {
+  return PUBLIC_PATHS.includes(pathname);
+}
+
 function withCookies(from: NextResponse, to: NextResponse) {
   from.cookies.getAll().forEach((cookie) => {
     to.cookies.set(cookie);
@@ -19,6 +23,7 @@ export async function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
   const { response, user } = await updateSession(request);
   const isPublic = isPublicPath(pathname);
+  const isAuthEntry = isAuthEntryPath(pathname);
 
   if (!user && !isPublic) {
     const loginUrl = new URL("/login", request.url);
@@ -26,7 +31,7 @@ export async function middleware(request: NextRequest) {
     return withCookies(response, NextResponse.redirect(loginUrl));
   }
 
-  if (user && isPublic) {
+  if (user && isAuthEntry) {
     return withCookies(response, NextResponse.redirect(new URL("/dashboard", request.url)));
   }
 

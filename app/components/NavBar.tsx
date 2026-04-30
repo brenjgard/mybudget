@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useState, useEffect, useRef } from "react";
 
 const NAV_LINKS = [
@@ -50,7 +50,6 @@ const NAV_LINKS = [
 
 export default function NavBar() {
   const pathname = usePathname();
-  const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
   const isAuthPage = pathname === "/login" || pathname === "/signup";
@@ -65,13 +64,6 @@ export default function NavBar() {
     if (menuOpen) document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [menuOpen]);
-
-  async function handleSignOut() {
-    await fetch("/auth/signout", { method: "POST" });
-    setMenuOpen(false);
-    router.push("/login");
-    router.refresh();
-  }
 
   return (
     <header className="flex-shrink-0 relative z-40" ref={menuRef}>
@@ -134,12 +126,14 @@ export default function NavBar() {
             );
           })}
           {!isAuthPage && (
-            <button
-              onClick={handleSignOut}
-              className="flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-harbor-navy hover:border-slate-200 transition-colors whitespace-nowrap"
-            >
-              Sign Out
-            </button>
+            <form action="/auth/signout" method="post">
+              <button
+                type="submit"
+                className="flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-harbor-navy hover:border-slate-200 transition-colors whitespace-nowrap"
+              >
+                Sign Out
+              </button>
+            </form>
           )}
         </div>
       </div>
@@ -169,12 +163,14 @@ export default function NavBar() {
             );
           })}
           {!isAuthPage && (
-            <button
-              onClick={handleSignOut}
-              className="w-full text-left px-5 py-3.5 text-sm font-medium text-harbor-navy hover:bg-slate-50 transition-colors border-t border-slate-100"
-            >
-              Sign Out
-            </button>
+            <form action="/auth/signout" method="post">
+              <button
+                type="submit"
+                className="w-full text-left px-5 py-3.5 text-sm font-medium text-harbor-navy hover:bg-slate-50 transition-colors border-t border-slate-100"
+              >
+                Sign Out
+              </button>
+            </form>
           )}
         </div>
       )}
