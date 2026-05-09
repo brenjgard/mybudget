@@ -99,6 +99,34 @@ async function saveMonthBalance(monthKey: string, balance: number): Promise<Reco
   return localBudgetRepo.saveMonthBalance(monthKey, balance);
 }
 
+async function getAnchorOverride(): Promise<number | null> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      return await supabaseBudgetRepo.getAnchorOverride();
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.getAnchorOverride();
+}
+
+async function saveAnchorOverride(override: number | null): Promise<number | null> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      const savedOverride = await supabaseBudgetRepo.saveAnchorOverride(override);
+      localBudgetRepo.saveAnchorOverride(savedOverride);
+      return savedOverride;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.saveAnchorOverride(override);
+}
+
 async function getClosedWeeks(monthKey: string): Promise<Set<string>> {
   try {
     const user = await supabaseBudgetRepo.getUser();
@@ -181,6 +209,8 @@ export const budgetRepo = {
   saveMonthlyAmounts,
   getMonthBalances,
   saveMonthBalance,
+  getAnchorOverride,
+  saveAnchorOverride,
   getClosedWeeks,
   closeWeek,
   getCCCharges,

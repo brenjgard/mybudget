@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
+import type { MouseEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { loadSettingsWithSupabaseFallback } from "./lib/budget-settings";
@@ -19,7 +20,8 @@ export default function Home() {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
   const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [currentBalance, setCurrentBalance] = useState(0);
+  const [currentBalance, setCurrentBalance] = useState<number | "">("");
+  const [anchorDraft, setAnchorDraft] = useState("");
   const [amounts, setAmounts] = useState<Record<string, Record<number, number>>>({});
   const [loaded, setLoaded] = useState(false);
   const [autoFill, setAutoFill] = useState(false);
@@ -31,6 +33,10 @@ export default function Home() {
   // ── Feature 5: Close Week tracking ───────────────────────────────────────
   const [closedWeeks, setClosedWeeks] = useState<Set<string>>(new Set());
   const [activeWeekIdx, setActiveWeekIdx] = useState(0);
+  const anchorSaveSeq = useRef(0);
+  const anchorDraftRef = useRef("");
+  const anchorDirtyRef = useRef(false);
+  const anchorSavePromiseRef = useRef<Promise<void>>(Promise.resolve());
 
   // cardLookup available before early return (used in closeWeek)
   const cardLookup = useMemo(
@@ -49,15 +55,20 @@ export default function Home() {
     let cancelled = false;
 
     async function loadInitialData() {
-      const [s, savedAmounts, savedMonthBalances] = await Promise.all([
+      const [s, savedAmounts, savedMonthBalances, savedAnchorOverride] = await Promise.all([
         loadSettingsWithSupabaseFallback(),
         budgetRepo.getMonthlyAmounts(monthKey),
         budgetRepo.getMonthBalances(),
+        budgetRepo.getAnchorOverride(),
       ]);
       if (cancelled) return;
       if (!s) { router.push("/setup"); return; }
       setSettings(s);
-      setCurrentBalance(s.checkingBalance);
+      setCurrentBalance(savedAnchorOverride ?? "");
+      const nextAnchorDraft = savedAnchorOverride === null ? "" : String(savedAnchorOverride);
+      anchorDraftRef.current = nextAnchorDraft;
+      anchorDirtyRef.current = false;
+      setAnchorDraft(nextAnchorDraft);
       setAmounts(savedAmounts);
       setMonthBalances(savedMonthBalances);
       setClosedWeeks(await budgetRepo.getClosedWeeks(monthKey));
@@ -71,6 +82,25 @@ export default function Home() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    let cancelled = false;
+
+    void budgetRepo.getAnchorOverride().then((savedAnchorOverride) => {
+      if (!cancelled) {
+        setCurrentBalance(savedAnchorOverride ?? "");
+        const nextAnchorDraft = savedAnchorOverride === null ? "" : String(savedAnchorOverride);
+        anchorDraftRef.current = nextAnchorDraft;
+        anchorDirtyRef.current = false;
+        setAnchorDraft(nextAnchorDraft);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loaded, monthKey]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -143,7 +173,9 @@ export default function Home() {
     });
   }, [year, month, weeks.length]);
 
-  const startingBalance = monthBalances[prevMonthKey] ?? currentBalance;
+  const startingBalance = currentBalance !== ""
+    ? currentBalance
+    : monthBalances[prevMonthKey] ?? settings?.checkingBalance ?? 0;
 
   const weekTotals = useMemo(() => {
     if (!settings) return [];
@@ -218,7 +250,52 @@ export default function Home() {
     }));
   }
 
-function prevMonth() {
+  function changeAnchorDraft(value: string) {
+    anchorDraftRef.current = value;
+    anchorDirtyRef.current = true;
+    setAnchorDraft(value);
+  }
+
+  async function commitAnchorOverride(commitMonthKey = monthKey) {
+    if (!anchorDirtyRef.current) return;
+
+    const draft = anchorDraftRef.current.trim();
+    const parsed = draft === "" ? null : Number(draft);
+    if (parsed !== null && Number.isNaN(parsed)) return;
+
+    const next = parsed ?? "";
+    const saveSeq = ++anchorSaveSeq.current;
+
+    setCurrentBalance(next);
+    anchorDirtyRef.current = false;
+
+    const previousSave = anchorSavePromiseRef.current;
+    const savePromise = previousSave.then(() => budgetRepo.saveAnchorOverride(parsed));
+    anchorSavePromiseRef.current = savePromise.then(
+      () => undefined,
+      () => undefined,
+    );
+    const saved = await savePromise;
+
+    if (saveSeq === anchorSaveSeq.current && commitMonthKey === monthKey) {
+      setCurrentBalance(saved ?? "");
+      setSettings((prev) => prev ? { ...prev, checkingBalance: saved ?? 0 } : prev);
+      const savedDraft = saved === null ? "" : String(saved);
+      anchorDraftRef.current = savedDraft;
+      setAnchorDraft(savedDraft);
+    }
+  }
+
+  async function navigateAfterAnchorCommit(event: MouseEvent<HTMLAnchorElement>, href: string) {
+    if (!anchorDirtyRef.current) return;
+
+    event.preventDefault();
+    await commitAnchorOverride();
+    router.push(href);
+  }
+
+async function prevMonth() {
+    await commitAnchorOverride();
     const prevDate = month === 0
       ? new Date(year - 1, 11, 1)
       : new Date(year, month - 1, 1);
@@ -227,7 +304,8 @@ function prevMonth() {
     if (month === 0) { setMonth(11); setYear((y) => y - 1); }
     else setMonth((m) => m - 1);
   }
-  function nextMonth() {
+  async function nextMonth() {
+    await commitAnchorOverride();
     if (month === 11) { setMonth(0); setYear((y) => y + 1); }
     else setMonth((m) => m + 1);
   }
@@ -332,6 +410,7 @@ function prevMonth() {
             <div className="flex items-center gap-2">
               <Link
                 href="/settings#waves"
+                onClick={(e) => void navigateAfterAnchorCommit(e, "/settings#waves")}
                 className="flex items-center gap-1 px-3 py-2 rounded-lg border border-harbor-green/30 bg-harbor-green/5 text-harbor-green text-xs font-medium hover:bg-harbor-green/10 transition-colors"
               >
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -341,6 +420,7 @@ function prevMonth() {
               </Link>
               <Link
                 href="/settings#ripples"
+                onClick={(e) => void navigateAfterAnchorCommit(e, "/settings#ripples")}
                 className="flex items-center gap-1 px-3 py-2 rounded-lg border border-harbor-red/30 bg-harbor-red/5 text-harbor-red text-xs font-medium hover:bg-harbor-red/10 transition-colors"
               >
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -365,8 +445,14 @@ function prevMonth() {
                 type="number"
                 inputMode="decimal"
                 className="border-2 border-harbor-teal-light focus:border-harbor-teal rounded-lg px-3 py-2 w-36 text-right font-semibold text-slate-600 focus:outline-none transition-colors"
-                value={currentBalance}
-                onChange={(e) => setCurrentBalance(Number(e.target.value))}
+                value={anchorDraft}
+                onChange={(e) => changeAnchorDraft(e.target.value)}
+                onBlur={() => void commitAnchorOverride()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.currentTarget.blur();
+                  }
+                }}
               />
             </div>
           </div>
@@ -455,6 +541,7 @@ function prevMonth() {
                         {item.isIncome && <span className="text-xs text-harbor-green font-medium">↑</span>}
                         <Link
                           href="/settings"
+                          onClick={(e) => void navigateAfterAnchorCommit(e, "/settings")}
                           className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-300 hover:text-harbor-teal flex-shrink-0"
                           title="Edit in Settings"
                         >
@@ -468,6 +555,7 @@ function prevMonth() {
                     <td className="px-2 py-2 text-center">
                       <Link
                         href="/settings"
+                        onClick={(e) => void navigateAfterAnchorCommit(e, "/settings")}
                         title="Change method in Settings"
                         className={`text-xs px-2 py-0.5 rounded-full font-medium hover:ring-2 hover:ring-offset-1 transition-all ${
                           item.paymentMethod === "checking"

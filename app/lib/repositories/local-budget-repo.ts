@@ -50,6 +50,23 @@ export const localBudgetRepo = {
     return balances;
   },
 
+  getAnchorOverride(): number | null {
+    const checkingBalance = localRepo.loadSettings()?.checkingBalance;
+    return checkingBalance === undefined || checkingBalance === 0 ? null : checkingBalance;
+  },
+
+  saveAnchorOverride(override: number | null): number | null {
+    const settings = localRepo.loadSettings();
+    if (!settings) return override;
+
+    localRepo.saveSettings({
+      ...settings,
+      checkingBalance: override ?? 0,
+    });
+
+    return override;
+  },
+
   getClosedWeeks(monthKey: string): Set<string> {
     return new Set(loadClosedWeekKeys().filter((key) => key.startsWith(`${monthKey}-`)));
   },

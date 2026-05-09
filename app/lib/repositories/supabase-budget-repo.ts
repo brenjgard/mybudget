@@ -431,6 +431,48 @@ async function getMonthBalances(): Promise<Record<string, number>> {
   );
 }
 
+async function getAnchorOverride(): Promise<number | null> {
+  const user = await getUser();
+  if (!user) return null;
+
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("budget_settings")
+    .select("checking_balance")
+    .eq("user_id", user.id)
+    .maybeSingle<BudgetSettingsRow>();
+
+  if (error) throw error;
+
+  if (data?.checking_balance === null || data?.checking_balance === undefined) {
+    return null;
+  }
+
+  const checkingBalance = Number(data.checking_balance);
+  return checkingBalance === 0 ? null : checkingBalance;
+}
+
+async function saveAnchorOverride(override: number | null): Promise<number | null> {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("budget_settings")
+    .upsert(
+      {
+        user_id: user.id,
+        checking_balance: override ?? 0,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id" },
+    );
+
+  if (error) throw error;
+
+  return override;
+}
+
 async function saveMonthBalance(monthKey: string, balance: number): Promise<Record<string, number>> {
   const user = await getUser();
   if (!user) throw new Error("Not authenticated");
@@ -601,6 +643,8 @@ export const supabaseBudgetRepo = {
   saveMonthlyAmounts,
   getMonthBalances,
   saveMonthBalance,
+  getAnchorOverride,
+  saveAnchorOverride,
   getClosedWeeks,
   closeWeek,
   getCCCharges,
