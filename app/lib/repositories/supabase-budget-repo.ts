@@ -35,6 +35,17 @@ type LineItemRow = {
   anchor_month: number | null;
 };
 
+type MonthlyAmountRow = {
+  line_item_id: string;
+  week_index: number;
+  amount: number | string;
+};
+
+type MonthBalanceRow = {
+  month_key: string;
+  starting_balance: number | string;
+};
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isUuid(value: string) {
@@ -326,8 +337,108 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
   return savedSettings;
 }
 
+async function getMonthlyAmounts(monthKey: string): Promise<Record<string, Record<number, number>>> {
+  const user = await getUser();
+  if (!user) return {};
+
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("monthly_amounts")
+    .select("line_item_id, week_index, amount")
+    .eq("user_id", user.id)
+    .eq("month_key", monthKey)
+    .returns<MonthlyAmountRow[]>();
+
+  if (error) throw error;
+
+  return (data ?? []).reduce<Record<string, Record<number, number>>>((acc, row) => {
+    acc[row.line_item_id] = acc[row.line_item_id] ?? {};
+    acc[row.line_item_id][row.week_index] = Number(row.amount);
+    return acc;
+  }, {});
+}
+
+async function saveMonthlyAmounts(monthKey: string, amounts: Record<string, Record<number, number>>) {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const supabase = createClient();
+  const { error: deleteError } = await supabase
+    .from("monthly_amounts")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("month_key", monthKey);
+
+  if (deleteError) throw deleteError;
+
+  const rows = Object.entries(amounts).flatMap(([lineItemId, byWeek]) => {
+    if (!isUuid(lineItemId)) return [];
+
+    return Object.entries(byWeek).map(([weekIndex, amount]) => ({
+      user_id: user.id,
+      line_item_id: lineItemId,
+      month_key: monthKey,
+      week_index: Number(weekIndex),
+      amount,
+      updated_at: new Date().toISOString(),
+    }));
+  });
+
+  if (rows.length === 0) return;
+
+  const { error: insertError } = await supabase
+    .from("monthly_amounts")
+    .insert(rows);
+
+  if (insertError) throw insertError;
+}
+
+async function getMonthBalances(): Promise<Record<string, number>> {
+  const user = await getUser();
+  if (!user) return {};
+
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("month_balances")
+    .select("month_key, starting_balance")
+    .eq("user_id", user.id)
+    .returns<MonthBalanceRow[]>();
+
+  if (error) throw error;
+
+  return Object.fromEntries(
+    (data ?? []).map((row) => [row.month_key, Number(row.starting_balance)]),
+  );
+}
+
+async function saveMonthBalance(monthKey: string, balance: number): Promise<Record<string, number>> {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("month_balances")
+    .upsert(
+      {
+        user_id: user.id,
+        month_key: monthKey,
+        starting_balance: balance,
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id,month_key" },
+    );
+
+  if (error) throw error;
+
+  return getMonthBalances();
+}
+
 export const supabaseBudgetRepo = {
   getUser,
   loadSettings,
   saveSettings,
+  getMonthlyAmounts,
+  saveMonthlyAmounts,
+  getMonthBalances,
+  saveMonthBalance,
 };

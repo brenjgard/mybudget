@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { loadSettingsWithSupabaseFallback } from "./lib/budget-settings";
 import { localRepo, type CCCharge } from "./lib/local-repo";
+import { budgetRepo } from "./lib/repositories/budget-repo";
 import { getWeekRanges, itemAppliesToWeek } from "./lib/schedule";
 import { AppSettings } from "./lib/types";
 
@@ -48,13 +49,17 @@ export default function Home() {
     let cancelled = false;
 
     async function loadInitialData() {
-      const s = await loadSettingsWithSupabaseFallback();
+      const [s, savedAmounts, savedMonthBalances] = await Promise.all([
+        loadSettingsWithSupabaseFallback(),
+        budgetRepo.getMonthlyAmounts(monthKey),
+        budgetRepo.getMonthBalances(),
+      ]);
       if (cancelled) return;
       if (!s) { router.push("/setup"); return; }
       setSettings(s);
       setCurrentBalance(s.checkingBalance);
-      setAmounts(localRepo.loadAmounts(monthKey));
-      setMonthBalances(localRepo.loadMonthBalances());
+      setAmounts(savedAmounts);
+      setMonthBalances(savedMonthBalances);
       setLoaded(true);
       setAutoFill(true);
     }
@@ -68,7 +73,7 @@ export default function Home() {
 
   // Save amounts whenever they change
   useEffect(() => {
-    if (loaded) localRepo.saveAmounts(amounts, monthKey);
+    if (loaded) void budgetRepo.saveMonthlyAmounts(monthKey, amounts);
   }, [amounts, loaded]);
 
   const weeks = useMemo(() => getWeekRanges(year, month), [year, month]);
@@ -76,9 +81,12 @@ export default function Home() {
   // Auto fill defaults on load
   useEffect(() => {
     if (!settings || !loaded) return;
+    let cancelled = false;
     const currentMonthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
-    const saved = localRepo.loadAmounts(currentMonthKey);
-    const next: Record<string, Record<number, number>> = {};
+    void budgetRepo.getMonthlyAmounts(currentMonthKey).then((saved) => {
+      if (cancelled) return;
+
+      const next: Record<string, Record<number, number>> = {};
     for (const item of settings.lineItems) {
       next[item.id] = next[item.id] ?? {};
       weeks.forEach((_, wi) => {
@@ -99,19 +107,26 @@ export default function Home() {
         }
       });
     }
-    setAmounts(next);
+      setAmounts(next);
+    });
+
+    return () => {
+      cancelled = true;
+    };
   }, [year, month, settings, loaded]);
 
   // Auto-set active week to current week on mobile
   useEffect(() => {
     if (weeks.length === 0) return;
     const today = new Date();
-    if (year === today.getFullYear() && month === today.getMonth()) {
-      const idx = weeks.findIndex((w) => today >= w.start && today <= w.end);
-      setActiveWeekIdx(idx >= 0 ? idx : 0);
-    } else {
-      setActiveWeekIdx(0);
-    }
+    const nextActiveWeekIdx =
+      year === today.getFullYear() && month === today.getMonth()
+        ? weeks.findIndex((w) => today >= w.start && today <= w.end)
+        : -1;
+
+    void Promise.resolve().then(() => {
+      setActiveWeekIdx(nextActiveWeekIdx >= 0 ? nextActiveWeekIdx : 0);
+    });
   }, [year, month, weeks.length]);
 
   const startingBalance = monthBalances[prevMonthKey] ?? currentBalance;
@@ -131,11 +146,10 @@ export default function Home() {
   }, [amounts, weeks, settings, month]);
 
   const projectedBalances = useMemo(() => {
-    let running = startingBalance;
-    return weekTotals.map((t) => {
-      running += t;
-      return running;
-    });
+    return weekTotals.reduce<number[]>((balances, total) => {
+      const previous = balances[balances.length - 1] ?? startingBalance;
+      return [...balances, previous + total];
+    }, []);
   }, [startingBalance, weekTotals]);
 
   const creditTotals = useMemo(() => {
@@ -175,8 +189,8 @@ export default function Home() {
     if (!loaded || projectedBalances.length === 0) return;
     const endingBalance = projectedBalances[projectedBalances.length - 1];
     const updated = { ...monthBalances, [monthKey]: endingBalance };
-    setMonthBalances(updated);
-    localRepo.saveMonthBalances(updated);
+    void Promise.resolve().then(() => setMonthBalances(updated));
+    void budgetRepo.saveMonthBalance(monthKey, endingBalance);
   }, [projectedBalances, loaded, monthKey]);
 
   function getAmount(itemId: string, weekIdx: number): number | "" {
@@ -209,7 +223,7 @@ function prevMonth() {
   }
 
   // ── Feature 5: Close Week CC flow ─────────────────────────────────────────
-  function closeWeek(card: { id: string; label: string }, wi: number) {
+  async function closeWeek(card: { id: string; label: string }, wi: number) {
     if (!settings) return;
 
     // Collect all line items charged to this card that apply this week
@@ -243,7 +257,7 @@ function prevMonth() {
         month === 11
           ? `${year + 1}-01`
           : `${year}-${String(month + 2).padStart(2, "0")}`;
-      const nextAmounts = localRepo.loadAmounts(nextMonthKey);
+      const nextAmounts = await budgetRepo.getMonthlyAmounts(nextMonthKey);
       const item = settings.lineItems.find(
         (i) =>
           i.category === "Credit Cards" &&
@@ -253,10 +267,10 @@ function prevMonth() {
       if (item) {
         const existing = nextAmounts[item.id]?.[2] ?? 0;
         const newTotal = existing + total;
-        localRepo.saveAmounts(
-          { ...nextAmounts, [item.id]: { ...nextAmounts[item.id], 2: newTotal } },
-          nextMonthKey
-        );
+        await budgetRepo.saveMonthlyAmounts(nextMonthKey, {
+          ...nextAmounts,
+          [item.id]: { ...nextAmounts[item.id], 2: newTotal },
+        });
       }
     }
 
