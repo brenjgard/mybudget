@@ -1,6 +1,7 @@
 "use client";
 
 import { createClient } from "../supabase/client";
+import type { CCCharge } from "../local-repo";
 import type { AppSettings, FrequencyType, LineItem, PaymentMethod } from "../types";
 
 type User = {
@@ -46,10 +47,29 @@ type MonthBalanceRow = {
   starting_balance: number | string;
 };
 
+type ClosedWeekRow = {
+  payment_account_id: string;
+  week_index: number;
+};
+
+type CCChargeRow = {
+  line_item_id: string | null;
+  payment_account_id: string;
+  item_name: string;
+  card_label: string;
+  amount: number | string;
+  week_label: string;
+  date_moved: string;
+};
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isUuid(value: string) {
   return UUID_RE.test(value);
+}
+
+function closedWeekKey(monthKey: string, cardId: string, weekIndex: number) {
+  return `${monthKey}-${cardId}-${weekIndex}`;
 }
 
 async function getUser(): Promise<User | null> {
@@ -433,6 +453,146 @@ async function saveMonthBalance(monthKey: string, balance: number): Promise<Reco
   return getMonthBalances();
 }
 
+async function getPaymentAccounts(userId: string): Promise<PaymentAccountRow[]> {
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("payment_accounts")
+    .select("id, account_key, kind, label")
+    .eq("user_id", userId)
+    .returns<PaymentAccountRow[]>();
+
+  if (error) throw error;
+  return data ?? [];
+}
+
+async function getClosedWeeks(monthKey: string): Promise<Set<string>> {
+  const user = await getUser();
+  if (!user) return new Set();
+
+  const supabase = createClient();
+  const [accounts, closedWeeksResult] = await Promise.all([
+    getPaymentAccounts(user.id),
+    supabase
+      .from("closed_weeks")
+      .select("payment_account_id, week_index")
+      .eq("user_id", user.id)
+      .eq("month_key", monthKey)
+      .returns<ClosedWeekRow[]>(),
+  ]);
+
+  if (closedWeeksResult.error) throw closedWeeksResult.error;
+
+  const accountKeysById = new Map(accounts.map((account) => [account.id, account.account_key]));
+  return new Set(
+    (closedWeeksResult.data ?? []).map((row) => (
+      closedWeekKey(monthKey, accountKeysById.get(row.payment_account_id) ?? row.payment_account_id, row.week_index)
+    )),
+  );
+}
+
+async function getCCCharges(): Promise<CCCharge[]> {
+  const user = await getUser();
+  if (!user) return [];
+
+  const supabase = createClient();
+  const [accounts, chargesResult] = await Promise.all([
+    getPaymentAccounts(user.id),
+    supabase
+      .from("cc_charges")
+      .select("line_item_id, payment_account_id, item_name, card_label, amount, week_label, date_moved")
+      .eq("user_id", user.id)
+      .order("date_moved", { ascending: false })
+      .returns<CCChargeRow[]>(),
+  ]);
+
+  if (chargesResult.error) throw chargesResult.error;
+
+  const accountKeysById = new Map(accounts.map((account) => [account.id, account.account_key]));
+  return (chargesResult.data ?? []).map((charge) => ({
+    itemId: charge.line_item_id ?? "",
+    itemName: charge.item_name,
+    card: accountKeysById.get(charge.payment_account_id) ?? charge.payment_account_id,
+    cardLabel: charge.card_label,
+    amount: Number(charge.amount),
+    weekLabel: charge.week_label,
+    dateMoved: charge.date_moved,
+  }));
+}
+
+async function addCCCharges(charges: CCCharge[]) {
+  if (charges.length === 0) return;
+
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const accounts = await getPaymentAccounts(user.id);
+  const accountsByKey = new Map(accounts.map((account) => [account.account_key, account]));
+
+  const rows = charges.flatMap((charge) => {
+    const paymentAccount = accountsByKey.get(charge.card);
+    if (!paymentAccount) return [];
+
+    return {
+      user_id: user.id,
+      line_item_id: isUuid(charge.itemId) ? charge.itemId : null,
+      payment_account_id: paymentAccount.id,
+      item_name: charge.itemName,
+      card_label: charge.cardLabel,
+      amount: charge.amount,
+      week_label: charge.weekLabel,
+      date_moved: charge.dateMoved.slice(0, 10),
+    };
+  });
+
+  if (rows.length === 0) return;
+
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("cc_charges")
+    .insert(rows);
+
+  if (error) throw error;
+}
+
+async function closeWeek({
+  monthKey,
+  cardId,
+  weekIndex,
+  charges,
+}: {
+  monthKey: string;
+  cardId: string;
+  weekIndex: number;
+  charges: CCCharge[];
+}): Promise<Set<string>> {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const accounts = await getPaymentAccounts(user.id);
+  const paymentAccount = accounts.find((account) => account.account_key === cardId);
+  if (!paymentAccount) throw new Error("Payment account could not be found.");
+
+  await addCCCharges(charges);
+
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("closed_weeks")
+    .upsert(
+      {
+        user_id: user.id,
+        payment_account_id: paymentAccount.id,
+        month_key: monthKey,
+        week_index: weekIndex,
+        closed_at: new Date().toISOString(),
+      },
+      { onConflict: "user_id,payment_account_id,month_key,week_index" },
+    );
+
+  if (error) throw error;
+
+  return getClosedWeeks(monthKey);
+}
+
 export const supabaseBudgetRepo = {
   getUser,
   loadSettings,
@@ -441,4 +601,8 @@ export const supabaseBudgetRepo = {
   saveMonthlyAmounts,
   getMonthBalances,
   saveMonthBalance,
+  getClosedWeeks,
+  closeWeek,
+  getCCCharges,
+  addCCCharges,
 };

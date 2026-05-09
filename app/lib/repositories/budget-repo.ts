@@ -2,6 +2,7 @@
 
 import { localBudgetRepo } from "./local-budget-repo";
 import { supabaseBudgetRepo } from "./supabase-budget-repo";
+import type { CCCharge } from "../local-repo";
 import type { AppSettings } from "../types";
 
 async function loadSettings(): Promise<AppSettings | null> {
@@ -98,6 +99,81 @@ async function saveMonthBalance(monthKey: string, balance: number): Promise<Reco
   return localBudgetRepo.saveMonthBalance(monthKey, balance);
 }
 
+async function getClosedWeeks(monthKey: string): Promise<Set<string>> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      const supabaseClosedWeeks = await supabaseBudgetRepo.getClosedWeeks(monthKey);
+      if (supabaseClosedWeeks.size > 0) return supabaseClosedWeeks;
+
+      return localBudgetRepo.getClosedWeeks(monthKey);
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.getClosedWeeks(monthKey);
+}
+
+async function getCCCharges(): Promise<CCCharge[]> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      const supabaseCharges = await supabaseBudgetRepo.getCCCharges();
+      if (supabaseCharges.length > 0) return supabaseCharges;
+
+      const localCharges = localBudgetRepo.getCCCharges();
+      if (localCharges.length > 0) {
+        await supabaseBudgetRepo.addCCCharges(localCharges);
+        return localCharges;
+      }
+
+      return supabaseCharges;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.getCCCharges();
+}
+
+async function addCCCharges(charges: CCCharge[]) {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      await supabaseBudgetRepo.addCCCharges(charges);
+      return;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  localBudgetRepo.addCCCharges(charges);
+}
+
+async function closeWeek({
+  monthKey,
+  cardId,
+  weekIndex,
+  charges,
+}: {
+  monthKey: string;
+  cardId: string;
+  weekIndex: number;
+  charges: CCCharge[];
+}): Promise<Set<string>> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      return await supabaseBudgetRepo.closeWeek({ monthKey, cardId, weekIndex, charges });
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.closeWeek({ monthKey, cardId, weekIndex, charges });
+}
+
 export const budgetRepo = {
   loadSettings,
   saveSettings,
@@ -105,4 +181,8 @@ export const budgetRepo = {
   saveMonthlyAmounts,
   getMonthBalances,
   saveMonthBalance,
+  getClosedWeeks,
+  closeWeek,
+  getCCCharges,
+  addCCCharges,
 };

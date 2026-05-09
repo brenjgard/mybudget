@@ -4,7 +4,7 @@ import { useState, useMemo, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { loadSettingsWithSupabaseFallback } from "./lib/budget-settings";
-import { localRepo, type CCCharge } from "./lib/local-repo";
+import type { CCCharge } from "./lib/local-repo";
 import { budgetRepo } from "./lib/repositories/budget-repo";
 import { getWeekRanges, itemAppliesToWeek } from "./lib/schedule";
 import { AppSettings } from "./lib/types";
@@ -60,6 +60,7 @@ export default function Home() {
       setCurrentBalance(s.checkingBalance);
       setAmounts(savedAmounts);
       setMonthBalances(savedMonthBalances);
+      setClosedWeeks(await budgetRepo.getClosedWeeks(monthKey));
       setLoaded(true);
       setAutoFill(true);
     }
@@ -70,6 +71,19 @@ export default function Home() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!loaded) return;
+    let cancelled = false;
+
+    void budgetRepo.getClosedWeeks(monthKey).then((savedClosedWeeks) => {
+      if (!cancelled) setClosedWeeks(savedClosedWeeks);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [loaded, monthKey]);
 
   // Save amounts whenever they change
   useEffect(() => {
@@ -247,10 +261,6 @@ function prevMonth() {
         weekLabel: weeks[wi].label,
         dateMoved: new Date().toISOString(),
       }));
-    if (newCharges.length > 0) {
-      localRepo.saveCCCharges([...localRepo.loadCCCharges(), ...newCharges]);
-    }
-
     // Find the CC payment line item for this card and roll total into next month week 3
     if (total > 0) {
       const nextMonthKey =
@@ -275,7 +285,13 @@ function prevMonth() {
     }
 
     // Mark week as closed
-    setClosedWeeks((prev) => new Set(prev).add(`${year}-${month}-${card.id}-${wi}`));
+    const savedClosedWeeks = await budgetRepo.closeWeek({
+      monthKey,
+      cardId: card.id,
+      weekIndex: wi,
+      charges: newCharges,
+    });
+    setClosedWeeks(savedClosedWeeks);
   }
 
   const monthName = new Date(year, month).toLocaleString("en-US", { month: "long", year: "numeric" });
@@ -507,7 +523,7 @@ function prevMonth() {
                   <td />
                   {creditTotals.map((byCard, wi) => {
                     const total = byCard[card.id] ?? 0;
-                    const closeKey = `${year}-${month}-${card.id}-${wi}`;
+                    const closeKey = `${monthKey}-${card.id}-${wi}`;
                     return (
                       <td key={wi} className="px-2 py-2 text-center text-harbor-navy">
                         {total > 0 ? (
@@ -648,7 +664,7 @@ function prevMonth() {
                 {settings.creditCards.map((card) => {
                   const total = creditTotals[activeWeekIdx]?.[card.id] ?? 0;
                   if (total === 0) return null;
-                  const closeKey = `${year}-${month}-${card.id}-${activeWeekIdx}`;
+                  const closeKey = `${monthKey}-${card.id}-${activeWeekIdx}`;
                   return (
                     <div key={card.id} className="flex items-center justify-between px-4 py-3 gap-3">
                       <span className="text-sm font-semibold text-harbor-navy">{card.label}</span>
