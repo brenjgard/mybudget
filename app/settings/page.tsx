@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { loadSettingsWithSupabaseFallback, saveLocalSettingsToSupabase } from "../lib/budget-settings";
+import { loadSettingsWithSupabaseFallback, saveSettings } from "../lib/budget-settings";
 import { localRepo } from "../lib/local-repo";
 import { SEED_DATA } from "../data/seedData";
 import { AppSettings, FrequencyType, LineItem, PaymentMethod } from "../lib/types";
@@ -250,27 +250,27 @@ export default function Settings() {
     };
   }, []);
 
-  function persist(updated: AppSettings) {
+  async function persist(updated: AppSettings) {
     setSettings(updated);
-    localRepo.saveSettings(updated);
+    const savedSettings = await saveSettings(updated);
+    setSettings(savedSettings);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }
 
-  function loadDemoData() {
+  async function loadDemoData() {
     if (!confirm("This will replace all current settings with demo data. Continue?")) return;
-    localRepo.saveSettings(SEED_DATA);
     localRepo.saveAmounts({});
     localRepo.saveMonthBalances({});
-    setSettings(SEED_DATA);
-    setSaved(true);
-    setTimeout(() => setSaved(false), 2000);
+    await persist(SEED_DATA);
   }
 
   async function saveToCloud() {
+    if (!settings) return;
     try {
-      const result = await saveLocalSettingsToSupabase();
-      alert(`Saved to cloud. Added ${result.budgetSettingsInserted ? 1 : 0} settings row, ${result.paymentAccountsInserted} payment accounts, ${result.categoriesInserted} categories, and ${result.lineItemsInserted} line items.`);
+      const savedSettings = await saveSettings(settings);
+      setSettings(savedSettings);
+      alert(`Saved to cloud. Synced ${savedSettings.creditCards.length + 1} payment accounts, ${savedSettings.categories.length} categories, and ${savedSettings.lineItems.length} line items.`);
     } catch (error) {
       alert(error instanceof Error ? error.message : "Could not save to cloud.");
     }

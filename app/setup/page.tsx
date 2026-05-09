@@ -2,7 +2,7 @@
 
 import { useState, type Dispatch, type SetStateAction } from "react";
 import { useRouter } from "next/navigation";
-import { localRepo } from "../lib/local-repo";
+import { saveSettings } from "../lib/budget-settings";
 import { AppSettings, FrequencyType, LineItem } from "../lib/types";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -309,7 +309,7 @@ export default function Setup() {
     setStep((s) => s - 1);
   }
 
-  function finish() {
+  async function finish() {
     // Derive categories from the items the user actually added
     const categories = [...new Set(lineItems.map((i) => i.category).filter(Boolean))];
     const settings: AppSettings = {
@@ -318,7 +318,7 @@ export default function Setup() {
       categories,
       lineItems,
     };
-    localRepo.saveSettings(settings);
+    await saveSettings(settings);
     router.push("/");
   }
 
