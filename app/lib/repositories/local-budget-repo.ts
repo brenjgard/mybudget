@@ -2,6 +2,7 @@
 
 import { localRepo } from "../local-repo";
 import type { CCCharge } from "../local-repo";
+import type { Buoy } from "../local-repo";
 import type { AppSettings } from "../types";
 
 const CLOSED_WEEKS_KEY = "harbor_closed_weeks";
@@ -78,6 +79,24 @@ export const localBudgetRepo = {
   addCCCharges(charges: CCCharge[]) {
     if (charges.length === 0) return;
     localRepo.saveCCCharges([...localRepo.loadCCCharges(), ...charges]);
+  },
+
+  getBuoys(): Buoy[] {
+    return localRepo.loadBuoys();
+  },
+
+  saveBuoy(buoy: Buoy): Buoy {
+    const existing = localRepo.loadBuoys();
+    const updated = existing.some((item) => item.id === buoy.id)
+      ? existing.map((item) => (item.id === buoy.id ? buoy : item))
+      : [...existing, buoy];
+
+    localRepo.saveBuoys(updated);
+    return buoy;
+  },
+
+  deleteBuoy(id: string) {
+    localRepo.saveBuoys(localRepo.loadBuoys().filter((buoy) => buoy.id !== id));
   },
 
   closeWeek({

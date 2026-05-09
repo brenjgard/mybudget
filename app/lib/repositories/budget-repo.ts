@@ -3,6 +3,7 @@
 import { localBudgetRepo } from "./local-budget-repo";
 import { supabaseBudgetRepo } from "./supabase-budget-repo";
 import type { CCCharge } from "../local-repo";
+import type { Buoy } from "../local-repo";
 import type { AppSettings } from "../types";
 
 async function loadSettings(): Promise<AppSettings | null> {
@@ -179,6 +180,58 @@ async function addCCCharges(charges: CCCharge[]) {
   localBudgetRepo.addCCCharges(charges);
 }
 
+async function getBuoys(): Promise<Buoy[]> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      const supabaseBuoys = await supabaseBudgetRepo.getBuoys();
+      if (supabaseBuoys.length > 0) return supabaseBuoys;
+
+      const localBuoys = localBudgetRepo.getBuoys();
+      if (localBuoys.length > 0) {
+        const savedBuoys = await Promise.all(localBuoys.map((buoy) => supabaseBudgetRepo.saveBuoy(buoy)));
+        return savedBuoys;
+      }
+
+      return supabaseBuoys;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.getBuoys();
+}
+
+async function saveBuoy(buoy: Buoy): Promise<Buoy> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      const savedBuoy = await supabaseBudgetRepo.saveBuoy(buoy);
+      localBudgetRepo.saveBuoy(savedBuoy);
+      return savedBuoy;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.saveBuoy(buoy);
+}
+
+async function deleteBuoy(id: string) {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      await supabaseBudgetRepo.deleteBuoy(id);
+      localBudgetRepo.deleteBuoy(id);
+      return;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  localBudgetRepo.deleteBuoy(id);
+}
+
 async function closeWeek({
   monthKey,
   cardId,
@@ -215,4 +268,7 @@ export const budgetRepo = {
   closeWeek,
   getCCCharges,
   addCCCharges,
+  getBuoys,
+  saveBuoy,
+  deleteBuoy,
 };

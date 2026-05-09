@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { localRepo, type Buoy } from "../lib/local-repo";
+import type { Buoy } from "../lib/local-repo";
+import { budgetRepo } from "../lib/repositories/budget-repo";
 
 function formatMoney(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(n);
@@ -226,22 +227,38 @@ export default function BuoysPage() {
   const [toast, setToast] = useState<string | null>(null);
 
   useEffect(() => {
-    const loaded = localRepo.loadBuoys();
-    // Apply auto-save for buoys whose day matches today and haven't run this month
-    const today = new Date();
-    const monthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
-    const day = today.getDate();
-    let changed = false;
-    const updated = loaded.map((b) => {
-      if (b.autoSave && b.autoSaveDay === day && b.lastAutoSave !== monthKey) {
-        changed = true;
-        return { ...b, current: b.current + b.autoSave, lastAutoSave: monthKey };
+    let cancelled = false;
+
+    async function loadInitialData() {
+      const loadedBuoys = await budgetRepo.getBuoys();
+      // Apply auto-save for buoys whose day matches today and haven't run this month
+      const today = new Date();
+      const monthKey = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
+      const day = today.getDate();
+      const changedBuoys: Buoy[] = [];
+      const updated = loadedBuoys.map((b) => {
+        if (b.autoSave && b.autoSaveDay === day && b.lastAutoSave !== monthKey) {
+          const updatedBuoy = { ...b, current: b.current + b.autoSave, lastAutoSave: monthKey };
+          changedBuoys.push(updatedBuoy);
+          return updatedBuoy;
+        }
+        return b;
+      });
+
+      if (changedBuoys.length > 0) {
+        await Promise.all(changedBuoys.map((buoy) => budgetRepo.saveBuoy(buoy)));
       }
-      return b;
-    });
-    if (changed) localRepo.saveBuoys(updated);
-    setBuoys(updated);
-    setLoaded(true);
+
+      if (cancelled) return;
+      setBuoys(updated);
+      setLoaded(true);
+    }
+
+    void loadInitialData();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   function showToast(msg: string) {
@@ -271,7 +288,7 @@ export default function BuoysPage() {
   }
 
   // ── Save (create or update) ──
-  function handleSave() {
+  async function handleSave() {
     const name = form.name.trim();
     const current = parseFloat(form.current) || 0;
     const goal = parseFloat(form.goal) || 0;
@@ -280,40 +297,40 @@ export default function BuoysPage() {
     const autoSave = form.enableAutoSave ? (parseFloat(form.autoSave) || undefined) : undefined;
     const autoSaveDay = form.enableAutoSave ? (parseInt(form.autoSaveDay) || undefined) : undefined;
 
-    let updated: Buoy[];
+    let buoyToSave: Buoy;
     if (editingId) {
-      updated = buoys.map((b) =>
-        b.id === editingId
-          ? { ...b, name, current, goal, autoSave, autoSaveDay }
-          : b
-      );
+      const existing = buoys.find((b) => b.id === editingId);
+      if (!existing) return;
+      buoyToSave = { ...existing, name, current, goal, autoSave, autoSaveDay };
     } else {
-      const newBuoy: Buoy = { id: crypto.randomUUID(), name, current, goal, autoSave, autoSaveDay };
-      updated = [...buoys, newBuoy];
+      buoyToSave = { id: crypto.randomUUID(), name, current, goal, autoSave, autoSaveDay };
     }
 
-    localRepo.saveBuoys(updated);
-    setBuoys(updated);
+    const savedBuoy = await budgetRepo.saveBuoy(buoyToSave);
+    setBuoys((currentBuoys) => (
+      editingId
+        ? currentBuoys.map((b) => (b.id === editingId ? savedBuoy : b))
+        : [...currentBuoys, savedBuoy]
+    ));
     setShowModal(false);
     showToast(editingId ? "Buoy updated" : "New buoy created");
   }
 
   // ── Quick add ──
-  function quickAdd(id: string, amount: number) {
-    const updated = buoys.map((b) =>
-      b.id === id ? { ...b, current: b.current + amount } : b
-    );
-    localRepo.saveBuoys(updated);
-    setBuoys(updated);
+  async function quickAdd(id: string, amount: number) {
+    const buoy = buoys.find((b) => b.id === id);
+    if (!buoy) return;
+
+    const savedBuoy = await budgetRepo.saveBuoy({ ...buoy, current: buoy.current + amount });
+    setBuoys((currentBuoys) => currentBuoys.map((b) => (b.id === id ? savedBuoy : b)));
     showToast(`+${formatMoney(amount)} added`);
   }
 
   // ── Delete ──
-  function handleDelete() {
+  async function handleDelete() {
     if (!deleteId) return;
-    const updated = buoys.filter((b) => b.id !== deleteId);
-    localRepo.saveBuoys(updated);
-    setBuoys(updated);
+    await budgetRepo.deleteBuoy(deleteId);
+    setBuoys((currentBuoys) => currentBuoys.filter((b) => b.id !== deleteId));
     setDeleteId(null);
     showToast("Buoy removed");
   }
@@ -431,7 +448,7 @@ export default function BuoysPage() {
                   {[10, 50, 100].map((amt) => (
                     <button
                       key={amt}
-                      onClick={() => quickAdd(buoy.id, amt)}
+                      onClick={() => void quickAdd(buoy.id, amt)}
                       className="py-2 border border-slate-200 rounded-lg text-xs font-medium text-harbor-navy hover:border-harbor-teal hover:text-harbor-teal hover:bg-harbor-teal-light transition-colors"
                     >
                       +${amt}
@@ -473,7 +490,7 @@ export default function BuoysPage() {
           title={editingId ? "Edit Buoy" : "New Buoy"}
           form={form}
           setForm={setForm}
-          onSave={handleSave}
+          onSave={() => void handleSave()}
           onClose={() => setShowModal(false)}
         />
       )}
@@ -481,7 +498,7 @@ export default function BuoysPage() {
       {deleteId && deleteTarget && (
         <DeleteModal
           name={deleteTarget.name}
-          onConfirm={handleDelete}
+          onConfirm={() => void handleDelete()}
           onClose={() => setDeleteId(null)}
         />
       )}

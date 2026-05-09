@@ -2,6 +2,7 @@
 
 import { createClient } from "../supabase/client";
 import type { CCCharge } from "../local-repo";
+import type { Buoy } from "../local-repo";
 import type { AppSettings, FrequencyType, LineItem, PaymentMethod } from "../types";
 
 type User = {
@@ -62,6 +63,16 @@ type CCChargeRow = {
   date_moved: string;
 };
 
+type BuoyRow = {
+  id: string;
+  name: string;
+  current: number | string;
+  goal: number | string;
+  auto_save: number | string | null;
+  auto_save_day: number | null;
+  last_auto_save: string | null;
+};
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isUuid(value: string) {
@@ -70,6 +81,23 @@ function isUuid(value: string) {
 
 function closedWeekKey(monthKey: string, cardId: string, weekIndex: number) {
   return `${monthKey}-${cardId}-${weekIndex}`;
+}
+
+function fromBuoyRow(row: BuoyRow): Buoy {
+  return {
+    id: row.id,
+    name: row.name,
+    current: Number(row.current),
+    goal: Number(row.goal),
+    autoSave: row.auto_save === null ? undefined : Number(row.auto_save),
+    autoSaveDay: row.auto_save_day ?? undefined,
+    lastAutoSave: row.last_auto_save ? row.last_auto_save.slice(0, 7) : undefined,
+  };
+}
+
+function toLastAutoSaveDate(monthKey: string | undefined): string | null {
+  if (!monthKey) return null;
+  return monthKey.length === 7 ? `${monthKey}-01` : monthKey.slice(0, 10);
 }
 
 async function getUser(): Promise<User | null> {
@@ -596,6 +624,65 @@ async function addCCCharges(charges: CCCharge[]) {
   if (error) throw error;
 }
 
+async function getBuoys(): Promise<Buoy[]> {
+  const user = await getUser();
+  if (!user) return [];
+
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("buoys")
+    .select("id, name, current, goal, auto_save, auto_save_day, last_auto_save")
+    .eq("user_id", user.id)
+    .order("created_at", { ascending: true })
+    .returns<BuoyRow[]>();
+
+  if (error) throw error;
+
+  return (data ?? []).map(fromBuoyRow);
+}
+
+async function saveBuoy(buoy: Buoy): Promise<Buoy> {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("buoys")
+    .upsert(
+      {
+        user_id: user.id,
+        id: isUuid(buoy.id) ? buoy.id : crypto.randomUUID(),
+        name: buoy.name,
+        current: buoy.current,
+        goal: buoy.goal,
+        auto_save: buoy.autoSave ?? null,
+        auto_save_day: buoy.autoSaveDay ?? null,
+        last_auto_save: toLastAutoSaveDate(buoy.lastAutoSave),
+        updated_at: new Date().toISOString(),
+      },
+      { onConflict: "id" },
+    )
+    .select("id, name, current, goal, auto_save, auto_save_day, last_auto_save")
+    .single<BuoyRow>();
+
+  if (error) throw error;
+  return fromBuoyRow(data);
+}
+
+async function deleteBuoy(id: string) {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("buoys")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("id", id);
+
+  if (error) throw error;
+}
+
 async function closeWeek({
   monthKey,
   cardId,
@@ -649,4 +736,7 @@ export const supabaseBudgetRepo = {
   closeWeek,
   getCCCharges,
   addCCCharges,
+  getBuoys,
+  saveBuoy,
+  deleteBuoy,
 };

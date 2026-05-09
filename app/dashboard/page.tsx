@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { loadSettingsWithSupabaseFallback } from "../lib/budget-settings";
 import { localRepo, type Buoy } from "../lib/local-repo";
+import { budgetRepo } from "../lib/repositories/budget-repo";
 import { getWeekRanges, itemAppliesToWeek } from "../lib/schedule";
 import { AppSettings } from "../lib/types";
 
@@ -49,12 +50,15 @@ export default function Dashboard() {
     let cancelled = false;
 
     async function loadInitialData() {
-      const s = await loadSettingsWithSupabaseFallback();
+      const [s, savedBuoys] = await Promise.all([
+        loadSettingsWithSupabaseFallback(),
+        budgetRepo.getBuoys(),
+      ]);
       if (cancelled) return;
       setSettings(s);
       setCCCharges(localRepo.loadCCCharges());
       setAmounts(localRepo.loadAmounts(monthKey));
-      setBuoys(localRepo.loadBuoys());
+      setBuoys(savedBuoys);
       setLoaded(true);
     }
 
@@ -129,7 +133,7 @@ export default function Dashboard() {
   }, [settings, weeks, amounts, month]);
 
   // ── Buoy handlers ─────────────────────────────────────────────────────────
-  function addBuoy() {
+  async function addBuoy() {
     const current = parseFloat(buoyForm.current) || 0;
     const goal = parseFloat(buoyForm.goal) || 0;
     if (!buoyForm.name.trim() || goal <= 0) return;
@@ -139,17 +143,15 @@ export default function Dashboard() {
       current,
       goal,
     };
-    const updated = [...buoys, newBuoy];
-    setBuoys(updated);
-    localRepo.saveBuoys(updated);
+    const savedBuoy = await budgetRepo.saveBuoy(newBuoy);
+    setBuoys((currentBuoys) => [...currentBuoys, savedBuoy]);
     setBuoyForm(BLANK_BUOY);
     setShowBuoyForm(false);
   }
 
-  function removeBuoy(id: string) {
-    const updated = buoys.filter((b) => b.id !== id);
-    setBuoys(updated);
-    localRepo.saveBuoys(updated);
+  async function removeBuoy(id: string) {
+    await budgetRepo.deleteBuoy(id);
+    setBuoys((currentBuoys) => currentBuoys.filter((b) => b.id !== id));
   }
 
   if (!loaded) {
@@ -328,7 +330,7 @@ export default function Dashboard() {
                             {formatMoney(buoy.current)} / {formatMoney(buoy.goal)}
                           </span>
                           <button
-                            onClick={() => removeBuoy(buoy.id)}
+                            onClick={() => void removeBuoy(buoy.id)}
                             className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-300 hover:text-harbor-red text-xs leading-none"
                             title="Remove"
                           >
@@ -383,7 +385,7 @@ export default function Dashboard() {
                     Cancel
                   </button>
                   <button
-                    onClick={addBuoy}
+                    onClick={() => void addBuoy()}
                     className="px-4 py-2 bg-harbor-teal text-white rounded-lg text-sm font-medium hover:bg-harbor-teal/90 transition-colors"
                   >
                     Add Buoy
