@@ -1,9 +1,13 @@
 import { NextResponse } from "next/server";
-import { isApprovedBetaUser } from "../../lib/beta-access";
+import { isApprovedBetaUserWithClient } from "../../lib/beta-access";
 import { createClient } from "../../lib/supabase/server";
 
 function getNextPath(value: FormDataEntryValue | null) {
   if (typeof value !== "string" || !value.startsWith("/")) {
+    return "/dashboard";
+  }
+
+  if (value === "/beta" || value === "/beta/pending" || value.startsWith("/login") || value.startsWith("/signup")) {
     return "/dashboard";
   }
 
@@ -28,7 +32,7 @@ export async function POST(request: Request) {
 
   let isApproved = false;
   try {
-    isApproved = await isApprovedBetaUser(email);
+    isApproved = await isApprovedBetaUserWithClient(supabase, email);
   } catch {
     isApproved = false;
   }
