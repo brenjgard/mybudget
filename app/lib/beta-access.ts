@@ -1,6 +1,9 @@
 import { createClient } from "./supabase/server";
-
-type BetaAccessClient = Awaited<ReturnType<typeof createClient>>;
+import {
+  isApprovedBetaUserWithClient,
+  isDuplicateEmailError,
+  normalizeEmail,
+} from "./beta-access-core";
 
 type BetaAccessRequest = {
   name: string;
@@ -10,31 +13,11 @@ type BetaAccessRequest = {
 
 export type BetaAccessRequestResult = "requested" | "already_requested" | "already_approved";
 
-function normalizeEmail(email: string) {
-  return email.trim().toLowerCase();
-}
-
-function isDuplicateEmailError(error: { code?: string; message?: string; details?: string }) {
-  const text = `${error.message ?? ""} ${error.details ?? ""}`.toLowerCase();
-  return error.code === "23505" || text.includes("duplicate key") || text.includes("beta_access_requests_email_unique");
-}
-
-export async function isApprovedBetaUserWithClient(supabase: Pick<BetaAccessClient, "from">, email: string) {
-  const normalizedEmail = normalizeEmail(email);
-  if (!normalizedEmail) return false;
-
-  const { data, error } = await supabase
-    .from("approved_beta_users")
-    .select("email")
-    .limit(1000);
-
-  if (error) throw error;
-  return (data ?? []).some((user) => normalizeEmail(String(user.email ?? "")) === normalizedEmail);
-}
-
 export async function isApprovedBetaUser(email: string) {
   const supabase = await createClient();
-  return isApprovedBetaUserWithClient(supabase, email);
+  const result = await isApprovedBetaUserWithClient(supabase, email);
+  if (result.error) throw result.error;
+  return result.approved;
 }
 
 export async function requestBetaAccess({ name, email, note }: BetaAccessRequest): Promise<BetaAccessRequestResult> {
@@ -45,7 +28,9 @@ export async function requestBetaAccess({ name, email, note }: BetaAccessRequest
 
   const supabase = await createClient();
 
-  if (await isApprovedBetaUserWithClient(supabase, normalizedEmail)) {
+  const approval = await isApprovedBetaUserWithClient(supabase, normalizedEmail);
+  if (approval.error) throw approval.error;
+  if (approval.approved) {
     return "already_approved";
   }
 

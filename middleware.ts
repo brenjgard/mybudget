@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { isApprovedBetaUserWithClient } from "./app/lib/beta-access";
+import { getSupabaseProjectHost, isApprovedBetaUserWithClient } from "./app/lib/beta-access-core";
 import { updateSession } from "./app/lib/supabase/middleware";
 
 const PUBLIC_PATHS = ["/beta", "/beta/pending", "/login", "/signup"];
@@ -33,14 +33,27 @@ export async function middleware(request: NextRequest) {
   }
 
   if (user) {
-    const email = user.email?.trim().toLowerCase();
-    let isApproved = false;
+    const email = user.email ?? "";
+    const approval = email
+      ? await isApprovedBetaUserWithClient(supabase, email)
+      : { approved: false, normalizedEmail: "", count: 0, error: null };
+    const isApproved = approval.approved && !approval.error;
 
-    try {
-      isApproved = email ? await isApprovedBetaUserWithClient(supabase, email) : false;
-    } catch {
-      isApproved = false;
-    }
+    console.info("[beta-middleware]", {
+      host: request.headers.get("host"),
+      supabaseHost: getSupabaseProjectHost(),
+      pathname,
+      userEmail: approval.normalizedEmail,
+      hasUser: true,
+      approved: isApproved,
+      approvedRowsVisible: approval.count,
+      approvalError: approval.error?.message ?? null,
+      redirect: !isApproved && pathname !== "/beta/pending" && !pathname.startsWith("/auth/")
+        ? "/beta/pending"
+        : isApproved && (isAuthEntry || pathname === "/beta" || pathname === "/beta/pending")
+          ? "/dashboard"
+          : null,
+    });
 
     if (!isApproved && pathname !== "/beta/pending" && !pathname.startsWith("/auth/")) {
       return withCookies(response, NextResponse.redirect(new URL("/beta/pending", request.url)));
