@@ -7,6 +7,7 @@ import { scopedStorageKey, warnIfLegacyStorageExists } from "../local-storage-sc
 import type { AppSettings } from "../types";
 
 const CLOSED_WEEKS_KEY = "harbor_closed_weeks";
+const CLOSED_MONTHS_KEY = "harbor_closed_months";
 
 function closedWeekKey(monthKey: string, cardId: string, weekIndex: number) {
   return `${monthKey}-${cardId}-${weekIndex}`;
@@ -23,6 +24,19 @@ function loadClosedWeekKeys(): string[] {
 
 function saveClosedWeekKeys(keys: string[]) {
   localStorage.setItem(scopedStorageKey(CLOSED_WEEKS_KEY), JSON.stringify(keys));
+}
+
+function loadClosedMonthKeys(): string[] {
+  try {
+    warnIfLegacyStorageExists(CLOSED_MONTHS_KEY, "closed months");
+    return JSON.parse(localStorage.getItem(scopedStorageKey(CLOSED_MONTHS_KEY)) ?? "[]") as string[];
+  } catch {
+    return [];
+  }
+}
+
+function saveClosedMonthKeys(keys: string[]) {
+  localStorage.setItem(scopedStorageKey(CLOSED_MONTHS_KEY), JSON.stringify(keys));
 }
 
 export const localBudgetRepo = {
@@ -51,6 +65,25 @@ export const localBudgetRepo = {
     const balances = { ...localRepo.loadMonthBalances(), [monthKey]: balance };
     localRepo.saveMonthBalances(balances);
     return balances;
+  },
+
+  getClosedMonths(): Set<string> {
+    return new Set(loadClosedMonthKeys());
+  },
+
+  closeMonth(monthKey: string, endingBalance: number): Set<string> {
+    this.saveMonthBalance(monthKey, endingBalance);
+    const keys = new Set(loadClosedMonthKeys());
+    keys.add(monthKey);
+    saveClosedMonthKeys([...keys]);
+    return this.getClosedMonths();
+  },
+
+  reopenMonth(monthKey: string): Set<string> {
+    const keys = new Set(loadClosedMonthKeys());
+    keys.delete(monthKey);
+    saveClosedMonthKeys([...keys]);
+    return this.getClosedMonths();
   },
 
   getAnchorOverride(): number | null {

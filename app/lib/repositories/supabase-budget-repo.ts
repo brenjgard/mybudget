@@ -48,6 +48,10 @@ type MonthBalanceRow = {
   starting_balance: number | string;
 };
 
+type ClosedMonthRow = {
+  month_key: string;
+};
+
 type ClosedWeekRow = {
   payment_account_id: string;
   week_index: number;
@@ -523,6 +527,64 @@ async function saveMonthBalance(monthKey: string, balance: number): Promise<Reco
   return getMonthBalances();
 }
 
+async function getClosedMonths(): Promise<Set<string>> {
+  const user = await getUser();
+  if (!user) return new Set();
+
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("closed_months")
+    .select("month_key")
+    .eq("user_id", user.id)
+    .is("reopened_at", null)
+    .returns<ClosedMonthRow[]>();
+
+  if (error) throw error;
+
+  return new Set((data ?? []).map((row) => row.month_key));
+}
+
+async function closeMonth(monthKey: string, endingBalance: number): Promise<Set<string>> {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  await saveMonthBalance(monthKey, endingBalance);
+
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("closed_months")
+    .upsert(
+      {
+        user_id: user.id,
+        month_key: monthKey,
+        ending_balance: endingBalance,
+        closed_at: new Date().toISOString(),
+        reopened_at: null,
+      },
+      { onConflict: "user_id,month_key" },
+    );
+
+  if (error) throw error;
+
+  return getClosedMonths();
+}
+
+async function reopenMonth(monthKey: string): Promise<Set<string>> {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("closed_months")
+    .update({ reopened_at: new Date().toISOString() })
+    .eq("user_id", user.id)
+    .eq("month_key", monthKey);
+
+  if (error) throw error;
+
+  return getClosedMonths();
+}
+
 async function getPaymentAccounts(userId: string): Promise<PaymentAccountRow[]> {
   const supabase = createClient();
   const { data, error } = await supabase
@@ -730,6 +792,9 @@ export const supabaseBudgetRepo = {
   saveMonthlyAmounts,
   getMonthBalances,
   saveMonthBalance,
+  getClosedMonths,
+  closeMonth,
+  reopenMonth,
   getAnchorOverride,
   saveAnchorOverride,
   getClosedWeeks,

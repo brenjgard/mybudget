@@ -22,6 +22,7 @@ export default function Home() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [currentBalance, setCurrentBalance] = useState<number | "">("");
   const [anchorDraft, setAnchorDraft] = useState("");
+  const [isEditingAnchor, setIsEditingAnchor] = useState(false);
   const [amounts, setAmounts] = useState<Record<string, Record<number, number>>>({});
   const [loaded, setLoaded] = useState(false);
   const [autoFill, setAutoFill] = useState(false);
@@ -32,6 +33,7 @@ export default function Home() {
 
   // ── Feature 5: Close Week tracking ───────────────────────────────────────
   const [closedWeeks, setClosedWeeks] = useState<Set<string>>(new Set());
+  const [closedMonths, setClosedMonths] = useState<Set<string>>(new Set());
   const [activeWeekIdx, setActiveWeekIdx] = useState(0);
   const anchorSaveSeq = useRef(0);
   const anchorDraftRef = useRef("");
@@ -46,20 +48,30 @@ export default function Home() {
 
   // ── All derived month keys ────────────────────────────────────────────────
   const monthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
+  const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const prevMonthKey = month === 0
     ? `${year - 1}-12`
     : `${year}-${String(month).padStart(2, "0")}`;
+  const monthName = new Date(year, month).toLocaleString("en-US", { month: "long", year: "numeric" });
+  const monthLabel = new Date(year, month).toLocaleString("en-US", { month: "long" });
+  const prevDate = month === 0
+    ? new Date(year - 1, 11, 1)
+    : new Date(year, month - 1, 1);
+  const oneMonthAgo = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const canGoPrevMonth = prevDate >= oneMonthAgo;
+  const isMonthClosed = closedMonths.has(monthKey);
 
   // Load on mount
   useEffect(() => {
     let cancelled = false;
 
     async function loadInitialData() {
-      const [s, savedAmounts, savedMonthBalances, savedAnchorOverride] = await Promise.all([
+      const [s, savedAmounts, savedMonthBalances, savedAnchorOverride, savedClosedMonths] = await Promise.all([
         loadSettingsWithSupabaseFallback(),
         budgetRepo.getMonthlyAmounts(monthKey),
         budgetRepo.getMonthBalances(),
         budgetRepo.getAnchorOverride(),
+        budgetRepo.getClosedMonths(),
       ]);
       if (cancelled) return;
       if (!s) { router.push("/setup"); return; }
@@ -71,6 +83,7 @@ export default function Home() {
       setAnchorDraft(nextAnchorDraft);
       setAmounts(savedAmounts);
       setMonthBalances(savedMonthBalances);
+      setClosedMonths(savedClosedMonths);
       setClosedWeeks(await budgetRepo.getClosedWeeks(monthKey));
       setLoaded(true);
       setAutoFill(true);
@@ -117,8 +130,8 @@ export default function Home() {
 
   // Save amounts whenever they change
   useEffect(() => {
-    if (loaded) void budgetRepo.saveMonthlyAmounts(monthKey, amounts);
-  }, [amounts, loaded]);
+    if (loaded && !isMonthClosed) void budgetRepo.saveMonthlyAmounts(monthKey, amounts);
+  }, [amounts, loaded, isMonthClosed]);
 
   const weeks = useMemo(() => getWeekRanges(year, month), [year, month]);
 
@@ -173,9 +186,13 @@ export default function Home() {
     });
   }, [year, month, weeks.length]);
 
-  const startingBalance = currentBalance !== ""
+  const currentAnchor = currentBalance !== ""
     ? currentBalance
-    : monthBalances[prevMonthKey] ?? settings?.checkingBalance ?? 0;
+    : settings?.checkingBalance ?? 0;
+
+  const startingBalance = monthKey === currentMonthKey
+    ? currentAnchor
+    : monthBalances[prevMonthKey] ?? currentAnchor;
 
   const weekTotals = useMemo(() => {
     if (!settings) return [];
@@ -197,6 +214,7 @@ export default function Home() {
       return [...balances, previous + total];
     }, []);
   }, [startingBalance, weekTotals]);
+  const projectedForwardBalance = projectedBalances[projectedBalances.length - 1] ?? startingBalance;
 
   const creditTotals = useMemo(() => {
     if (!settings) return [];
@@ -234,8 +252,11 @@ export default function Home() {
   useEffect(() => {
     if (!loaded || projectedBalances.length === 0) return;
     const endingBalance = projectedBalances[projectedBalances.length - 1];
-    const updated = { ...monthBalances, [monthKey]: endingBalance };
-    void Promise.resolve().then(() => setMonthBalances(updated));
+    void Promise.resolve().then(() => {
+      setMonthBalances((prev) => (
+        prev[monthKey] === endingBalance ? prev : { ...prev, [monthKey]: endingBalance }
+      ));
+    });
     void budgetRepo.saveMonthBalance(monthKey, endingBalance);
   }, [projectedBalances, loaded, monthKey]);
 
@@ -244,6 +265,7 @@ export default function Home() {
   }
 
   function setAmount(itemId: string, weekIdx: number, val: number | "") {
+    if (isMonthClosed) return;
     setAmounts((prev) => ({
       ...prev,
       [itemId]: { ...(prev[itemId] ?? {}), [weekIdx]: val === "" ? 0 : val },
@@ -254,6 +276,37 @@ export default function Home() {
     anchorDraftRef.current = value;
     anchorDirtyRef.current = true;
     setAnchorDraft(value);
+  }
+
+  function openAnchorEditor() {
+    const draft = String(currentAnchor);
+    anchorDraftRef.current = draft;
+    anchorDirtyRef.current = false;
+    setAnchorDraft(draft);
+    setIsEditingAnchor(true);
+  }
+
+  function cancelAnchorEdit() {
+    const draft = currentBalance === "" ? "" : String(currentBalance);
+    anchorDraftRef.current = draft;
+    anchorDirtyRef.current = false;
+    setAnchorDraft(draft);
+    setIsEditingAnchor(false);
+  }
+
+  async function saveAnchorEdit() {
+    if (anchorDirtyRef.current) {
+      await commitAnchorOverride();
+    }
+    setIsEditingAnchor(false);
+  }
+
+  async function clearAnchorOverride() {
+    anchorDraftRef.current = "";
+    anchorDirtyRef.current = true;
+    setAnchorDraft("");
+    await commitAnchorOverride();
+    setIsEditingAnchor(false);
   }
 
   async function commitAnchorOverride(commitMonthKey = monthKey) {
@@ -296,11 +349,7 @@ export default function Home() {
 
 async function prevMonth() {
     await commitAnchorOverride();
-    const prevDate = month === 0
-      ? new Date(year - 1, 11, 1)
-      : new Date(year, month - 1, 1);
-    const oneMonthAgo = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    if (prevDate < oneMonthAgo) return; // block going too far back
+    if (!canGoPrevMonth) return; // block going too far back
     if (month === 0) { setMonth(11); setYear((y) => y - 1); }
     else setMonth((m) => m - 1);
   }
@@ -316,7 +365,7 @@ async function prevMonth() {
 
   // ── Feature 5: Close Week CC flow ─────────────────────────────────────────
   async function closeWeek(card: { id: string; label: string }, wi: number) {
-    if (!settings) return;
+    if (!settings || isMonthClosed) return;
 
     // Collect all line items charged to this card that apply this week
     const chargeItems = settings.lineItems.filter(
@@ -372,7 +421,19 @@ async function prevMonth() {
     setClosedWeeks(savedClosedWeeks);
   }
 
-  const monthName = new Date(year, month).toLocaleString("en-US", { month: "long", year: "numeric" });
+  async function closeMonth() {
+    const savedClosedMonths = await budgetRepo.closeMonth(monthKey, projectedForwardBalance);
+    setClosedMonths(savedClosedMonths);
+    setMonthBalances((prev) => ({ ...prev, [monthKey]: projectedForwardBalance }));
+  }
+
+  async function reopenMonth() {
+    const confirmed = window.confirm(`Reopen ${monthName}? This will allow edits again.`);
+    if (!confirmed) return;
+
+    const savedClosedMonths = await budgetRepo.reopenMonth(monthKey);
+    setClosedMonths(savedClosedMonths);
+  }
 
   if (!loaded || !settings) {
     return (
@@ -394,13 +455,16 @@ async function prevMonth() {
             <div className="flex items-center gap-2">
               <button
                 onClick={prevMonth}
-                className="w-9 h-9 flex items-center justify-center rounded-lg bg-harbor-teal-light hover:bg-harbor-teal/20 text-harbor-navy font-bold transition-colors"
+                disabled={!canGoPrevMonth}
+                aria-label="Previous month"
+                className="w-9 h-9 flex items-center justify-center rounded-lg bg-harbor-teal-light hover:bg-harbor-teal/20 text-harbor-navy font-bold transition-colors disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-300 disabled:hover:bg-slate-100"
               >
                 ←
               </button>
               <span className="font-bold text-base md:text-lg w-44 text-center text-harbor-navy">{monthName}</span>
               <button
                 onClick={nextMonth}
+                aria-label="Next month"
                 className="w-9 h-9 flex items-center justify-center rounded-lg bg-harbor-teal-light hover:bg-harbor-teal/20 text-harbor-navy font-bold transition-colors"
               >
                 →
@@ -410,8 +474,19 @@ async function prevMonth() {
             <div className="flex items-center gap-2">
               <Link
                 href="/settings#waves"
-                onClick={(e) => void navigateAfterAnchorCommit(e, "/settings#waves")}
-                className="flex items-center gap-1 px-3 py-2 rounded-lg border border-harbor-green/30 bg-harbor-green/5 text-harbor-green text-xs font-medium hover:bg-harbor-green/10 transition-colors"
+                aria-disabled={isMonthClosed}
+                onClick={(e) => {
+                  if (isMonthClosed) {
+                    e.preventDefault();
+                    return;
+                  }
+                  void navigateAfterAnchorCommit(e, "/settings#waves");
+                }}
+                className={`flex items-center gap-1 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                  isMonthClosed
+                    ? "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-300"
+                    : "border-harbor-green/30 bg-harbor-green/5 text-harbor-green hover:bg-harbor-green/10"
+                }`}
               >
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -420,46 +495,163 @@ async function prevMonth() {
               </Link>
               <Link
                 href="/settings#ripples"
-                onClick={(e) => void navigateAfterAnchorCommit(e, "/settings#ripples")}
-                className="flex items-center gap-1 px-3 py-2 rounded-lg border border-harbor-red/30 bg-harbor-red/5 text-harbor-red text-xs font-medium hover:bg-harbor-red/10 transition-colors"
+                aria-disabled={isMonthClosed}
+                onClick={(e) => {
+                  if (isMonthClosed) {
+                    e.preventDefault();
+                    return;
+                  }
+                  void navigateAfterAnchorCommit(e, "/settings#ripples");
+                }}
+                className={`flex items-center gap-1 px-3 py-2 rounded-lg border text-xs font-medium transition-colors ${
+                  isMonthClosed
+                    ? "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-300"
+                    : "border-harbor-red/30 bg-harbor-red/5 text-harbor-red hover:bg-harbor-red/10"
+                }`}
               >
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
                 </svg>
                 Add Ripple
               </Link>
+              {isMonthClosed ? (
+                <button
+                  type="button"
+                  onClick={() => void reopenMonth()}
+                  className="px-3 py-2 rounded-lg border border-harbor-teal/30 bg-harbor-teal-light text-harbor-navy text-xs font-medium hover:bg-harbor-teal/20 transition-colors"
+                >
+                  Reopen Month
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => void closeMonth()}
+                  className="px-3 py-2 rounded-lg border border-harbor-navy/20 bg-harbor-navy text-white text-xs font-medium hover:bg-harbor-navy/90 transition-colors"
+                >
+                  Close Month
+                </button>
+              )}
             </div>
           </div>
 
-          {/* Row 2: Balance controls */}
-          <div className="flex items-center gap-4 flex-wrap">
-            <div>
-              <label className="text-xs text-slate-400 block">Anchor</label>
-              <span className={`font-semibold text-lg ${startingBalance >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
-                {formatMoney(startingBalance)}
-              </span>
+          {isMonthClosed && (
+            <div className="rounded-xl border border-harbor-teal/20 bg-harbor-teal-light px-4 py-3">
+              <p className="text-sm font-semibold text-harbor-navy">{monthLabel} is closed</p>
+              <p className="text-xs text-harbor-navy/60">
+                Closed months are read-only so Harbor can carry balances forward cleanly.
+              </p>
             </div>
-            <div>
-              <label className="text-xs text-slate-400 block">Override Anchor</label>
-              <input
-                type="number"
-                inputMode="decimal"
-                className="border-2 border-harbor-teal-light focus:border-harbor-teal rounded-lg px-3 py-2 w-36 text-right font-semibold text-slate-600 focus:outline-none transition-colors"
-                value={anchorDraft}
-                onChange={(e) => changeAnchorDraft(e.target.value)}
-                onBlur={() => void commitAnchorOverride()}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    e.currentTarget.blur();
-                  }
-                }}
-              />
+          )}
+
+          {weeks.length > 0 && (
+            <div className="md:hidden flex items-center justify-between bg-harbor-navy text-white rounded-2xl px-4 py-3 shadow-sm">
+              <button
+                onClick={() => setActiveWeekIdx((i) => Math.max(0, i - 1))}
+                disabled={activeWeekIdx === 0}
+                className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 font-bold transition-colors"
+              >
+                â†
+              </button>
+              <div className="text-center">
+                <div className="text-xs opacity-60">Week {activeWeekIdx + 1} of {weeks.length}</div>
+                <div className="text-sm font-medium">{weeks[activeWeekIdx].label}</div>
+              </div>
+              <button
+                onClick={() => setActiveWeekIdx((i) => Math.min(weeks.length - 1, i + 1))}
+                disabled={activeWeekIdx === weeks.length - 1}
+                className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 font-bold transition-colors"
+              >
+                â†’
+              </button>
             </div>
-          </div>
+          )}
 
         </div>
 
-        {/* Budget table — desktop only */}
+        {/* Anchor summary */}
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-harbor-teal-light">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(220px,auto)] md:items-start">
+              <div className="space-y-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">Current Anchor</p>
+                <div className={`text-2xl font-bold ${currentAnchor >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
+                  {formatMoney(currentAnchor)}
+                </div>
+                <p className="max-w-xl text-sm text-harbor-navy/55">
+                  Your actual checking balance. Harbor projects forward from here.
+                </p>
+              </div>
+
+              {!isEditingAnchor && (
+                <div className="space-y-1 md:border-l md:border-harbor-teal-light md:pl-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">Projected Balance</p>
+                  <div className={`text-xl font-bold ${projectedForwardBalance >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
+                    {formatMoney(projectedForwardBalance)}
+                  </div>
+                  <p className="max-w-sm text-sm text-harbor-navy/55">
+                    Where Harbor expects this month to end after scheduled waves and ripples.
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {isEditingAnchor ? (
+              <div className="flex w-full flex-col gap-3 md:w-auto md:min-w-[320px]">
+                <label className="text-xs text-slate-400">Current Anchor amount</label>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  className="w-full rounded-lg border-2 border-harbor-teal-light px-3 py-2 text-right font-semibold text-slate-600 transition-colors focus:border-harbor-teal focus:outline-none"
+                  value={anchorDraft}
+                  onChange={(e) => changeAnchorDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      void saveAnchorEdit();
+                    }
+                    if (e.key === "Escape") {
+                      cancelAnchorEdit();
+                    }
+                  }}
+                />
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => void saveAnchorEdit()}
+                    className="rounded-lg bg-harbor-teal px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-harbor-teal/90"
+                  >
+                    Save
+                  </button>
+                  <button
+                    type="button"
+                    onClick={cancelAnchorEdit}
+                    className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-harbor-navy/70 transition-colors hover:bg-slate-50"
+                  >
+                    Cancel
+                  </button>
+                  {currentBalance !== "" && (
+                    <button
+                      type="button"
+                      onClick={() => void clearAnchorOverride()}
+                      className="rounded-lg border border-harbor-red/30 px-4 py-2 text-sm font-medium text-harbor-red transition-colors hover:bg-red-50"
+                    >
+                      Clear Anchor
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={openAnchorEditor}
+                disabled={isMonthClosed}
+                className="self-start rounded-lg border border-harbor-teal/30 bg-harbor-teal-light px-4 py-2 text-sm font-medium text-harbor-navy transition-colors hover:bg-harbor-teal/20 disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-300 disabled:hover:bg-slate-50 md:self-center"
+              >
+                Edit Anchor
+              </button>
+            )}
+          </div>
+        </div>
+
         <div className="hidden md:block bg-white rounded-2xl shadow-sm overflow-x-auto border border-harbor-teal-light">
           <table className="w-full text-sm border-collapse">
             <thead>
@@ -541,8 +733,19 @@ async function prevMonth() {
                         {item.isIncome && <span className="text-xs text-harbor-green font-medium">↑</span>}
                         <Link
                           href="/settings"
-                          onClick={(e) => void navigateAfterAnchorCommit(e, "/settings")}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-300 hover:text-harbor-teal flex-shrink-0"
+                          aria-disabled={isMonthClosed}
+                          onClick={(e) => {
+                            if (isMonthClosed) {
+                              e.preventDefault();
+                              return;
+                            }
+                            void navigateAfterAnchorCommit(e, "/settings");
+                          }}
+                          className={`flex-shrink-0 transition-opacity ${
+                            isMonthClosed
+                              ? "pointer-events-none opacity-0 text-slate-200"
+                              : "opacity-0 group-hover:opacity-100 text-slate-300 hover:text-harbor-teal"
+                          }`}
                           title="Edit in Settings"
                         >
                           <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -555,10 +758,19 @@ async function prevMonth() {
                     <td className="px-2 py-2 text-center">
                       <Link
                         href="/settings"
-                        onClick={(e) => void navigateAfterAnchorCommit(e, "/settings")}
+                        aria-disabled={isMonthClosed}
+                        onClick={(e) => {
+                          if (isMonthClosed) {
+                            e.preventDefault();
+                            return;
+                          }
+                          void navigateAfterAnchorCommit(e, "/settings");
+                        }}
                         title="Change method in Settings"
                         className={`text-xs px-2 py-0.5 rounded-full font-medium hover:ring-2 hover:ring-offset-1 transition-all ${
-                          item.paymentMethod === "checking"
+                          isMonthClosed
+                            ? "pointer-events-none bg-slate-100 text-slate-400"
+                            : item.paymentMethod === "checking"
                             ? "bg-harbor-teal/15 text-harbor-teal hover:ring-harbor-teal/40"
                             : "bg-harbor-navy/10 text-harbor-navy hover:ring-harbor-navy/30"
                         }`}
@@ -578,12 +790,13 @@ async function prevMonth() {
                               type="number"
                               min="0"
                               step="0.01"
+                              disabled={isMonthClosed}
                               placeholder="—"
                               value={val === 0 ? "" : val}
                               onChange={(e) => setAmount(item.id, wi, e.target.value === "" ? "" : Number(e.target.value))}
                               className={item.isIncome
-                                ? "w-24 text-right rounded-lg border-l-2 border-l-harbor-green border-t border-r border-b border-slate-200 px-2 py-1 text-sm text-harbor-green focus:outline-none focus:ring-1 focus:ring-harbor-teal/20"
-                                : "w-24 text-right rounded-lg border-l-2 border-l-harbor-red border-t border-r border-b border-slate-200 px-2 py-1 text-sm text-harbor-red focus:outline-none focus:ring-1 focus:ring-harbor-red/20"}
+                                ? "w-24 text-right rounded-lg border-l-2 border-l-harbor-green border-t border-r border-b border-slate-200 px-2 py-1 text-sm text-harbor-green focus:outline-none focus:ring-1 focus:ring-harbor-teal/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                                : "w-24 text-right rounded-lg border-l-2 border-l-harbor-red border-t border-r border-b border-slate-200 px-2 py-1 text-sm text-harbor-red focus:outline-none focus:ring-1 focus:ring-harbor-red/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"}
                             />
                           ) : (
                             <span className="text-slate-200 text-xs">—</span>
@@ -602,7 +815,7 @@ async function prevMonth() {
                 </td>
               </tr>
 
-              {/* Credit card totals with Close Week */}
+              {/* Credit card totals with Wrap Up Week */}
               {settings.creditCards.map((card) => (
                 <tr key={card.id} className="bg-harbor-navy/5 font-semibold">
                   <td className="px-3 py-2 sticky left-0 bg-harbor-navy/5 text-xs uppercase tracking-wide text-harbor-navy" colSpan={2}>
@@ -616,15 +829,16 @@ async function prevMonth() {
                       <td key={wi} className="px-2 py-2 text-center text-harbor-navy">
                         {total > 0 ? (
                           closedWeeks.has(closeKey) ? (
-                            <span className="text-xs text-harbor-green font-medium">✓ Closed</span>
+                            <span className="text-xs text-harbor-green font-medium">✓ Wrapped</span>
                           ) : (
                             <div className="inline-flex flex-col items-center gap-1.5">
                               <span>{formatMoney(total)}</span>
                               <button
                                 onClick={() => closeWeek(card, wi)}
-                                className="text-xs bg-harbor-navy text-white hover:bg-harbor-teal px-2.5 py-0.5 rounded-full font-medium transition-colors leading-none whitespace-nowrap"
+                                disabled={isMonthClosed}
+                                className="text-xs bg-harbor-navy text-white hover:bg-harbor-teal px-2.5 py-0.5 rounded-full font-medium transition-colors leading-none whitespace-nowrap disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:hover:bg-slate-200"
                               >
-                                Close Week
+                                Wrap Up Week
                               </button>
                             </div>
                           )
@@ -653,7 +867,7 @@ async function prevMonth() {
               {/* Projected balance */}
               <tr className="bg-harbor-navy text-white font-bold">
                 <td className="px-3 py-3 sticky left-0 bg-harbor-navy text-xs uppercase tracking-wide" colSpan={2}>
-                  Projected Anchor
+                  Projected Balance
                 </td>
                 <td />
                 {projectedBalances.map((b, i) => (
@@ -669,28 +883,6 @@ async function prevMonth() {
         {/* Mobile card view — visible only below md */}
         {weeks.length > 0 && (
           <div className="block md:hidden space-y-3">
-
-            {/* Week navigation */}
-            <div className="flex items-center justify-between bg-harbor-navy text-white rounded-2xl px-4 py-3">
-              <button
-                onClick={() => setActiveWeekIdx((i) => Math.max(0, i - 1))}
-                disabled={activeWeekIdx === 0}
-                className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 font-bold transition-colors"
-              >
-                ←
-              </button>
-              <div className="text-center">
-                <div className="text-xs opacity-60">Week {activeWeekIdx + 1} of {weeks.length}</div>
-                <div className="text-sm font-medium">{weeks[activeWeekIdx].label}</div>
-              </div>
-              <button
-                onClick={() => setActiveWeekIdx((i) => Math.min(weeks.length - 1, i + 1))}
-                disabled={activeWeekIdx === weeks.length - 1}
-                className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 font-bold transition-colors"
-              >
-                →
-              </button>
-            </div>
 
             {/* Category cards */}
             {settings.categories.map((cat) => {
@@ -726,13 +918,14 @@ async function prevMonth() {
                             inputMode="decimal"
                             min="0"
                             step="0.01"
+                            disabled={isMonthClosed}
                             placeholder="0"
                             value={val === 0 ? "" : val}
                             onChange={(e) => setAmount(item.id, activeWeekIdx, e.target.value === "" ? "" : Number(e.target.value))}
                             className={`w-24 text-right rounded-lg border-l-2 px-2 py-2 text-sm flex-shrink-0 focus:outline-none focus:ring-1 ${
                               item.isIncome
-                                ? "border-l-harbor-green border border-slate-200 text-harbor-green focus:ring-harbor-teal/20"
-                                : "border-l-harbor-red border border-slate-200 text-harbor-red focus:ring-harbor-red/20"
+                                ? "border-l-harbor-green border border-slate-200 text-harbor-green focus:ring-harbor-teal/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                                : "border-l-harbor-red border border-slate-200 text-harbor-red focus:ring-harbor-red/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
                             }`}
                           />
                         </div>
@@ -757,15 +950,16 @@ async function prevMonth() {
                     <div key={card.id} className="flex items-center justify-between px-4 py-3 gap-3">
                       <span className="text-sm font-semibold text-harbor-navy">{card.label}</span>
                       {closedWeeks.has(closeKey) ? (
-                        <span className="text-xs text-harbor-green font-medium">✓ Closed</span>
+                        <span className="text-xs text-harbor-green font-medium">✓ Wrapped</span>
                       ) : (
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-semibold text-harbor-navy">{formatMoney(total)}</span>
                           <button
                             onClick={() => closeWeek(card, activeWeekIdx)}
-                            className="text-xs bg-harbor-navy text-white hover:bg-harbor-teal px-2.5 py-1.5 rounded-full font-medium transition-colors whitespace-nowrap"
+                            disabled={isMonthClosed}
+                            className="text-xs bg-harbor-navy text-white hover:bg-harbor-teal px-2.5 py-1.5 rounded-full font-medium transition-colors whitespace-nowrap disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:hover:bg-slate-200"
                           >
-                            Close Week
+                            Wrap Up Week
                           </button>
                         </div>
                       )}
@@ -779,7 +973,7 @@ async function prevMonth() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between px-4 py-3 bg-harbor-navy rounded-b-2xl">
-                  <span className="text-sm font-bold text-white uppercase tracking-wide">Projected Anchor</span>
+                  <span className="text-sm font-bold text-white uppercase tracking-wide">Projected Balance</span>
                   <span className={`text-base font-bold ${(projectedBalances[activeWeekIdx] ?? 0) >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
                     {formatMoney(projectedBalances[activeWeekIdx] ?? 0)}
                   </span>
