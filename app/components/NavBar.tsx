@@ -52,7 +52,7 @@ export default function NavBar() {
   const pathname = usePathname();
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const isAuthPage = pathname === "/login" || pathname === "/signup";
+  const isAuthPage = pathname === "/login" || pathname === "/signup" || pathname.startsWith("/beta");
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -70,7 +70,7 @@ export default function NavBar() {
 
       {/* ── Row 1: Brand bar ── */}
       <div className="bg-harbor-navy h-20 flex items-center justify-between px-4 md:px-8">
-        <Link href="/dashboard" className="flex items-center gap-3 min-w-0">
+        <Link href={isAuthPage ? "/beta" : "/dashboard"} className="flex items-center gap-3 min-w-0">
           <img
             src="/harbor-logo.svg"
             alt="Harbor"
@@ -83,6 +83,7 @@ export default function NavBar() {
         </Link>
 
         {/* Hamburger */}
+        {!isAuthPage && (
         <button
           onClick={() => setMenuOpen((v) => !v)}
           className="text-white/80 hover:text-white p-2 rounded-md hover:bg-white/10 transition-colors flex-shrink-0"
@@ -102,9 +103,11 @@ export default function NavBar() {
             </svg>
           )}
         </button>
+        )}
       </div>
 
       {/* ── Row 2: Tab navigation ── */}
+      {!isAuthPage && (
       <div className="bg-white border-b border-slate-200 overflow-x-auto">
         <div className="px-4 md:px-8 flex items-end gap-0 min-w-max">
           {NAV_LINKS.map(({ href, label, icon }) => {
@@ -137,9 +140,10 @@ export default function NavBar() {
           )}
         </div>
       </div>
+      )}
 
       {/* ── Hamburger dropdown menu ── */}
-      {menuOpen && (
+      {menuOpen && !isAuthPage && (
         <div className="absolute top-full right-4 md:right-8 w-56 bg-white border border-slate-200 rounded-b-xl shadow-lg overflow-hidden">
           {NAV_LINKS.map(({ href, label, icon }) => {
             const isActive = href === "/" ? pathname === "/" : pathname.startsWith(href);

@@ -34,16 +34,7 @@ async function getMonthlyAmounts(monthKey: string): Promise<Record<string, Recor
   try {
     const user = await supabaseBudgetRepo.getUser();
     if (user) {
-      const supabaseAmounts = await supabaseBudgetRepo.getMonthlyAmounts(monthKey);
-      if (Object.keys(supabaseAmounts).length > 0) return supabaseAmounts;
-
-      const localAmounts = localBudgetRepo.getMonthlyAmounts(monthKey);
-      if (Object.keys(localAmounts).length > 0) {
-        await supabaseBudgetRepo.saveMonthlyAmounts(monthKey, localAmounts);
-        return localAmounts;
-      }
-
-      return supabaseAmounts;
+      return await supabaseBudgetRepo.getMonthlyAmounts(monthKey);
     }
   } catch {
     // Fall through to local persistence if auth/Supabase is unavailable.
@@ -70,15 +61,7 @@ async function getMonthBalances(): Promise<Record<string, number>> {
   try {
     const user = await supabaseBudgetRepo.getUser();
     if (user) {
-      const supabaseBalances = await supabaseBudgetRepo.getMonthBalances();
-      if (Object.keys(supabaseBalances).length > 0) return supabaseBalances;
-
-      const localBalances = localBudgetRepo.getMonthBalances();
-      for (const [monthKey, balance] of Object.entries(localBalances)) {
-        await supabaseBudgetRepo.saveMonthBalance(monthKey, balance);
-      }
-
-      return localBalances;
+      return await supabaseBudgetRepo.getMonthBalances();
     }
   } catch {
     // Fall through to local persistence if auth/Supabase is unavailable.
@@ -148,16 +131,7 @@ async function getCCCharges(): Promise<CCCharge[]> {
   try {
     const user = await supabaseBudgetRepo.getUser();
     if (user) {
-      const supabaseCharges = await supabaseBudgetRepo.getCCCharges();
-      if (supabaseCharges.length > 0) return supabaseCharges;
-
-      const localCharges = localBudgetRepo.getCCCharges();
-      if (localCharges.length > 0) {
-        await supabaseBudgetRepo.addCCCharges(localCharges);
-        return localCharges;
-      }
-
-      return supabaseCharges;
+      return await supabaseBudgetRepo.getCCCharges();
     }
   } catch {
     // Fall through to local persistence if auth/Supabase is unavailable.
@@ -184,16 +158,7 @@ async function getBuoys(): Promise<Buoy[]> {
   try {
     const user = await supabaseBudgetRepo.getUser();
     if (user) {
-      const supabaseBuoys = await supabaseBudgetRepo.getBuoys();
-      if (supabaseBuoys.length > 0) return supabaseBuoys;
-
-      const localBuoys = localBudgetRepo.getBuoys();
-      if (localBuoys.length > 0) {
-        const savedBuoys = await Promise.all(localBuoys.map((buoy) => supabaseBudgetRepo.saveBuoy(buoy)));
-        return savedBuoys;
-      }
-
-      return supabaseBuoys;
+      return await supabaseBudgetRepo.getBuoys();
     }
   } catch {
     // Fall through to local persistence if auth/Supabase is unavailable.

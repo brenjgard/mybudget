@@ -1,18 +1,40 @@
 import { NextResponse } from "next/server";
+import { isApprovedBetaUser } from "../../lib/beta-access";
 import { createClient } from "../../lib/supabase/server";
 
 export async function POST(request: Request) {
   const formData = await request.formData();
   const email = String(formData.get("email") ?? "").trim();
   const password = String(formData.get("password") ?? "");
+  const confirmPassword = String(formData.get("confirmPassword") ?? "");
+
+  function signupUrlWithError(message: string) {
+    const signupUrl = new URL("/login", request.url);
+    signupUrl.searchParams.set("mode", "signup");
+    signupUrl.searchParams.set("error", message);
+    return signupUrl;
+  }
+
+  if (password !== confirmPassword) {
+    return NextResponse.redirect(signupUrlWithError("Passwords do not match."), 303);
+  }
+
+  let isApproved = false;
+  try {
+    isApproved = await isApprovedBetaUser(email);
+  } catch {
+    isApproved = false;
+  }
+
+  if (!isApproved) {
+    return NextResponse.redirect(signupUrlWithError("You\u2019re not approved yet. Request beta access first."), 303);
+  }
 
   const supabase = await createClient();
   const { data, error } = await supabase.auth.signUp({ email, password });
 
   if (error) {
-    const signupUrl = new URL("/signup", request.url);
-    signupUrl.searchParams.set("error", error.message);
-    return NextResponse.redirect(signupUrl);
+    return NextResponse.redirect(signupUrlWithError(error.message), 303);
   }
 
   if (!data.session) {

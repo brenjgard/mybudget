@@ -3,6 +3,7 @@
 import { localRepo } from "../local-repo";
 import type { CCCharge } from "../local-repo";
 import type { Buoy } from "../local-repo";
+import { scopedStorageKey, warnIfLegacyStorageExists } from "../local-storage-scope";
 import type { AppSettings } from "../types";
 
 const CLOSED_WEEKS_KEY = "harbor_closed_weeks";
@@ -13,14 +14,15 @@ function closedWeekKey(monthKey: string, cardId: string, weekIndex: number) {
 
 function loadClosedWeekKeys(): string[] {
   try {
-    return JSON.parse(localStorage.getItem(CLOSED_WEEKS_KEY) ?? "[]") as string[];
+    warnIfLegacyStorageExists(CLOSED_WEEKS_KEY, "closed weeks");
+    return JSON.parse(localStorage.getItem(scopedStorageKey(CLOSED_WEEKS_KEY)) ?? "[]") as string[];
   } catch {
     return [];
   }
 }
 
 function saveClosedWeekKeys(keys: string[]) {
-  localStorage.setItem(CLOSED_WEEKS_KEY, JSON.stringify(keys));
+  localStorage.setItem(scopedStorageKey(CLOSED_WEEKS_KEY), JSON.stringify(keys));
 }
 
 export const localBudgetRepo = {

@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { isApprovedBetaUser } from "../../lib/beta-access";
 import { createClient } from "../../lib/supabase/server";
 
 function getNextPath(value: FormDataEntryValue | null) {
@@ -23,6 +24,17 @@ export async function POST(request: Request) {
     loginUrl.searchParams.set("error", error.message);
     loginUrl.searchParams.set("next", next);
     return NextResponse.redirect(loginUrl, 303);
+  }
+
+  let isApproved = false;
+  try {
+    isApproved = await isApprovedBetaUser(email);
+  } catch {
+    isApproved = false;
+  }
+
+  if (!isApproved) {
+    return NextResponse.redirect(new URL("/beta/pending", request.url), 303);
   }
 
   return NextResponse.redirect(new URL(next, request.url), 303);

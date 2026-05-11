@@ -10,6 +10,7 @@ import {
   saveMonthBalances,
   saveSettings,
 } from "./storage";
+import { scopedStorageKey, warnIfLegacyStorageExists } from "./local-storage-scope";
 
 export type Buoy = {
   id: string;
@@ -35,7 +36,8 @@ const FEEDBACK_KEY = "harbor_alpha_feedback";
 
 function loadBuoys(): Buoy[] {
   try {
-    const raw = localStorage.getItem(BUOYS_KEY);
+    warnIfLegacyStorageExists(BUOYS_KEY, "buoys");
+    const raw = localStorage.getItem(scopedStorageKey(BUOYS_KEY));
     return raw ? (JSON.parse(raw) as Buoy[]) : [];
   } catch {
     return [];
@@ -43,7 +45,7 @@ function loadBuoys(): Buoy[] {
 }
 
 function saveBuoys(buoys: Buoy[]) {
-  localStorage.setItem(BUOYS_KEY, JSON.stringify(buoys));
+  localStorage.setItem(scopedStorageKey(BUOYS_KEY), JSON.stringify(buoys));
 }
 
 function saveFeedback(entry: FeedbackEntry) {
