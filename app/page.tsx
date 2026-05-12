@@ -14,6 +14,10 @@ function formatMoney(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 }
 
+type PendingConfirmation =
+  | { type: "wrap-week"; weekIndex: number }
+  | { type: "close-month" };
+
 export default function Home() {
   const router = useRouter();
   const now = new Date();
@@ -26,12 +30,15 @@ export default function Home() {
   const [amounts, setAmounts] = useState<Record<string, Record<number, number>>>({});
   const [loaded, setLoaded] = useState(false);
   const [autoFill, setAutoFill] = useState(false);
+  const [monthAmountsLoading, setMonthAmountsLoading] = useState(true);
   const [monthBalances, setMonthBalances] = useState<Record<string, number>>({});
+  const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation | null>(null);
+  const [clearAfterConfirm, setClearAfterConfirm] = useState(false);
 
   // ── Feature 1: Collapsible categories ────────────────────────────────────
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
-  // ── Feature 5: Close Week tracking ───────────────────────────────────────
+  // ── Feature 5: Wrap Week tracking ────────────────────────────────────────
   const [closedWeeks, setClosedWeeks] = useState<Set<string>>(new Set());
   const [closedMonths, setClosedMonths] = useState<Set<string>>(new Set());
   const [activeWeekIdx, setActiveWeekIdx] = useState(0);
@@ -39,6 +46,13 @@ export default function Home() {
   const anchorDraftRef = useRef("");
   const anchorDirtyRef = useRef(false);
   const anchorSavePromiseRef = useRef<Promise<void>>(Promise.resolve());
+  const wrappingWeekKeysRef = useRef<Set<string>>(new Set());
+  const amountsMonthKeyRef = useRef("");
+  const [amountsMonthKey, setAmountsMonthKey] = useState("");
+  const amountEditVersionsRef = useRef<Record<string, number>>({});
+  const monthlyAmountSnapshotsRef = useRef<Record<string, Record<string, Record<number, number>>>>({});
+  const monthlyAmountSaveChainsRef = useRef<Record<string, Promise<void>>>({});
+  const monthlyAmountSaveTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
 
   // cardLookup available before early return (used in closeWeek)
   const cardLookup = useMemo(
@@ -60,6 +74,75 @@ export default function Home() {
   const oneMonthAgo = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const canGoPrevMonth = prevDate >= oneMonthAgo;
   const isMonthClosed = closedMonths.has(monthKey);
+  const balanceLabel = isMonthClosed ? "Final Balance" : "Projected Balance";
+  const isMonthAmountsPending = monthAmountsLoading || amountsMonthKey !== monthKey;
+
+  function getAmountEditVersion(key: string) {
+    return amountEditVersionsRef.current[key] ?? 0;
+  }
+
+  function bumpAmountEditVersion(key: string) {
+    amountEditVersionsRef.current[key] = getAmountEditVersion(key) + 1;
+    return amountEditVersionsRef.current[key];
+  }
+
+  function setMonthAmountsState(key: string, nextAmounts: Record<string, Record<number, number>>) {
+    amountsMonthKeyRef.current = key;
+    monthlyAmountSnapshotsRef.current[key] = nextAmounts;
+    setAmountsMonthKey(key);
+    setAmounts(nextAmounts);
+    setMonthAmountsLoading(false);
+  }
+
+  async function flushMonthlyAmountsSave(key: string, requestedVersion?: number) {
+    const previousSave = monthlyAmountSaveChainsRef.current[key] ?? Promise.resolve();
+    const savePromise = previousSave
+      .catch(() => undefined)
+      .then(async () => {
+        const latestVersion = getAmountEditVersion(key);
+        if (requestedVersion !== undefined && requestedVersion < latestVersion) {
+          queueMonthlyAmountsSave(key, 0);
+          return;
+        }
+
+        const snapshot = monthlyAmountSnapshotsRef.current[key] ?? {};
+        try {
+          await budgetRepo.saveMonthlyAmounts(key, snapshot);
+        } catch (error) {
+          console.error("[Dock] Failed to save monthly amounts", {
+            monthKey: key,
+            error,
+          });
+        }
+      });
+
+    monthlyAmountSaveChainsRef.current[key] = savePromise.then(
+      () => undefined,
+      () => undefined,
+    );
+    await savePromise;
+  }
+
+  function queueMonthlyAmountsSave(key: string, delayMs = 350) {
+    const existingTimer = monthlyAmountSaveTimersRef.current[key];
+    if (existingTimer) clearTimeout(existingTimer);
+
+    const requestedVersion = getAmountEditVersion(key);
+    monthlyAmountSaveTimersRef.current[key] = setTimeout(() => {
+      delete monthlyAmountSaveTimersRef.current[key];
+      void flushMonthlyAmountsSave(key, requestedVersion);
+    }, delayMs);
+  }
+
+  async function saveMonthlyAmountsNow(key: string, nextAmounts: Record<string, Record<number, number>>) {
+    monthlyAmountSnapshotsRef.current[key] = nextAmounts;
+    const existingTimer = monthlyAmountSaveTimersRef.current[key];
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+      delete monthlyAmountSaveTimersRef.current[key];
+    }
+    await flushMonthlyAmountsSave(key, getAmountEditVersion(key));
+  }
 
   // Load on mount
   useEffect(() => {
@@ -81,7 +164,8 @@ export default function Home() {
       anchorDraftRef.current = nextAnchorDraft;
       anchorDirtyRef.current = false;
       setAnchorDraft(nextAnchorDraft);
-      setAmounts(savedAmounts);
+      setMonthAmountsState(monthKey, savedAmounts);
+      setMonthAmountsLoading(true);
       setMonthBalances(savedMonthBalances);
       setClosedMonths(savedClosedMonths);
       setClosedWeeks(await budgetRepo.getClosedWeeks(monthKey));
@@ -93,6 +177,12 @@ export default function Home() {
 
     return () => {
       cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      Object.values(monthlyAmountSaveTimersRef.current).forEach(clearTimeout);
     };
   }, []);
 
@@ -128,10 +218,12 @@ export default function Home() {
     };
   }, [loaded, monthKey]);
 
-  // Save amounts whenever they change
+  // Save the visible month's amounts after edits settle.
   useEffect(() => {
-    if (loaded && !isMonthClosed) void budgetRepo.saveMonthlyAmounts(monthKey, amounts);
-  }, [amounts, loaded, isMonthClosed]);
+    if (!loaded || isMonthClosed || amountsMonthKey !== monthKey) return;
+    monthlyAmountSnapshotsRef.current[monthKey] = amounts;
+    queueMonthlyAmountsSave(monthKey);
+  }, [amounts, amountsMonthKey, loaded, isMonthClosed, monthKey]);
 
   const weeks = useMemo(() => getWeekRanges(year, month), [year, month]);
 
@@ -140,6 +232,8 @@ export default function Home() {
     if (!settings || !loaded) return;
     let cancelled = false;
     const currentMonthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
+    const loadStartedAtVersion = getAmountEditVersion(currentMonthKey);
+    setMonthAmountsLoading(true);
     void budgetRepo.getMonthlyAmounts(currentMonthKey).then((saved) => {
       if (cancelled) return;
 
@@ -164,7 +258,21 @@ export default function Home() {
         }
       });
     }
-      setAmounts(next);
+      if (getAmountEditVersion(currentMonthKey) !== loadStartedAtVersion) {
+        const localEdits = monthlyAmountSnapshotsRef.current[currentMonthKey] ?? {};
+        setMonthAmountsState(currentMonthKey, {
+          ...next,
+          ...Object.fromEntries(
+            Object.entries(localEdits).map(([itemId, byWeek]) => [
+              itemId,
+              { ...(next[itemId] ?? {}), ...byWeek },
+            ]),
+          ),
+        });
+        return;
+      }
+
+      setMonthAmountsState(currentMonthKey, next);
     });
 
     return () => {
@@ -193,6 +301,10 @@ export default function Home() {
   const startingBalance = monthKey === currentMonthKey
     ? currentAnchor
     : monthBalances[prevMonthKey] ?? currentAnchor;
+  const visibleAmounts = useMemo(
+    () => (isMonthAmountsPending ? {} : amounts),
+    [amounts, isMonthAmountsPending],
+  );
 
   const weekTotals = useMemo(() => {
     if (!settings) return [];
@@ -200,13 +312,13 @@ export default function Home() {
       let net = 0;
       for (const item of settings.lineItems) {
         if (!itemAppliesToWeek(item.frequency, wi, weeks[wi].start, weeks[wi].end, item.anchorDate, item.anchorMonth, month)) continue;
-        const n = amounts[item.id]?.[wi] ?? 0;
+        const n = visibleAmounts[item.id]?.[wi] ?? 0;
         if (item.isIncome) net += n;
         else net -= n;
       }
       return net;
     });
-  }, [amounts, weeks, settings, month]);
+  }, [visibleAmounts, weeks, settings, month]);
 
   const projectedBalances = useMemo(() => {
     return weekTotals.reduce<number[]>((balances, total) => {
@@ -215,6 +327,9 @@ export default function Home() {
     }, []);
   }, [startingBalance, weekTotals]);
   const projectedForwardBalance = projectedBalances[projectedBalances.length - 1] ?? startingBalance;
+  const displayedForwardBalance = isMonthClosed
+    ? monthBalances[monthKey] ?? projectedForwardBalance
+    : projectedForwardBalance;
 
   const creditTotals = useMemo(() => {
     if (!settings) return [];
@@ -223,12 +338,12 @@ export default function Home() {
       for (const item of settings.lineItems) {
         if (item.isIncome || item.paymentMethod === "checking") continue;
         if (!itemAppliesToWeek(item.frequency, wi, weeks[wi].start, weeks[wi].end, item.anchorDate, item.anchorMonth, month)) continue;
-        const n = amounts[item.id]?.[wi] ?? 0;
+        const n = visibleAmounts[item.id]?.[wi] ?? 0;
         byCard[item.paymentMethod] = (byCard[item.paymentMethod] ?? 0) + n;
       }
       return byCard;
     });
-  }, [amounts, weeks, settings, month]);
+  }, [visibleAmounts, weeks, settings, month]);
 
   // Category totals per week — used by collapsed rows
   const categoryWeekTotals = useMemo(() => {
@@ -240,17 +355,17 @@ export default function Home() {
         let total = 0;
         for (const item of catItems) {
           if (!itemAppliesToWeek(item.frequency, wi, weeks[wi].start, weeks[wi].end, item.anchorDate, item.anchorMonth, month)) continue;
-          total += amounts[item.id]?.[wi] ?? 0;
+          total += visibleAmounts[item.id]?.[wi] ?? 0;
         }
         return total;
       });
     }
     return result;
-  }, [amounts, weeks, settings, month]);
+  }, [visibleAmounts, weeks, settings, month]);
 
   // Save ending balance for this month whenever projectedBalances changes
   useEffect(() => {
-    if (!loaded || projectedBalances.length === 0) return;
+    if (!loaded || isMonthClosed || isMonthAmountsPending || projectedBalances.length === 0) return;
     const endingBalance = projectedBalances[projectedBalances.length - 1];
     void Promise.resolve().then(() => {
       setMonthBalances((prev) => (
@@ -258,18 +373,28 @@ export default function Home() {
       ));
     });
     void budgetRepo.saveMonthBalance(monthKey, endingBalance);
-  }, [projectedBalances, loaded, monthKey]);
+  }, [projectedBalances, loaded, monthKey, isMonthClosed, isMonthAmountsPending]);
 
   function getAmount(itemId: string, weekIdx: number): number | "" {
+    if (isMonthAmountsPending) return "";
     return amounts[itemId]?.[weekIdx] ?? "";
   }
 
   function setAmount(itemId: string, weekIdx: number, val: number | "") {
-    if (isMonthClosed) return;
-    setAmounts((prev) => ({
-      ...prev,
-      [itemId]: { ...(prev[itemId] ?? {}), [weekIdx]: val === "" ? 0 : val },
-    }));
+    if (isMonthClosed || isMonthAmountsPending) return;
+    bumpAmountEditVersion(monthKey);
+    const wasEditingVisibleMonth = amountsMonthKeyRef.current === monthKey;
+    amountsMonthKeyRef.current = monthKey;
+    setAmountsMonthKey(monthKey);
+    setAmounts((prev) => {
+      const base = wasEditingVisibleMonth ? prev : {};
+      const next = {
+        ...base,
+        [itemId]: { ...(base[itemId] ?? {}), [weekIdx]: val === "" ? 0 : val },
+      };
+      monthlyAmountSnapshotsRef.current[monthKey] = next;
+      return next;
+    });
   }
 
   function changeAnchorDraft(value: string) {
@@ -363,68 +488,147 @@ async function prevMonth() {
     setCollapsed((prev) => ({ ...prev, [cat]: !prev[cat] }));
   }
 
-  // ── Feature 5: Close Week CC flow ─────────────────────────────────────────
-  async function closeWeek(card: { id: string; label: string }, wi: number) {
-    if (!settings || isMonthClosed) return;
+  // ── Feature 5: Wrap Week CC flow ──────────────────────────────────────────
+  function wrappedWeekKey(wi: number) {
+    return `${monthKey}-checking-${wi}`;
+  }
 
-    // Collect all line items charged to this card that apply this week
-    const chargeItems = settings.lineItems.filter(
-      (item) =>
-        !item.isIncome &&
-        item.paymentMethod === card.id &&
-        itemAppliesToWeek(item.frequency, wi, weeks[wi].start, weeks[wi].end, item.anchorDate, item.anchorMonth, month)
-    );
-    const total = chargeItems.reduce((sum, item) => sum + (amounts[item.id]?.[wi] ?? 0), 0);
+  function isWeekWrapped(wi: number) {
+    return closedWeeks.has(wrappedWeekKey(wi))
+      || (settings?.creditCards ?? []).some((card) => closedWeeks.has(`${monthKey}-${card.id}-${wi}`));
+  }
 
-    // Save each individual charge to the CC ledger
-    const newCharges: CCCharge[] = chargeItems
-      .filter((item) => (amounts[item.id]?.[wi] ?? 0) > 0)
-      .map((item) => ({
-        itemId: item.id,
-        itemName: item.name,
-        card: card.id,
-        cardLabel: card.label,
-        amount: amounts[item.id]?.[wi] ?? 0,
-        weekLabel: weeks[wi].label,
-        dateMoved: new Date().toISOString(),
-      }));
-    // Find the CC payment line item for this card and roll total into next month week 3
-    if (total > 0) {
+  function clearWeekValues(sourceAmounts: Record<string, Record<number, number>>, wi: number) {
+    return Object.fromEntries(
+      Object.entries(sourceAmounts).map(([itemId, byWeek]) => [
+        itemId,
+        { ...byWeek, [wi]: 0 },
+      ]),
+    ) as Record<string, Record<number, number>>;
+  }
+
+  function openWrapWeekDialog(wi: number) {
+    if (isMonthClosed || isMonthAmountsPending || isWeekWrapped(wi)) return;
+    setClearAfterConfirm(false);
+    setPendingConfirmation({ type: "wrap-week", weekIndex: wi });
+  }
+
+  function openCloseMonthDialog() {
+    if (isMonthClosed || isMonthAmountsPending) return;
+    setClearAfterConfirm(false);
+    setPendingConfirmation({ type: "close-month" });
+  }
+
+  function closeConfirmationDialog() {
+    setPendingConfirmation(null);
+    setClearAfterConfirm(false);
+  }
+
+  async function confirmPendingAction() {
+    const pending = pendingConfirmation;
+    const shouldClear = clearAfterConfirm;
+    if (!pending) return;
+    closeConfirmationDialog();
+
+    if (pending.type === "wrap-week") {
+      await wrapWeek(pending.weekIndex, shouldClear);
+    } else {
+      await closeMonth(shouldClear);
+    }
+  }
+
+  async function wrapWeek(wi: number, clearValues: boolean) {
+    const wrapKey = wrappedWeekKey(wi);
+    if (!settings || isMonthClosed || isMonthAmountsPending || isWeekWrapped(wi) || wrappingWeekKeysRef.current.has(wrapKey)) return;
+    wrappingWeekKeysRef.current.add(wrapKey);
+
+    try {
       const nextMonthKey =
         month === 11
           ? `${year + 1}-01`
           : `${year}-${String(month + 2).padStart(2, "0")}`;
-      const nextAmounts = await budgetRepo.getMonthlyAmounts(nextMonthKey);
-      const item = settings.lineItems.find(
-        (i) =>
-          i.category === "Credit Cards" &&
-          i.paymentMethod === "checking" &&
-          i.name.toLowerCase().includes(card.label.toLowerCase())
-      );
-      if (item) {
-        const existing = nextAmounts[item.id]?.[2] ?? 0;
-        const newTotal = existing + total;
-        await budgetRepo.saveMonthlyAmounts(nextMonthKey, {
-          ...nextAmounts,
-          [item.id]: { ...nextAmounts[item.id], 2: newTotal },
-        });
-      }
-    }
+      let nextAmounts: Record<string, Record<number, number>> | null = null;
+      const newCharges: CCCharge[] = [];
 
-    // Mark week as closed
-    const savedClosedWeeks = await budgetRepo.closeWeek({
-      monthKey,
-      cardId: card.id,
-      weekIndex: wi,
-      charges: newCharges,
-    });
-    setClosedWeeks(savedClosedWeeks);
+      for (const card of settings.creditCards) {
+        const chargeItems = settings.lineItems.filter(
+          (item) =>
+            !item.isIncome &&
+            item.paymentMethod === card.id &&
+            itemAppliesToWeek(item.frequency, wi, weeks[wi].start, weeks[wi].end, item.anchorDate, item.anchorMonth, month)
+        );
+        const total = chargeItems.reduce((sum, item) => sum + (amounts[item.id]?.[wi] ?? 0), 0);
+
+        newCharges.push(...chargeItems
+          .filter((item) => (amounts[item.id]?.[wi] ?? 0) > 0)
+          .map((item) => ({
+            itemId: item.id,
+            itemName: item.name,
+            card: card.id,
+            cardLabel: card.label,
+            amount: amounts[item.id]?.[wi] ?? 0,
+            weekLabel: weeks[wi].label,
+            dateMoved: new Date().toISOString(),
+          })));
+
+        if (total > 0) {
+          nextAmounts = nextAmounts ?? await budgetRepo.getMonthlyAmounts(nextMonthKey);
+          const paymentItem = settings.lineItems.find(
+            (item) =>
+              item.category === "Credit Cards" &&
+              item.paymentMethod === "checking" &&
+              item.name.toLowerCase().includes(card.label.toLowerCase())
+          );
+          if (paymentItem) {
+            const existing: number = Number(nextAmounts[paymentItem.id]?.[2] ?? 0);
+            nextAmounts = {
+              ...nextAmounts,
+              [paymentItem.id]: { ...nextAmounts[paymentItem.id], 2: existing + total },
+            };
+          }
+        }
+      }
+
+      if (nextAmounts) {
+        await budgetRepo.saveMonthlyAmounts(nextMonthKey, nextAmounts);
+      }
+
+      const savedClosedWeeks = await budgetRepo.closeWeek({
+        monthKey,
+        cardId: "checking",
+        weekIndex: wi,
+        charges: newCharges,
+      });
+      setClosedWeeks(savedClosedWeeks);
+
+      if (clearValues) {
+        const nextCurrentAmounts = clearWeekValues(amounts, wi);
+        bumpAmountEditVersion(monthKey);
+        setMonthAmountsState(monthKey, nextCurrentAmounts);
+        await saveMonthlyAmountsNow(monthKey, nextCurrentAmounts);
+      }
+    } finally {
+      wrappingWeekKeysRef.current.delete(wrapKey);
+    }
   }
 
-  async function closeMonth() {
+  async function closeMonth(clearValues: boolean) {
+    if (isMonthAmountsPending) return;
     const savedClosedMonths = await budgetRepo.closeMonth(monthKey, projectedForwardBalance);
     setClosedMonths(savedClosedMonths);
     setMonthBalances((prev) => ({ ...prev, [monthKey]: projectedForwardBalance }));
+    if (clearValues) {
+      bumpAmountEditVersion(monthKey);
+      setMonthAmountsState(monthKey, {});
+      const existingTimer = monthlyAmountSaveTimersRef.current[monthKey];
+      if (existingTimer) {
+        clearTimeout(existingTimer);
+        delete monthlyAmountSaveTimersRef.current[monthKey];
+      }
+      await (monthlyAmountSaveChainsRef.current[monthKey] ?? Promise.resolve()).catch(() => undefined);
+      await budgetRepo.clearMonthlyAmounts(monthKey);
+      monthlyAmountSnapshotsRef.current[monthKey] = {};
+    }
   }
 
   async function reopenMonth() {
@@ -525,7 +729,7 @@ async function prevMonth() {
               ) : (
                 <button
                   type="button"
-                  onClick={() => void closeMonth()}
+                  onClick={openCloseMonthDialog}
                   className="px-3 py-2 rounded-lg border border-harbor-navy/20 bg-harbor-navy text-white text-xs font-medium hover:bg-harbor-navy/90 transition-colors"
                 >
                   Close Month
@@ -584,12 +788,14 @@ async function prevMonth() {
 
               {!isEditingAnchor && (
                 <div className="space-y-1 md:border-l md:border-harbor-teal-light md:pl-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">Projected Balance</p>
-                  <div className={`text-xl font-bold ${projectedForwardBalance >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
-                    {formatMoney(projectedForwardBalance)}
+                  <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">{balanceLabel}</p>
+                  <div className={`text-xl font-bold ${displayedForwardBalance >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
+                    {formatMoney(displayedForwardBalance)}
                   </div>
                   <p className="max-w-sm text-sm text-harbor-navy/55">
-                    Where Harbor expects this month to end after scheduled waves and ripples.
+                    {isMonthClosed
+                      ? "The balance saved when this month was closed."
+                      : "Where Harbor expects this month to end after scheduled waves and ripples."}
                   </p>
                 </div>
               )}
@@ -652,6 +858,21 @@ async function prevMonth() {
           </div>
         </div>
 
+        {isMonthAmountsPending ? (
+          <div className="rounded-2xl border border-harbor-teal-light bg-white p-6 shadow-sm">
+            <div className="flex items-center gap-3 text-harbor-navy/60">
+              <div className="h-4 w-4 rounded-full border-2 border-harbor-teal/25 border-t-harbor-teal animate-spin" />
+              <span className="text-sm font-medium">Loading month...</span>
+            </div>
+            <div className="mt-5 grid gap-3">
+              <div className="h-9 rounded-lg bg-harbor-teal-light/60" />
+              <div className="h-9 rounded-lg bg-slate-100" />
+              <div className="h-9 rounded-lg bg-slate-100" />
+              <div className="h-9 rounded-lg bg-slate-100" />
+            </div>
+          </div>
+        ) : (
+          <>
         <div className="hidden md:block bg-white rounded-2xl shadow-sm overflow-x-auto border border-harbor-teal-light">
           <table className="w-full text-sm border-collapse">
             <thead>
@@ -815,7 +1036,7 @@ async function prevMonth() {
                 </td>
               </tr>
 
-              {/* Credit card totals with Wrap Up Week */}
+              {/* Credit card totals with Wrap Week */}
               {settings.creditCards.map((card) => (
                 <tr key={card.id} className="bg-harbor-navy/5 font-semibold">
                   <td className="px-3 py-2 sticky left-0 bg-harbor-navy/5 text-xs uppercase tracking-wide text-harbor-navy" colSpan={2}>
@@ -824,24 +1045,10 @@ async function prevMonth() {
                   <td />
                   {creditTotals.map((byCard, wi) => {
                     const total = byCard[card.id] ?? 0;
-                    const closeKey = `${monthKey}-${card.id}-${wi}`;
                     return (
                       <td key={wi} className="px-2 py-2 text-center text-harbor-navy">
                         {total > 0 ? (
-                          closedWeeks.has(closeKey) ? (
-                            <span className="text-xs text-harbor-green font-medium">✓ Wrapped</span>
-                          ) : (
-                            <div className="inline-flex flex-col items-center gap-1.5">
-                              <span>{formatMoney(total)}</span>
-                              <button
-                                onClick={() => closeWeek(card, wi)}
-                                disabled={isMonthClosed}
-                                className="text-xs bg-harbor-navy text-white hover:bg-harbor-teal px-2.5 py-0.5 rounded-full font-medium transition-colors leading-none whitespace-nowrap disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:hover:bg-slate-200"
-                              >
-                                Wrap Up Week
-                              </button>
-                            </div>
-                          )
+                          <span>{formatMoney(total)}</span>
                         ) : (
                           <span className="text-slate-300">—</span>
                         )}
@@ -850,6 +1057,29 @@ async function prevMonth() {
                   })}
                 </tr>
               ))}
+
+              {/* Week wrap status */}
+              <tr className="bg-harbor-navy/5 font-semibold">
+                <td className="px-3 py-2 sticky left-0 bg-harbor-navy/5 text-xs uppercase tracking-wide text-harbor-navy" colSpan={2}>
+                  Week Status
+                </td>
+                <td />
+                {weeks.map((_, wi) => (
+                  <td key={wi} className="px-2 py-2 text-center">
+                    {isWeekWrapped(wi) ? (
+                      <span className="text-xs text-harbor-green font-medium">✓ Wrapped</span>
+                    ) : (
+                      <button
+                        onClick={() => openWrapWeekDialog(wi)}
+                        disabled={isMonthClosed}
+                        className="text-xs bg-harbor-navy text-white hover:bg-harbor-teal px-2.5 py-1 rounded-full font-medium transition-colors leading-none whitespace-nowrap disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:hover:bg-slate-200"
+                      >
+                        Wrap Week
+                      </button>
+                    )}
+                  </td>
+                ))}
+              </tr>
 
               {/* Week net */}
               <tr className="bg-harbor-teal-light font-semibold">
@@ -864,15 +1094,17 @@ async function prevMonth() {
                 ))}
               </tr>
 
-              {/* Projected balance */}
+              {/* Projected/final balance */}
               <tr className="bg-harbor-navy text-white font-bold">
                 <td className="px-3 py-3 sticky left-0 bg-harbor-navy text-xs uppercase tracking-wide" colSpan={2}>
-                  Projected Balance
+                  {balanceLabel}
                 </td>
                 <td />
                 {projectedBalances.map((b, i) => (
                   <td key={i} className={`px-2 py-3 text-center text-base ${b >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
-                    {formatMoney(b)}
+                    {isMonthClosed
+                      ? i === projectedBalances.length - 1 ? formatMoney(displayedForwardBalance) : "—"
+                      : formatMoney(b)}
                   </td>
                 ))}
               </tr>
@@ -945,27 +1177,27 @@ async function prevMonth() {
                 {settings.creditCards.map((card) => {
                   const total = creditTotals[activeWeekIdx]?.[card.id] ?? 0;
                   if (total === 0) return null;
-                  const closeKey = `${monthKey}-${card.id}-${activeWeekIdx}`;
                   return (
                     <div key={card.id} className="flex items-center justify-between px-4 py-3 gap-3">
                       <span className="text-sm font-semibold text-harbor-navy">{card.label}</span>
-                      {closedWeeks.has(closeKey) ? (
-                        <span className="text-xs text-harbor-green font-medium">✓ Wrapped</span>
-                      ) : (
-                        <div className="flex items-center gap-2">
-                          <span className="text-sm font-semibold text-harbor-navy">{formatMoney(total)}</span>
-                          <button
-                            onClick={() => closeWeek(card, activeWeekIdx)}
-                            disabled={isMonthClosed}
-                            className="text-xs bg-harbor-navy text-white hover:bg-harbor-teal px-2.5 py-1.5 rounded-full font-medium transition-colors whitespace-nowrap disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:hover:bg-slate-200"
-                          >
-                            Wrap Up Week
-                          </button>
-                        </div>
-                      )}
+                      <span className="text-sm font-semibold text-harbor-navy">{formatMoney(total)}</span>
                     </div>
                   );
                 })}
+                <div className="flex items-center justify-between px-4 py-3 gap-3">
+                  <span className="text-sm font-semibold text-harbor-navy">Week Status</span>
+                  {isWeekWrapped(activeWeekIdx) ? (
+                    <span className="text-xs text-harbor-green font-medium">✓ Wrapped</span>
+                  ) : (
+                    <button
+                      onClick={() => openWrapWeekDialog(activeWeekIdx)}
+                      disabled={isMonthClosed}
+                      className="text-xs bg-harbor-navy text-white hover:bg-harbor-teal px-2.5 py-1.5 rounded-full font-medium transition-colors whitespace-nowrap disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400 disabled:hover:bg-slate-200"
+                    >
+                      Wrap Week
+                    </button>
+                  )}
+                </div>
                 <div className="flex items-center justify-between px-4 py-2.5">
                   <span className="text-sm font-semibold text-harbor-navy uppercase tracking-wide">Net</span>
                   <span className={`text-sm font-bold ${(weekTotals[activeWeekIdx] ?? 0) >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
@@ -973,9 +1205,9 @@ async function prevMonth() {
                   </span>
                 </div>
                 <div className="flex items-center justify-between px-4 py-3 bg-harbor-navy rounded-b-2xl">
-                  <span className="text-sm font-bold text-white uppercase tracking-wide">Projected Balance</span>
-                  <span className={`text-base font-bold ${(projectedBalances[activeWeekIdx] ?? 0) >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
-                    {formatMoney(projectedBalances[activeWeekIdx] ?? 0)}
+                  <span className="text-sm font-bold text-white uppercase tracking-wide">{balanceLabel}</span>
+                  <span className={`text-base font-bold ${(isMonthClosed ? displayedForwardBalance : projectedBalances[activeWeekIdx] ?? 0) >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
+                    {formatMoney(isMonthClosed ? displayedForwardBalance : projectedBalances[activeWeekIdx] ?? 0)}
                   </span>
                 </div>
               </div>
@@ -983,8 +1215,66 @@ async function prevMonth() {
 
           </div>
         )}
+          </>
+        )}
 
       </div>
+
+      {pendingConfirmation && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-harbor-navy/45 px-4 py-6">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="dock-confirmation-title"
+            className="w-full max-w-md rounded-2xl border border-harbor-teal-light bg-white p-5 shadow-xl"
+          >
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-harbor-teal">
+                Harbor
+              </p>
+              <h2 id="dock-confirmation-title" className="text-xl font-bold text-harbor-navy">
+                {pendingConfirmation.type === "wrap-week" ? "Wrap this week?" : "Close this month?"}
+              </h2>
+              <p className="text-sm leading-6 text-harbor-navy/65">
+                {pendingConfirmation.type === "wrap-week"
+                  ? "Harbor will mark this week as handled. Credit card spending will be moved to the next month’s card payment."
+                  : "Harbor will save this month’s final balance and make the month read-only."}
+              </p>
+            </div>
+
+            <label className="mt-5 flex items-start gap-3 rounded-xl border border-slate-200 bg-harbor-offwhite p-3 text-sm text-harbor-navy/75">
+              <input
+                type="checkbox"
+                checked={clearAfterConfirm}
+                onChange={(e) => setClearAfterConfirm(e.target.checked)}
+                className="mt-0.5 h-4 w-4 flex-shrink-0 accent-harbor-teal"
+              />
+              <span>
+                {pendingConfirmation.type === "wrap-week"
+                  ? "Also clear entered values for this week"
+                  : "Also clear entered values for this month"}
+              </span>
+            </label>
+
+            <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button
+                type="button"
+                onClick={closeConfirmationDialog}
+                className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-harbor-navy/70 transition-colors hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmPendingAction()}
+                className="rounded-lg bg-harbor-navy px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-harbor-navy/90"
+              >
+                {pendingConfirmation.type === "wrap-week" ? "Wrap Week" : "Close Month"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

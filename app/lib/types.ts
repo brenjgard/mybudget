@@ -1,8 +1,6 @@
 export type PaymentMethod =
   | "checking"
-  | "credit-1"
-  | "credit-2"
-  | "credit-3";
+  | (string & {});
 
 export type FrequencyType =
   | "every-week"

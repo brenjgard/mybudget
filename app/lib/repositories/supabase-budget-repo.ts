@@ -414,18 +414,12 @@ async function saveMonthlyAmounts(monthKey: string, amounts: Record<string, Reco
   const user = await getUser();
   if (!user) throw new Error("Not authenticated");
 
-  const supabase = createClient();
-  const { error: deleteError } = await supabase
-    .from("monthly_amounts")
-    .delete()
-    .eq("user_id", user.id)
-    .eq("month_key", monthKey);
-
-  if (deleteError) throw deleteError;
+  const invalidLineItemIds = Object.keys(amounts).filter((lineItemId) => !isUuid(lineItemId));
+  if (invalidLineItemIds.length > 0) {
+    throw new Error(`Cannot save Dock amounts for non-canonical line item IDs: ${invalidLineItemIds.join(", ")}`);
+  }
 
   const rows = Object.entries(amounts).flatMap(([lineItemId, byWeek]) => {
-    if (!isUuid(lineItemId)) return [];
-
     return Object.entries(byWeek).map(([weekIndex, amount]) => ({
       user_id: user.id,
       line_item_id: lineItemId,
@@ -438,11 +432,26 @@ async function saveMonthlyAmounts(monthKey: string, amounts: Record<string, Reco
 
   if (rows.length === 0) return;
 
+  const supabase = createClient();
   const { error: insertError } = await supabase
     .from("monthly_amounts")
-    .insert(rows);
+    .upsert(rows, { onConflict: "user_id,line_item_id,month_key,week_index" });
 
   if (insertError) throw insertError;
+}
+
+async function clearMonthlyAmounts(monthKey: string) {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("monthly_amounts")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("month_key", monthKey);
+
+  if (error) throw error;
 }
 
 async function getMonthBalances(): Promise<Record<string, number>> {
@@ -790,6 +799,7 @@ export const supabaseBudgetRepo = {
   saveSettings,
   getMonthlyAmounts,
   saveMonthlyAmounts,
+  clearMonthlyAmounts,
   getMonthBalances,
   saveMonthBalance,
   getClosedMonths,

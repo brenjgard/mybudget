@@ -44,17 +44,38 @@ async function getMonthlyAmounts(monthKey: string): Promise<Record<string, Recor
 }
 
 async function saveMonthlyAmounts(monthKey: string, amounts: Record<string, Record<number, number>>) {
+  let supabaseUserChecked = false;
   try {
     const user = await supabaseBudgetRepo.getUser();
+    supabaseUserChecked = true;
     if (user) {
       await supabaseBudgetRepo.saveMonthlyAmounts(monthKey, amounts);
       return;
     }
-  } catch {
-    // Fall through to local persistence if auth/Supabase is unavailable.
+  } catch (error) {
+    console.error("[BudgetRepo] Supabase monthly amount save failed", { monthKey, error });
+    if (supabaseUserChecked) throw error;
+    // Fall through to local persistence if auth is unavailable.
   }
 
   localBudgetRepo.saveMonthlyAmounts(monthKey, amounts);
+}
+
+async function clearMonthlyAmounts(monthKey: string) {
+  let supabaseUserChecked = false;
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    supabaseUserChecked = true;
+    if (user) {
+      await supabaseBudgetRepo.clearMonthlyAmounts(monthKey);
+      return;
+    }
+  } catch (error) {
+    console.error("[BudgetRepo] Supabase monthly amount clear failed", { monthKey, error });
+    if (supabaseUserChecked) throw error;
+  }
+
+  localBudgetRepo.saveMonthlyAmounts(monthKey, {});
 }
 
 async function getMonthBalances(): Promise<Record<string, number>> {
@@ -264,6 +285,7 @@ export const budgetRepo = {
   saveSettings,
   getMonthlyAmounts,
   saveMonthlyAmounts,
+  clearMonthlyAmounts,
   getMonthBalances,
   saveMonthBalance,
   getClosedMonths,

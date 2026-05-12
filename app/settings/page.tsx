@@ -315,8 +315,8 @@ export default function Settings() {
 
   // ── Fleet (Credit Cards) ──────────────────────────────────────────────────────
   function addCard() {
-    if (!settings || !newCardLabel.trim() || settings.creditCards.length >= 3) return;
-    const id = `credit-${settings.creditCards.length + 1}` as PaymentMethod;
+    if (!settings || !newCardLabel.trim()) return;
+    const id = `credit-${crypto.randomUUID()}` as PaymentMethod;
     persist({ ...settings, creditCards: [...settings.creditCards, { id, label: newCardLabel.trim() }] });
     setNewCardLabel("");
   }
@@ -681,22 +681,18 @@ export default function Settings() {
             ))}
           </div>
 
-          {settings.creditCards.length < 3 ? (
-            <div className="flex gap-2">
-              <input
-                className="flex-1 border-2 border-slate-100 rounded-xl px-4 py-2 focus:outline-none focus:border-harbor-teal text-sm"
-                placeholder="Vessel name (e.g. Capital One)"
-                value={newCardLabel}
-                onChange={(e) => setNewCardLabel(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && addCard()}
-              />
-              <button onClick={addCard} className="px-4 py-2 bg-harbor-navy text-white rounded-xl hover:bg-harbor-navy/90 transition-colors text-sm font-medium">
-                Add Vessel
-              </button>
-            </div>
-          ) : (
-            <p className="text-xs text-slate-400">Maximum of 3 vessels reached.</p>
-          )}
+          <div className="flex gap-2">
+            <input
+              className="flex-1 border-2 border-slate-100 rounded-xl px-4 py-2 focus:outline-none focus:border-harbor-teal text-sm"
+              placeholder="Vessel name (e.g. Capital One)"
+              value={newCardLabel}
+              onChange={(e) => setNewCardLabel(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addCard()}
+            />
+            <button onClick={addCard} className="px-4 py-2 bg-harbor-navy text-white rounded-xl hover:bg-harbor-navy/90 transition-colors text-sm font-medium">
+              Add Vessel
+            </button>
+          </div>
         </div>
 
       </div>
