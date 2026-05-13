@@ -7,6 +7,8 @@ import { localRepo } from "../lib/local-repo";
 import { SEED_DATA } from "../data/seedData";
 import { AppSettings, FrequencyType, LineItem, PaymentMethod } from "../lib/types";
 
+const SHOW_DEV_TOOLS = process.env.NEXT_PUBLIC_SHOW_DEV_TOOLS === "true";
+
 function uid() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
@@ -370,18 +372,22 @@ export default function Settings() {
                 Saved
               </span>
             )}
-            <button
-              onClick={loadDemoData}
-              className="px-3 py-1.5 text-xs border-2 border-dashed border-slate-200 text-slate-500 rounded-lg hover:border-harbor-teal hover:text-harbor-teal transition-colors"
-            >
-              Load Demo Data
-            </button>
-            <button
-              onClick={saveToCloud}
-              className="px-3 py-1.5 text-xs border-2 border-dashed border-slate-200 text-slate-500 rounded-lg hover:border-harbor-teal hover:text-harbor-teal transition-colors"
-            >
-              Save to Cloud
-            </button>
+            {SHOW_DEV_TOOLS && (
+              <>
+                <button
+                  onClick={loadDemoData}
+                  className="px-3 py-1.5 text-xs border-2 border-dashed border-slate-200 text-slate-500 rounded-lg hover:border-harbor-teal hover:text-harbor-teal transition-colors"
+                >
+                  Load Demo Data
+                </button>
+                <button
+                  onClick={saveToCloud}
+                  className="px-3 py-1.5 text-xs border-2 border-dashed border-slate-200 text-slate-500 rounded-lg hover:border-harbor-teal hover:text-harbor-teal transition-colors"
+                >
+                  Save to Cloud
+                </button>
+              </>
+            )}
           </div>
         </div>
 

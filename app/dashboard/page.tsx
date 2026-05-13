@@ -3,46 +3,54 @@
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import { loadSettingsWithSupabaseFallback } from "../lib/budget-settings";
-import { localRepo, type Buoy } from "../lib/local-repo";
+import { buildMonthForecast } from "../lib/forecast";
+import type { Buoy, CCCharge } from "../lib/local-repo";
 import { budgetRepo } from "../lib/repositories/budget-repo";
 import { getWeekRanges, itemAppliesToWeek } from "../lib/schedule";
-import { AppSettings } from "../lib/types";
+import type { AppSettings } from "../lib/types";
 
 function formatMoney(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 }
 
-function formatDate(iso: string) {
-  const d = new Date(iso);
+function formatShortDate(date: Date) {
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function formatRecentDate(iso: string) {
+  const date = new Date(iso);
   const now = new Date();
   const yesterday = new Date(now);
   yesterday.setDate(now.getDate() - 1);
-  const isToday = d.toDateString() === now.toDateString();
-  const isYesterday = d.toDateString() === yesterday.toDateString();
-  if (isToday) return "Today";
-  if (isYesterday) return "Yesterday";
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
 
-function fmtShortDate(d: Date) {
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  if (date.toDateString() === now.toDateString()) return "Today";
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 const BLANK_BUOY = { name: "", current: "", goal: "" };
 
 export default function Dashboard() {
-  const now = new Date();
+  const now = useMemo(() => new Date(), []);
   const year = now.getFullYear();
   const month = now.getMonth();
   const monthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
+  const currentMonthKey = monthKey;
+  const prevMonthKey = month === 0
+    ? `${year - 1}-12`
+    : `${year}-${String(month).padStart(2, "0")}`;
+  const monthLabel = now.toLocaleString("en-US", { month: "long" });
 
   const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [ccCharges, setCCCharges] = useState<ReturnType<typeof localRepo.loadCCCharges>>([]);
   const [amounts, setAmounts] = useState<Record<string, Record<number, number>>>({});
+  const [monthBalances, setMonthBalances] = useState<Record<string, number>>({});
+  const [closedWeeks, setClosedWeeks] = useState<Set<string>>(new Set());
+  const [closedMonths, setClosedMonths] = useState<Set<string>>(new Set());
+  const [anchorOverride, setAnchorOverride] = useState<number | null>(null);
+  const [ccCharges, setCCCharges] = useState<CCCharge[]>([]);
   const [buoys, setBuoys] = useState<Buoy[]>([]);
   const [loaded, setLoaded] = useState(false);
 
-  // Buoy form state
   const [showBuoyForm, setShowBuoyForm] = useState(false);
   const [buoyForm, setBuoyForm] = useState(BLANK_BUOY);
 
@@ -50,14 +58,34 @@ export default function Dashboard() {
     let cancelled = false;
 
     async function loadInitialData() {
-      const [s, savedBuoys] = await Promise.all([
+      const [
+        savedSettings,
+        savedAmounts,
+        savedMonthBalances,
+        savedClosedWeeks,
+        savedClosedMonths,
+        savedAnchorOverride,
+        savedCharges,
+        savedBuoys,
+      ] = await Promise.all([
         loadSettingsWithSupabaseFallback(),
+        budgetRepo.getMonthlyAmounts(monthKey),
+        budgetRepo.getMonthBalances(),
+        budgetRepo.getClosedWeeks(monthKey),
+        budgetRepo.getClosedMonths(),
+        budgetRepo.getAnchorOverride(),
+        budgetRepo.getCCCharges(),
         budgetRepo.getBuoys(),
       ]);
+
       if (cancelled) return;
-      setSettings(s);
-      setCCCharges(localRepo.loadCCCharges());
-      setAmounts(localRepo.loadAmounts(monthKey));
+      setSettings(savedSettings);
+      setAmounts(savedAmounts);
+      setMonthBalances(savedMonthBalances);
+      setClosedWeeks(savedClosedWeeks);
+      setClosedMonths(savedClosedMonths);
+      setAnchorOverride(savedAnchorOverride);
+      setCCCharges(savedCharges);
       setBuoys(savedBuoys);
       setLoaded(true);
     }
@@ -70,73 +98,166 @@ export default function Dashboard() {
   }, [monthKey]);
 
   const weeks = useMemo(() => getWeekRanges(year, month), [year, month]);
+  const isMonthClosed = closedMonths.has(monthKey);
+  const currentAnchor = anchorOverride ?? settings?.checkingBalance ?? 0;
 
-  // ── Recent Ripples: CC charges sorted by dateMoved desc ───────────────────
-  const recentRipples = useMemo(() => {
-    return [...ccCharges]
-      .sort((a, b) => new Date(b.dateMoved).getTime() - new Date(a.dateMoved).getTime())
-      .slice(0, 5);
-  }, [ccCharges]);
+  const forecast = useMemo(() => {
+    if (!settings) return null;
 
-  // ── Upcoming Waves & Tides: income + expenses in next 14 days ────────────
+    return buildMonthForecast({
+      settings,
+      amounts,
+      weeks,
+      month,
+      monthKey,
+      currentMonthKey,
+      prevMonthKey,
+      currentAnchor,
+      monthBalances,
+      closedWeeks,
+      isMonthClosed,
+    });
+  }, [
+    settings,
+    amounts,
+    weeks,
+    month,
+    monthKey,
+    currentMonthKey,
+    prevMonthKey,
+    currentAnchor,
+    monthBalances,
+    closedWeeks,
+    isMonthClosed,
+  ]);
+
+  const activeWeekIdx = useMemo(() => {
+    const idx = weeks.findIndex((week) => now >= week.start && now <= week.end);
+    return idx >= 0 ? idx : 0;
+  }, [weeks, now]);
+
+  const activeWeek = weeks[activeWeekIdx];
+  const wrappedCount = forecast
+    ? weeks.filter((_, weekIndex) => forecast.isWeekWrapped(weekIndex)).length
+    : 0;
+
   const upcomingItems = useMemo(() => {
-    if (!settings) return [];
+    if (!settings || !forecast) return [];
+
     const todayMs = new Date().setHours(0, 0, 0, 0);
-    const in14Ms = todayMs + 14 * 24 * 60 * 60 * 1000;
+    const in21DaysMs = todayMs + 21 * 24 * 60 * 60 * 1000;
     const today = new Date(todayMs);
-    const in14 = new Date(in14Ms);
+    const in21Days = new Date(in21DaysMs);
+
     const results: {
+      id: string;
       name: string;
+      category: string;
       isIncome: boolean;
       amount: number;
+      weekIndex: number;
       weekStart: Date;
     }[] = [];
-    for (let wIdx = 0; wIdx < weeks.length; wIdx++) {
-      const week = weeks[wIdx];
-      if (week.end < today || week.start > in14) continue;
-      for (const item of settings.lineItems) {
+
+    weeks.forEach((week, weekIndex) => {
+      if (forecast.isWeekWrapped(weekIndex) || week.end < today || week.start > in21Days) return;
+
+      settings.lineItems.forEach((item) => {
         const applies = itemAppliesToWeek(
-          item.frequency, wIdx, week.start, week.end,
-          item.anchorDate, undefined, month
+          item.frequency,
+          weekIndex,
+          week.start,
+          week.end,
+          item.anchorDate,
+          item.anchorMonth,
+          month,
         );
-        if (!applies) continue;
-        const overrideAmt = amounts[item.id]?.[wIdx];
-        const amt = overrideAmt !== undefined ? overrideAmt : item.defaultAmount;
-        results.push({ name: item.name, isIncome: item.isIncome, amount: amt, weekStart: week.start });
-      }
-    }
+        if (!applies) return;
+
+        results.push({
+          id: `${item.id}-${weekIndex}`,
+          name: item.name,
+          category: item.category,
+          isIncome: item.isIncome,
+          amount: amounts[item.id]?.[weekIndex] ?? item.defaultAmount,
+          weekIndex,
+          weekStart: week.start,
+        });
+      });
+    });
+
     return results.sort((a, b) => a.weekStart.getTime() - b.weekStart.getTime());
-  }, [settings, weeks, amounts, month]);
+  }, [settings, forecast, weeks, amounts, month]);
 
-  // ── Insight ───────────────────────────────────────────────────────────────
-  const insight = useMemo(() => {
-    if (!settings) return null;
-    // Find top expense category by total default amount this month
-    const catTotals: Record<string, number> = {};
-    for (let wIdx = 0; wIdx < weeks.length; wIdx++) {
-      const week = weeks[wIdx];
-      for (const item of settings.lineItems) {
-        if (item.isIncome) continue;
-        const applies = itemAppliesToWeek(
-          item.frequency, wIdx, week.start, week.end,
-          item.anchorDate, undefined, month
-        );
-        if (!applies) continue;
-        const amt = amounts[item.id]?.[wIdx] ?? item.defaultAmount;
-        catTotals[item.category] = (catTotals[item.category] ?? 0) + amt;
-      }
+  const upcomingWaves = upcomingItems.filter((item) => item.isIncome).slice(0, 4);
+  const upcomingRipples = upcomingItems.filter((item) => !item.isIncome).slice(0, 5);
+  const recentCharges = useMemo(() => (
+    [...ccCharges]
+      .sort((a, b) => new Date(b.dateMoved).getTime() - new Date(a.dateMoved).getTime())
+      .slice(0, 4)
+  ), [ccCharges]);
+
+  const buoyHighlights = useMemo(() => (
+    [...buoys]
+      .sort((a, b) => {
+        const aPct = a.goal > 0 ? a.current / a.goal : 0;
+        const bPct = b.goal > 0 ? b.current / b.goal : 0;
+        return aPct - bPct;
+      })
+      .slice(0, 3)
+  ), [buoys]);
+
+  const nextAction = useMemo(() => {
+    if (!forecast || weeks.length === 0) {
+      return {
+        title: "Open Dock",
+        body: "Review this month's waves and ripples.",
+        href: "/",
+        label: "Review Dock",
+      };
     }
-    const entries = Object.entries(catTotals).sort((a, b) => b[1] - a[1]);
-    if (!entries.length) return null;
-    const [topCat, topAmt] = entries[0];
-    return `Your largest ripple category this month is ${topCat} at ${formatMoney(topAmt)}.`;
-  }, [settings, weeks, amounts, month]);
 
-  // ── Buoy handlers ─────────────────────────────────────────────────────────
+    if (isMonthClosed) {
+      return {
+        title: `${monthLabel} is closed`,
+        body: "Your final balance is saved. You can review the month in Dock anytime.",
+        href: "/",
+        label: "View Dock",
+      };
+    }
+
+    if (!forecast.isWeekWrapped(activeWeekIdx)) {
+      return {
+        title: `Review Week ${activeWeekIdx + 1}`,
+        body: "Check this week's entries and wrap it when real life has caught up.",
+        href: "/",
+        label: "Review this week",
+      };
+    }
+
+    if (wrappedCount === weeks.length) {
+      return {
+        title: `Close ${monthLabel}`,
+        body: "All weeks are wrapped. Save the final balance when you are ready.",
+        href: "/",
+        label: "Close month in Dock",
+      };
+    }
+
+    const nextOpenWeek = weeks.findIndex((_, weekIndex) => !forecast.isWeekWrapped(weekIndex));
+    return {
+      title: `Next up: Week ${nextOpenWeek + 1}`,
+      body: "The current week is wrapped. Keep an eye on the next open week.",
+      href: "/",
+      label: "Go to Dock",
+    };
+  }, [forecast, weeks, isMonthClosed, monthLabel, activeWeekIdx, wrappedCount]);
+
   async function addBuoy() {
     const current = parseFloat(buoyForm.current) || 0;
     const goal = parseFloat(buoyForm.goal) || 0;
     if (!buoyForm.name.trim() || goal <= 0) return;
+
     const newBuoy: Buoy = {
       id: crypto.randomUUID(),
       name: buoyForm.name.trim(),
@@ -149,26 +270,20 @@ export default function Dashboard() {
     setShowBuoyForm(false);
   }
 
-  async function removeBuoy(id: string) {
-    await budgetRepo.deleteBuoy(id);
-    setBuoys((currentBuoys) => currentBuoys.filter((b) => b.id !== id));
-  }
-
   if (!loaded) {
     return (
-      <div className="min-h-screen bg-harbor-offwhite flex items-center justify-center">
-        <div className="text-harbor-navy/50 text-sm">Loading...</div>
-      </div>
+      <main className="min-h-screen bg-harbor-offwhite flex items-center justify-center">
+        <p className="text-sm text-harbor-navy/50">Loading My Harbor...</p>
+      </main>
     );
   }
 
-  if (!settings) {
+  if (!settings || !forecast) {
     return (
-      <div className="min-h-screen bg-harbor-offwhite flex flex-col items-center justify-center gap-4 px-4">
-        <div className="text-4xl">⚓</div>
-        <h2 className="text-xl font-bold text-harbor-navy">No data yet</h2>
+      <main className="min-h-screen bg-harbor-offwhite flex flex-col items-center justify-center gap-4 px-4">
+        <h2 className="text-xl font-bold text-harbor-navy">No Harbor plan yet</h2>
         <p className="text-harbor-navy/60 text-sm text-center max-w-xs">
-          Complete setup to see your dashboard.
+          Complete setup to see where your money is headed.
         </p>
         <Link
           href="/setup"
@@ -176,217 +291,229 @@ export default function Dashboard() {
         >
           Go to Setup
         </Link>
-      </div>
+      </main>
     );
   }
 
-  const lastRipple = recentRipples[0] ?? null;
+  const projectedTone = forecast.displayedForwardBalance >= 0 ? "text-harbor-green" : "text-harbor-red";
+  const currentWeekTotal = forecast.weekTotals[activeWeekIdx] ?? 0;
 
   return (
-    <div className="min-h-screen bg-harbor-offwhite">
-      <div className="px-4 md:px-8 py-5 flex flex-col gap-4 max-w-[1280px] mx-auto">
-
-        {/* ── Current Position ── */}
-        <div className="bg-white rounded-xl border border-slate-200 px-5 py-4 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#2A9D8F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="5" r="3"/>
-              <line x1="12" y1="8" x2="12" y2="21"/>
-              <path d="M5 15l7 6 7-6"/>
-              <line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
+    <main className="min-h-screen bg-harbor-offwhite text-harbor-navy">
+      <div className="mx-auto flex max-w-[1280px] flex-col gap-5 px-4 py-5 md:px-8">
+        <section className="rounded-2xl border border-harbor-teal-light bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-5 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-harbor-navy/50 text-xs">Current Position</p>
-              <p className="text-harbor-navy text-xl font-bold tabular-nums">
-                {formatMoney(settings.checkingBalance)}
+              <p className="text-xs font-semibold uppercase tracking-wide text-harbor-teal">My Harbor</p>
+              <h1 className="mt-1 text-2xl font-bold text-harbor-navy md:text-3xl">A calm read on where you stand.</h1>
+              <p className="mt-2 max-w-2xl text-sm text-harbor-navy/60">
+                Harbor starts from your current Anchor and projects forward through the open weeks in Dock.
               </p>
             </div>
+            <Link
+              href="/"
+              className="inline-flex items-center justify-center rounded-lg bg-harbor-navy px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-harbor-navy/90"
+            >
+              Open Dock
+            </Link>
           </div>
-          {lastRipple && (
-            <div className="text-right flex-shrink-0">
-              <p className="text-harbor-navy/40 text-xs">Last:</p>
-              <p className="text-harbor-red text-sm font-semibold tabular-nums">
-                -{formatMoney(lastRipple.amount)}
+
+          <div className="mt-5 grid gap-3 md:grid-cols-3">
+            <div className="rounded-xl border border-slate-100 bg-harbor-offwhite p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">Current Anchor</p>
+              <p className="mt-2 text-2xl font-bold text-harbor-green tabular-nums">{formatMoney(currentAnchor)}</p>
+              <p className="mt-1 text-xs text-harbor-navy/55">Your actual checking balance.</p>
+            </div>
+            <div className="rounded-xl border border-slate-100 bg-harbor-offwhite p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">{forecast.balanceLabel}</p>
+              <p className={`mt-2 text-2xl font-bold tabular-nums ${projectedTone}`}>
+                {formatMoney(forecast.displayedForwardBalance)}
+              </p>
+              <p className="mt-1 text-xs text-harbor-navy/55">
+                {isMonthClosed ? "Saved when this month was closed." : "Expected month-end balance."}
               </p>
             </div>
-          )}
-        </div>
-
-        {/* ── Row 1: Recent Ripples | Upcoming Waves & Tides ── */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-
-          {/* Recent Ripples */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 flex flex-col">
-            <div className="px-5 py-4 flex items-center gap-2.5">
-              {/* Trending down icon */}
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E63946" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/>
-                <polyline points="17 18 23 18 23 12"/>
-              </svg>
-              <h2 className="font-bold text-harbor-navy text-base">Recent Ripples</h2>
+            <div className="rounded-xl border border-slate-100 bg-harbor-offwhite p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">Weekly Status</p>
+              <p className="mt-2 text-2xl font-bold text-harbor-navy tabular-nums">{wrappedCount} / {weeks.length}</p>
+              <p className="mt-1 text-xs text-harbor-navy/55">Weeks wrapped for {monthLabel}.</p>
             </div>
+          </div>
+        </section>
 
-            <div className="flex-1 divide-y divide-slate-100">
-              {recentRipples.length === 0 ? (
-                <div className="px-5 py-8 text-center">
-                  <p className="text-harbor-navy/40 text-sm">No recent charges</p>
-                  <p className="text-harbor-navy/30 text-xs mt-1">Close a week on the Dock to log CC charges</p>
+        <section className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
+          <div className="grid gap-5 md:grid-cols-2">
+            <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-harbor-teal">This Week</p>
+                  <h2 className="mt-1 text-lg font-bold text-harbor-navy">Week {activeWeekIdx + 1}</h2>
+                  {activeWeek && <p className="mt-1 text-sm text-harbor-navy/55">{activeWeek.label}</p>}
                 </div>
-              ) : (
-                recentRipples.map((charge, idx) => (
-                  <div key={idx} className="px-5 py-3.5 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-harbor-navy text-sm font-medium truncate">{charge.itemName}</p>
-                      <p className="text-harbor-navy/45 text-xs mt-0.5">{formatDate(charge.dateMoved)}</p>
-                    </div>
-                    <span className="text-harbor-red text-sm font-semibold flex-shrink-0 tabular-nums">
-                      -{formatMoney(charge.amount)}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <div className="px-5 py-3.5 border-t border-slate-100">
-              <Link href="/" className="w-full block text-center text-harbor-navy text-sm font-medium hover:text-harbor-teal transition-colors">
-                View Dock
-              </Link>
-            </div>
-          </div>
-
-          {/* Upcoming Waves & Tides */}
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 flex flex-col">
-            <div className="px-5 py-4 flex items-center gap-2.5">
-              {/* Calendar icon */}
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2A9D8F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="3" y="4" width="18" height="18" rx="2" ry="2"/>
-                <line x1="16" y1="2" x2="16" y2="6"/>
-                <line x1="8" y1="2" x2="8" y2="6"/>
-                <line x1="3" y1="10" x2="21" y2="10"/>
-              </svg>
-              <h2 className="font-bold text-harbor-navy text-base">Upcoming Waves &amp; Tides</h2>
-            </div>
-
-            <div className="flex-1 divide-y divide-slate-100">
-              {upcomingItems.length === 0 ? (
-                <div className="px-5 py-8 text-center">
-                  <p className="text-harbor-navy/60 text-sm font-medium">⛵ All clear ahead</p>
-                  <p className="text-harbor-navy/35 text-xs mt-1">Nothing due in the next 14 days</p>
-                </div>
-              ) : (
-                upcomingItems.slice(0, 5).map((item, idx) => (
-                  <div key={idx} className="px-5 py-3.5 flex items-center justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="text-harbor-navy text-sm font-medium truncate">{item.name}</p>
-                      <p className="text-harbor-navy/45 text-xs mt-0.5">{fmtShortDate(item.weekStart)}</p>
-                    </div>
-                    <span
-                      className={`text-sm font-semibold flex-shrink-0 tabular-nums ${
-                        item.isIncome ? "text-harbor-green" : "text-harbor-red"
-                      }`}
-                    >
-                      {item.isIncome ? "+" : "-"}{formatMoney(item.amount)}
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-
-            <div className="px-5 py-3.5 border-t border-slate-100">
-              <Link href="/" className="w-full block text-center text-harbor-navy text-sm font-medium hover:text-harbor-teal transition-colors">
-                View calendar
-              </Link>
-            </div>
-          </div>
-        </div>
-
-        {/* ── Row 2: Buoys (Savings Goals) ── */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-100">
-          <div className="px-5 py-4 border-b border-slate-100 flex items-center gap-2.5">
-            {/* Target/buoy icon */}
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2A9D8F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10"/>
-              <circle cx="12" cy="12" r="6"/>
-              <circle cx="12" cy="12" r="2"/>
-            </svg>
-            <h2 className="font-bold text-harbor-navy text-base">Buoys</h2>
-          </div>
-
-          <div className="p-5">
-            {buoys.length === 0 && !showBuoyForm ? (
-              <div className="py-4 text-center text-harbor-navy/40 text-sm">
-                No buoys set yet — add a savings goal below
+                <span className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                  forecast.isWeekWrapped(activeWeekIdx)
+                    ? "bg-harbor-green/10 text-harbor-green"
+                    : "bg-harbor-teal-light text-harbor-navy"
+                }`}>
+                  {forecast.isWeekWrapped(activeWeekIdx) ? "Wrapped" : "Open"}
+                </span>
               </div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-5 mb-5">
-                {buoys.map((buoy) => {
+              <div className="mt-5">
+                <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/40">Pending Net</p>
+                <p className={`mt-1 text-3xl font-bold tabular-nums ${currentWeekTotal >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
+                  {formatMoney(currentWeekTotal)}
+                </p>
+                <p className="mt-2 text-sm text-harbor-navy/55">
+                  Wrapped weeks are handled and no longer count as pending forecast activity.
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-harbor-teal">Next Action</p>
+              <h2 className="mt-1 text-lg font-bold text-harbor-navy">{nextAction.title}</h2>
+              <p className="mt-2 text-sm leading-6 text-harbor-navy/60">{nextAction.body}</p>
+              <Link
+                href={nextAction.href}
+                className="mt-5 inline-flex rounded-lg bg-harbor-teal px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-harbor-teal/90"
+              >
+                {nextAction.label}
+              </Link>
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-harbor-teal">Attention</p>
+                <h2 className="mt-1 text-lg font-bold text-harbor-navy">Buoys</h2>
+              </div>
+              <Link href="/buoys" className="text-sm font-medium text-harbor-teal hover:text-harbor-navy">
+                View all
+              </Link>
+            </div>
+
+            <div className="mt-4 space-y-4">
+              {buoyHighlights.length === 0 ? (
+                <p className="rounded-xl bg-harbor-offwhite px-4 py-5 text-center text-sm text-harbor-navy/50">
+                  No buoys yet. Add a savings goal when you are ready.
+                </p>
+              ) : (
+                buoyHighlights.map((buoy) => {
                   const pct = buoy.goal > 0 ? Math.min(100, Math.round((buoy.current / buoy.goal) * 100)) : 0;
                   return (
-                    <div key={buoy.id} className="group">
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-harbor-navy text-sm font-medium">{buoy.name}</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-harbor-navy/50 text-xs tabular-nums">
-                            {formatMoney(buoy.current)} / {formatMoney(buoy.goal)}
-                          </span>
-                          <button
-                            onClick={() => void removeBuoy(buoy.id)}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-300 hover:text-harbor-red text-xs leading-none"
-                            title="Remove"
-                          >
-                            ✕
-                          </button>
-                        </div>
+                    <div key={buoy.id}>
+                      <div className="mb-1 flex items-center justify-between gap-3 text-sm">
+                        <span className="font-medium text-harbor-navy">{buoy.name}</span>
+                        <span className="text-xs text-harbor-navy/50">{pct}%</span>
                       </div>
-                      <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
-                        <div
-                          className="h-full bg-harbor-teal rounded-full transition-all"
-                          style={{ width: `${pct}%` }}
-                        />
+                      <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                        <div className="h-full rounded-full bg-harbor-teal" style={{ width: `${pct}%` }} />
                       </div>
-                      <p className="text-harbor-navy/40 text-xs mt-1">{pct}% complete</p>
+                      <p className="mt-1 text-xs text-harbor-navy/45">
+                        {formatMoney(buoy.current)} of {formatMoney(buoy.goal)}
+                      </p>
                     </div>
                   );
-                })}
-              </div>
-            )}
+                })
+              )}
+            </div>
+          </div>
+        </section>
 
-            {/* Add new buoy form */}
+        <section className="grid gap-5 lg:grid-cols-2">
+          <DashboardList
+            title="Upcoming Waves"
+            empty="No upcoming waves in the next few weeks."
+            items={upcomingWaves.map((item) => ({
+              id: item.id,
+              name: item.name,
+              meta: `Week ${item.weekIndex + 1} - ${formatShortDate(item.weekStart)}`,
+              amount: `+${formatMoney(item.amount)}`,
+              tone: "green" as const,
+            }))}
+          />
+          <DashboardList
+            title="Upcoming Ripples"
+            empty="No upcoming ripples in the next few weeks."
+            items={upcomingRipples.map((item) => ({
+              id: item.id,
+              name: item.name,
+              meta: `${item.category} - Week ${item.weekIndex + 1}`,
+              amount: `-${formatMoney(item.amount)}`,
+              tone: "red" as const,
+            }))}
+          />
+        </section>
+
+        <section className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.6fr)]">
+          <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-harbor-teal">Recent</p>
+                <h2 className="mt-1 text-lg font-bold text-harbor-navy">Card Ripples</h2>
+              </div>
+              <Link href="/" className="text-sm font-medium text-harbor-teal hover:text-harbor-navy">
+                Dock
+              </Link>
+            </div>
+            <div className="mt-4 divide-y divide-slate-100">
+              {recentCharges.length === 0 ? (
+                <p className="py-6 text-center text-sm text-harbor-navy/45">No wrapped card ripples yet.</p>
+              ) : (
+                recentCharges.map((charge, index) => (
+                  <div key={`${charge.itemId}-${charge.dateMoved}-${index}`} className="flex items-center justify-between gap-3 py-3">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-medium text-harbor-navy">{charge.itemName}</p>
+                      <p className="text-xs text-harbor-navy/45">{charge.cardLabel} - {formatRecentDate(charge.dateMoved)}</p>
+                    </div>
+                    <span className="text-sm font-semibold text-harbor-red tabular-nums">-{formatMoney(charge.amount)}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+            <p className="text-xs font-semibold uppercase tracking-wide text-harbor-teal">Quick Buoy</p>
+            <h2 className="mt-1 text-lg font-bold text-harbor-navy">Add a goal</h2>
             {showBuoyForm ? (
-              <div className="border border-slate-200 rounded-xl p-4 flex flex-col gap-3">
+              <div className="mt-4 space-y-3">
                 <input
                   type="text"
-                  placeholder="Goal name (e.g. Emergency Fund)"
+                  placeholder="Goal name"
                   value={buoyForm.name}
-                  onChange={(e) => setBuoyForm((f) => ({ ...f, name: e.target.value }))}
-                  className="w-full border border-slate-200 rounded-lg px-3 py-2 text-sm text-harbor-navy placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-harbor-teal/30"
+                  onChange={(event) => setBuoyForm((form) => ({ ...form, name: event.target.value }))}
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-harbor-navy placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-harbor-teal/30"
                 />
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-2">
                   <input
                     type="number"
-                    placeholder="Current amount"
+                    placeholder="Current"
                     value={buoyForm.current}
-                    onChange={(e) => setBuoyForm((f) => ({ ...f, current: e.target.value }))}
-                    className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-harbor-navy placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-harbor-teal/30"
+                    onChange={(event) => setBuoyForm((form) => ({ ...form, current: event.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-harbor-navy placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-harbor-teal/30"
                   />
                   <input
                     type="number"
-                    placeholder="Goal amount"
+                    placeholder="Goal"
                     value={buoyForm.goal}
-                    onChange={(e) => setBuoyForm((f) => ({ ...f, goal: e.target.value }))}
-                    className="border border-slate-200 rounded-lg px-3 py-2 text-sm text-harbor-navy placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-harbor-teal/30"
+                    onChange={(event) => setBuoyForm((form) => ({ ...form, goal: event.target.value }))}
+                    className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-harbor-navy placeholder:text-slate-300 focus:outline-none focus:ring-2 focus:ring-harbor-teal/30"
                   />
                 </div>
-                <div className="flex gap-2 justify-end">
+                <div className="flex justify-end gap-2">
                   <button
+                    type="button"
                     onClick={() => { setShowBuoyForm(false); setBuoyForm(BLANK_BUOY); }}
-                    className="px-4 py-2 text-sm text-harbor-navy/60 hover:text-harbor-navy transition-colors"
+                    className="rounded-lg px-3 py-2 text-sm font-medium text-harbor-navy/60 hover:text-harbor-navy"
                   >
                     Cancel
                   </button>
                   <button
+                    type="button"
                     onClick={() => void addBuoy()}
-                    className="px-4 py-2 bg-harbor-teal text-white rounded-lg text-sm font-medium hover:bg-harbor-teal/90 transition-colors"
+                    className="rounded-lg bg-harbor-teal px-3 py-2 text-sm font-medium text-white hover:bg-harbor-teal/90"
                   >
                     Add Buoy
                   </button>
@@ -394,31 +521,48 @@ export default function Dashboard() {
               </div>
             ) : (
               <button
+                type="button"
                 onClick={() => setShowBuoyForm(true)}
-                className="w-full border border-dashed border-slate-200 rounded-xl py-3 flex items-center justify-center gap-2 text-harbor-navy/50 text-sm hover:border-harbor-teal hover:text-harbor-teal transition-colors"
+                className="mt-4 w-full rounded-xl border border-dashed border-slate-200 py-3 text-sm font-medium text-harbor-navy/50 transition-colors hover:border-harbor-teal hover:text-harbor-teal"
               >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10"/>
-                  <circle cx="12" cy="12" r="6"/>
-                  <circle cx="12" cy="12" r="2"/>
-                </svg>
                 Add New Buoy
               </button>
             )}
           </div>
-        </div>
+        </section>
+      </div>
+    </main>
+  );
+}
 
-        {/* ── Row 3: Insight bar ── */}
-        {insight && (
-          <div className="bg-blue-50 border border-blue-100 rounded-2xl px-5 py-4 flex items-start gap-3">
-            <span className="text-lg flex-shrink-0 mt-0.5">💡</span>
-            <p className="text-harbor-navy text-sm">
-              <span className="font-semibold">Insight: </span>
-              {insight}
-            </p>
-          </div>
+function DashboardList({
+  title,
+  empty,
+  items,
+}: {
+  title: string;
+  empty: string;
+  items: { id: string; name: string; meta: string; amount: string; tone: "green" | "red" }[];
+}) {
+  return (
+    <div className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+      <h2 className="text-lg font-bold text-harbor-navy">{title}</h2>
+      <div className="mt-4 divide-y divide-slate-100">
+        {items.length === 0 ? (
+          <p className="py-6 text-center text-sm text-harbor-navy/45">{empty}</p>
+        ) : (
+          items.map((item) => (
+            <div key={item.id} className="flex items-center justify-between gap-3 py-3">
+              <div className="min-w-0">
+                <p className="truncate text-sm font-medium text-harbor-navy">{item.name}</p>
+                <p className="text-xs text-harbor-navy/45">{item.meta}</p>
+              </div>
+              <span className={`text-sm font-semibold tabular-nums ${item.tone === "green" ? "text-harbor-green" : "text-harbor-red"}`}>
+                {item.amount}
+              </span>
+            </div>
+          ))
         )}
-
       </div>
     </div>
   );

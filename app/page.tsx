@@ -5,6 +5,7 @@ import type { MouseEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { loadSettingsWithSupabaseFallback } from "./lib/budget-settings";
+import { buildMonthForecast } from "./lib/forecast";
 import type { CCCharge } from "./lib/local-repo";
 import { budgetRepo } from "./lib/repositories/budget-repo";
 import { getWeekRanges, itemAppliesToWeek } from "./lib/schedule";
@@ -74,7 +75,6 @@ export default function Home() {
   const oneMonthAgo = new Date(now.getFullYear(), now.getMonth() - 1, 1);
   const canGoPrevMonth = prevDate >= oneMonthAgo;
   const isMonthClosed = closedMonths.has(monthKey);
-  const balanceLabel = isMonthClosed ? "Final Balance" : "Projected Balance";
   const isMonthAmountsPending = monthAmountsLoading || amountsMonthKey !== monthKey;
 
   function getAmountEditVersion(key: string) {
@@ -298,38 +298,49 @@ export default function Home() {
     ? currentBalance
     : settings?.checkingBalance ?? 0;
 
-  const startingBalance = monthKey === currentMonthKey
-    ? currentAnchor
-    : monthBalances[prevMonthKey] ?? currentAnchor;
   const visibleAmounts = useMemo(
     () => (isMonthAmountsPending ? {} : amounts),
     [amounts, isMonthAmountsPending],
   );
 
-  const weekTotals = useMemo(() => {
-    if (!settings) return [];
-    return weeks.map((_, wi) => {
-      let net = 0;
-      for (const item of settings.lineItems) {
-        if (!itemAppliesToWeek(item.frequency, wi, weeks[wi].start, weeks[wi].end, item.anchorDate, item.anchorMonth, month)) continue;
-        const n = visibleAmounts[item.id]?.[wi] ?? 0;
-        if (item.isIncome) net += n;
-        else net -= n;
-      }
-      return net;
-    });
-  }, [visibleAmounts, weeks, settings, month]);
+  const forecast = useMemo(() => {
+    if (!settings) {
+      return null;
+    }
 
-  const projectedBalances = useMemo(() => {
-    return weekTotals.reduce<number[]>((balances, total) => {
-      const previous = balances[balances.length - 1] ?? startingBalance;
-      return [...balances, previous + total];
-    }, []);
-  }, [startingBalance, weekTotals]);
-  const projectedForwardBalance = projectedBalances[projectedBalances.length - 1] ?? startingBalance;
-  const displayedForwardBalance = isMonthClosed
-    ? monthBalances[monthKey] ?? projectedForwardBalance
-    : projectedForwardBalance;
+    return buildMonthForecast({
+      settings,
+      amounts: visibleAmounts,
+      weeks,
+      month,
+      monthKey,
+      currentMonthKey,
+      prevMonthKey,
+      currentAnchor,
+      monthBalances,
+      closedWeeks,
+      isMonthClosed,
+    });
+  }, [
+    settings,
+    visibleAmounts,
+    weeks,
+    month,
+    monthKey,
+    currentMonthKey,
+    prevMonthKey,
+    currentAnchor,
+    monthBalances,
+    closedWeeks,
+    isMonthClosed,
+  ]);
+
+  const startingBalance = forecast?.startingBalance ?? currentAnchor;
+  const weekTotals = forecast?.weekTotals ?? [];
+  const projectedBalances = forecast?.projectedBalances ?? [];
+  const projectedForwardBalance = forecast?.projectedForwardBalance ?? startingBalance;
+  const displayedForwardBalance = forecast?.displayedForwardBalance ?? projectedForwardBalance;
+  const balanceLabel = forecast?.balanceLabel ?? (isMonthClosed ? "Final Balance" : "Projected Balance");
 
   const creditTotals = useMemo(() => {
     if (!settings) return [];
@@ -365,15 +376,15 @@ export default function Home() {
 
   // Save ending balance for this month whenever projectedBalances changes
   useEffect(() => {
-    if (!loaded || isMonthClosed || isMonthAmountsPending || projectedBalances.length === 0) return;
-    const endingBalance = projectedBalances[projectedBalances.length - 1];
+    if (!loaded || isMonthClosed || isMonthAmountsPending || !forecast) return;
+    const endingBalance = forecast.endingBalance;
     void Promise.resolve().then(() => {
       setMonthBalances((prev) => (
         prev[monthKey] === endingBalance ? prev : { ...prev, [monthKey]: endingBalance }
       ));
     });
     void budgetRepo.saveMonthBalance(monthKey, endingBalance);
-  }, [projectedBalances, loaded, monthKey, isMonthClosed, isMonthAmountsPending]);
+  }, [forecast, loaded, monthKey, isMonthClosed, isMonthAmountsPending]);
 
   function getAmount(itemId: string, weekIdx: number): number | "" {
     if (isMonthAmountsPending) return "";
@@ -381,7 +392,7 @@ export default function Home() {
   }
 
   function setAmount(itemId: string, weekIdx: number, val: number | "") {
-    if (isMonthClosed || isMonthAmountsPending) return;
+    if (isWeekReadOnly(weekIdx)) return;
     bumpAmountEditVersion(monthKey);
     const wasEditingVisibleMonth = amountsMonthKeyRef.current === monthKey;
     amountsMonthKeyRef.current = monthKey;
@@ -489,13 +500,12 @@ async function prevMonth() {
   }
 
   // ── Feature 5: Wrap Week CC flow ──────────────────────────────────────────
-  function wrappedWeekKey(wi: number) {
-    return `${monthKey}-checking-${wi}`;
+  function isWeekWrapped(wi: number) {
+    return forecast?.isWeekWrapped(wi) ?? false;
   }
 
-  function isWeekWrapped(wi: number) {
-    return closedWeeks.has(wrappedWeekKey(wi))
-      || (settings?.creditCards ?? []).some((card) => closedWeeks.has(`${monthKey}-${card.id}-${wi}`));
+  function isWeekReadOnly(weekIdx: number) {
+    return isMonthClosed || isMonthAmountsPending || isWeekWrapped(weekIdx);
   }
 
   function clearWeekValues(sourceAmounts: Record<string, Record<number, number>>, wi: number) {
@@ -538,7 +548,7 @@ async function prevMonth() {
   }
 
   async function wrapWeek(wi: number, clearValues: boolean) {
-    const wrapKey = wrappedWeekKey(wi);
+    const wrapKey = `${monthKey}-checking-${wi}`;
     if (!settings || isMonthClosed || isMonthAmountsPending || isWeekWrapped(wi) || wrappingWeekKeysRef.current.has(wrapKey)) return;
     wrappingWeekKeysRef.current.add(wrapKey);
 
@@ -750,10 +760,15 @@ async function prevMonth() {
           {weeks.length > 0 && (
             <div className="md:hidden flex items-center justify-between bg-harbor-navy text-white rounded-2xl px-4 py-3 shadow-sm">
               <button
+                type="button"
                 onClick={() => setActiveWeekIdx((i) => Math.max(0, i - 1))}
                 disabled={activeWeekIdx === 0}
-                className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 font-bold transition-colors"
+                aria-label="Previous week"
+                className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 font-bold transition-colors text-[0px]"
               >
+                <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M15 18l-6-6 6-6" />
+                </svg>
                 â†
               </button>
               <div className="text-center">
@@ -761,10 +776,15 @@ async function prevMonth() {
                 <div className="text-sm font-medium">{weeks[activeWeekIdx].label}</div>
               </div>
               <button
+                type="button"
                 onClick={() => setActiveWeekIdx((i) => Math.min(weeks.length - 1, i + 1))}
                 disabled={activeWeekIdx === weeks.length - 1}
-                className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 font-bold transition-colors"
+                aria-label="Next week"
+                className="px-3 py-2 rounded-lg bg-white/10 hover:bg-white/20 disabled:opacity-30 font-bold transition-colors text-[0px]"
               >
+                <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M9 18l6-6-6-6" />
+                </svg>
                 â†’
               </button>
             </div>
@@ -1004,6 +1024,7 @@ async function prevMonth() {
                     {weeks.map((_, wi) => {
                       const applies = itemAppliesToWeek(item.frequency, wi, weeks[wi].start, weeks[wi].end, item.anchorDate, item.anchorMonth, month);
                       const val = getAmount(item.id, wi);
+                      const isReadOnlyWeek = isWeekReadOnly(wi);
                       return (
                         <td key={wi} className="px-2 py-1 text-center">
                           {applies ? (
@@ -1011,7 +1032,7 @@ async function prevMonth() {
                               type="number"
                               min="0"
                               step="0.01"
-                              disabled={isMonthClosed}
+                              disabled={isReadOnlyWeek}
                               placeholder="—"
                               value={val === 0 ? "" : val}
                               onChange={(e) => setAmount(item.id, wi, e.target.value === "" ? "" : Number(e.target.value))}
@@ -1139,6 +1160,7 @@ async function prevMonth() {
                   <div className="divide-y divide-slate-100">
                     {applicableItems.map((item) => {
                       const val = getAmount(item.id, activeWeekIdx);
+                      const isReadOnlyWeek = isWeekReadOnly(activeWeekIdx);
                       return (
                         <div key={item.id} className="flex items-center justify-between px-4 py-2.5 gap-3">
                           <div className="flex items-center gap-1.5 min-w-0 flex-1">
@@ -1150,7 +1172,7 @@ async function prevMonth() {
                             inputMode="decimal"
                             min="0"
                             step="0.01"
-                            disabled={isMonthClosed}
+                            disabled={isReadOnlyWeek}
                             placeholder="0"
                             value={val === 0 ? "" : val}
                             onChange={(e) => setAmount(item.id, activeWeekIdx, e.target.value === "" ? "" : Number(e.target.value))}
