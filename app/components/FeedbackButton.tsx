@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { submitFeedback } from "../lib/feedback";
 
 export default function FeedbackButton() {
@@ -21,6 +21,15 @@ export default function FeedbackButton() {
     setOpen(false);
     resetForm();
   }
+
+  useEffect(() => {
+    function openFeedback() {
+      setOpen(true);
+    }
+
+    window.addEventListener("harbor:open-feedback", openFeedback);
+    return () => window.removeEventListener("harbor:open-feedback", openFeedback);
+  }, []);
 
   async function handleSubmit() {
     const trimmed = message.trim();
@@ -47,17 +56,19 @@ export default function FeedbackButton() {
 
   return (
     <>
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="fixed bottom-5 right-5 z-40 flex items-center gap-2 bg-harbor-navy text-white px-4 py-2.5 rounded-full shadow-lg hover:bg-harbor-teal transition-colors text-sm font-medium"
-        aria-label="Send feedback"
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-        </svg>
-        Feedback
-      </button>
+      {!open && (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="fixed bottom-8 right-8 z-30 hidden items-center gap-2 rounded-full bg-harbor-navy px-4 py-2.5 text-sm font-medium text-white shadow-lg transition-colors hover:bg-harbor-teal xl:flex"
+          aria-label="Send feedback"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+          </svg>
+          Feedback
+        </button>
+      )}
 
       {open && (
         <div

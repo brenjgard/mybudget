@@ -2,8 +2,12 @@
 
 import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
+import { EmptyState } from "../components/EmptyState";
+import { HelpTooltip } from "../components/HelpTooltip";
+import { InfoCallout } from "../components/InfoCallout";
 import { loadSettingsWithSupabaseFallback } from "../lib/budget-settings";
 import { buildMonthForecast } from "../lib/forecast";
+import { helpCopy } from "../lib/help-copy";
 import type { Buoy, CCCharge } from "../lib/local-repo";
 import { budgetRepo } from "../lib/repositories/budget-repo";
 import { getWeekRanges, itemAppliesToWeek } from "../lib/schedule";
@@ -320,12 +324,20 @@ export default function Dashboard() {
 
           <div className="mt-5 grid gap-3 md:grid-cols-3">
             <div className="rounded-xl border border-slate-100 bg-harbor-offwhite p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">Current Anchor</p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">Current Anchor</p>
+                <HelpTooltip title={helpCopy.currentAnchor.title}>{helpCopy.currentAnchor.body}</HelpTooltip>
+              </div>
               <p className="mt-2 text-2xl font-bold text-harbor-green tabular-nums">{formatMoney(currentAnchor)}</p>
               <p className="mt-1 text-xs text-harbor-navy/55">Your actual checking balance.</p>
             </div>
             <div className="rounded-xl border border-slate-100 bg-harbor-offwhite p-4">
-              <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">{forecast.balanceLabel}</p>
+              <div className="flex items-center gap-2">
+                <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">{forecast.balanceLabel}</p>
+                <HelpTooltip title={isMonthClosed ? helpCopy.finalBalance.title : helpCopy.projectedBalance.title}>
+                  {isMonthClosed ? helpCopy.finalBalance.body : helpCopy.projectedBalance.body}
+                </HelpTooltip>
+              </div>
               <p className={`mt-2 text-2xl font-bold tabular-nums ${projectedTone}`}>
                 {formatMoney(forecast.displayedForwardBalance)}
               </p>
@@ -336,10 +348,30 @@ export default function Dashboard() {
             <div className="rounded-xl border border-slate-100 bg-harbor-offwhite p-4">
               <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">Weekly Status</p>
               <p className="mt-2 text-2xl font-bold text-harbor-navy tabular-nums">{wrappedCount} / {weeks.length}</p>
-              <p className="mt-1 text-xs text-harbor-navy/55">Weeks wrapped for {monthLabel}.</p>
+              <p className="mt-1 text-xs text-harbor-navy/55">
+                {wrappedCount === 0
+                  ? "No weeks wrapped yet. Wrap a week after it has happened."
+                  : `Weeks wrapped for ${monthLabel}.`}
+              </p>
             </div>
           </div>
         </section>
+
+        <InfoCallout
+          id="dashboard-primer-v1"
+          title="A quick Harbor read"
+          action={
+            <Link
+              href="/"
+              className="inline-flex rounded-lg bg-harbor-teal px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-harbor-teal/90"
+            >
+              Review Dock
+            </Link>
+          }
+        >
+          Start with your Current Anchor, then Harbor projects forward through open weeks.
+          When a week has happened, wrap it so it stops counting as pending.
+        </InfoCallout>
 
         <section className="grid gap-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
           <div className="grid gap-5 md:grid-cols-2">
@@ -395,9 +427,16 @@ export default function Dashboard() {
 
             <div className="mt-4 space-y-4">
               {buoyHighlights.length === 0 ? (
-                <p className="rounded-xl bg-harbor-offwhite px-4 py-5 text-center text-sm text-harbor-navy/50">
-                  No buoys yet. Add a savings goal when you are ready.
-                </p>
+                <EmptyState
+                  title="No buoys yet"
+                  action={
+                    <Link href="/buoys" className="rounded-lg bg-harbor-teal px-3 py-2 text-sm font-medium text-white hover:bg-harbor-teal/90">
+                      Add a Buoy
+                    </Link>
+                  }
+                >
+                  Buoys are optional savings goals or attention points you want to keep visible.
+                </EmptyState>
               ) : (
                 buoyHighlights.map((buoy) => {
                   const pct = buoy.goal > 0 ? Math.min(100, Math.round((buoy.current / buoy.goal) * 100)) : 0;
@@ -424,7 +463,9 @@ export default function Dashboard() {
         <section className="grid gap-5 lg:grid-cols-2">
           <DashboardList
             title="Upcoming Waves"
-            empty="No upcoming waves in the next few weeks."
+            emptyTitle="No upcoming income"
+            empty="Add Income (Waves) so Harbor can see money coming in."
+            action={<Link href="/settings#waves" className="rounded-lg bg-harbor-green px-3 py-2 text-sm font-medium text-white hover:bg-harbor-green/90">Add Income</Link>}
             items={upcomingWaves.map((item) => ({
               id: item.id,
               name: item.name,
@@ -435,7 +476,9 @@ export default function Dashboard() {
           />
           <DashboardList
             title="Upcoming Ripples"
-            empty="No upcoming ripples in the next few weeks."
+            emptyTitle="No upcoming bills or spending"
+            empty="Add Bills & Spending (Ripples) to plan around what is going out."
+            action={<Link href="/settings#ripples" className="rounded-lg bg-harbor-red px-3 py-2 text-sm font-medium text-white hover:bg-harbor-red/90">Add Spending</Link>}
             items={upcomingRipples.map((item) => ({
               id: item.id,
               name: item.name,
@@ -459,7 +502,9 @@ export default function Dashboard() {
             </div>
             <div className="mt-4 divide-y divide-slate-100">
               {recentCharges.length === 0 ? (
-                <p className="py-6 text-center text-sm text-harbor-navy/45">No wrapped card ripples yet.</p>
+                <EmptyState title="No wrapped card spending yet">
+                  When you wrap a week, credit card spending moves into the next month&apos;s card payment.
+                </EmptyState>
               ) : (
                 recentCharges.map((charge, index) => (
                   <div key={`${charge.itemId}-${charge.dateMoved}-${index}`} className="flex items-center justify-between gap-3 py-3">
@@ -537,11 +582,15 @@ export default function Dashboard() {
 
 function DashboardList({
   title,
+  emptyTitle,
   empty,
+  action,
   items,
 }: {
   title: string;
+  emptyTitle: string;
   empty: string;
+  action?: React.ReactNode;
   items: { id: string; name: string; meta: string; amount: string; tone: "green" | "red" }[];
 }) {
   return (
@@ -549,7 +598,9 @@ function DashboardList({
       <h2 className="text-lg font-bold text-harbor-navy">{title}</h2>
       <div className="mt-4 divide-y divide-slate-100">
         {items.length === 0 ? (
-          <p className="py-6 text-center text-sm text-harbor-navy/45">{empty}</p>
+          <EmptyState title={emptyTitle} action={action}>
+            {empty}
+          </EmptyState>
         ) : (
           items.map((item) => (
             <div key={item.id} className="flex items-center justify-between gap-3 py-3">

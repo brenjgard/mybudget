@@ -319,7 +319,7 @@ export default function Setup() {
       lineItems,
     };
     await saveSettings(settings);
-    router.push("/");
+    router.push("/dashboard");
   }
 
   const meta = STEP_META[step - 1];
@@ -332,6 +332,10 @@ export default function Setup() {
 
   const waves   = lineItems.filter((i) => i.isIncome);
   const ripples = lineItems.filter((i) => !i.isIncome);
+  const nextLabel =
+    (step === 2 && waves.length === 0) || (step === 3 && ripples.length === 0)
+      ? "Add later"
+      : "Next";
 
   // ── Render ─────────────────────────────────────────────────────────────
   return (
@@ -371,8 +375,8 @@ export default function Setup() {
             {step === 1 && (
               <>
                 <div className="text-center space-y-1">
-                  <h2 className="text-2xl font-bold text-harbor-navy">Let's set your anchor</h2>
-                  <p className="text-slate-500 text-sm">How much cash do you have today?</p>
+                  <h2 className="text-2xl font-bold text-harbor-navy">Let&apos;s set your Current Anchor</h2>
+                  <p className="text-slate-500 text-sm">Start with your actual checking balance today.</p>
                 </div>
                 <div className="relative">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-lg font-medium">$</span>
@@ -387,7 +391,7 @@ export default function Setup() {
                 </div>
                 <div className="bg-blue-50 rounded-2xl p-4">
                   <p className="text-sm text-blue-700 text-center italic leading-relaxed">
-                    "No anchor is too small. Every journey starts somewhere."
+                    Your Current Anchor is the balance Harbor projects forward from.
                   </p>
                 </div>
               </>
@@ -397,8 +401,8 @@ export default function Setup() {
             {step === 2 && (
               <>
                 <div className="text-center space-y-1">
-                  <h2 className="text-2xl font-bold text-harbor-navy">Add your waves</h2>
-                  <p className="text-slate-500 text-sm">Income sources — salary, freelance, side gigs</p>
+                  <h2 className="text-2xl font-bold text-harbor-navy">Add Income (Waves)</h2>
+                  <p className="text-slate-500 text-sm">Paychecks, freelance income, or other money coming in. You can add these later.</p>
                 </div>
 
                 <ItemForm form={form} setForm={setForm} onAdd={addLineItem} isIncome={true} />
@@ -418,8 +422,8 @@ export default function Setup() {
             {step === 3 && (
               <>
                 <div className="text-center space-y-1">
-                  <h2 className="text-2xl font-bold text-harbor-navy">Add your ripples</h2>
-                  <p className="text-slate-500 text-sm">Regular expenses — bills, subscriptions, groceries</p>
+                  <h2 className="text-2xl font-bold text-harbor-navy">Add Bills &amp; Spending (Ripples)</h2>
+                  <p className="text-slate-500 text-sm">Bills, subscriptions, groceries, and planned spending. You can add these later.</p>
                 </div>
 
                 <ItemForm form={form} setForm={setForm} onAdd={addLineItem} isIncome={false} />
@@ -439,13 +443,13 @@ export default function Setup() {
             {step === 4 && (
               <>
                 <div className="text-center space-y-1">
-                  <h2 className="text-2xl font-bold text-harbor-navy">Your dock is ready</h2>
-                  <p className="text-slate-500 text-sm">Review everything before you set sail.</p>
+                  <h2 className="text-2xl font-bold text-harbor-navy">Your first forecast is ready</h2>
+                  <p className="text-slate-500 text-sm">Harbor will use your Anchor, income, and spending to project each week.</p>
                 </div>
 
                 {lineItems.length === 0 ? (
                   <div className="bg-slate-50 rounded-2xl p-8 text-center">
-                    <p className="text-slate-400 text-sm">No items added yet — go back to add waves or ripples.</p>
+                    <p className="text-slate-400 text-sm">No income or spending yet. That&apos;s okay; you can add them from Settings when you are ready.</p>
                   </div>
                 ) : (
                   <div className="space-y-4 max-h-80 overflow-y-auto pr-1">
@@ -535,14 +539,14 @@ export default function Setup() {
                 disabled={step === 1 && !checkingBalance}
                 className="px-6 py-2.5 rounded-xl bg-harbor-navy text-white font-semibold hover:bg-harbor-navy/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors ml-auto"
               >
-                Next →
+                {nextLabel} →
               </button>
             ) : (
               <button
                 onClick={finish}
                 className="px-8 py-2.5 rounded-xl bg-harbor-green text-white font-semibold hover:bg-[#24b047] transition-colors ml-auto"
               >
-                Set Sail ⚓
+                Go to My Harbor
               </button>
             )}
           </div>

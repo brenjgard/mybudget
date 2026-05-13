@@ -4,8 +4,12 @@ import { useState, useMemo, useEffect, useRef } from "react";
 import type { MouseEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { EmptyState } from "./components/EmptyState";
+import { HelpTooltip } from "./components/HelpTooltip";
+import { InfoCallout } from "./components/InfoCallout";
 import { loadSettingsWithSupabaseFallback } from "./lib/budget-settings";
 import { buildMonthForecast } from "./lib/forecast";
+import { helpCopy } from "./lib/help-copy";
 import type { CCCharge } from "./lib/local-repo";
 import { budgetRepo } from "./lib/repositories/budget-repo";
 import { getWeekRanges, itemAppliesToWeek } from "./lib/schedule";
@@ -517,6 +521,26 @@ async function prevMonth() {
     ) as Record<string, Record<number, number>>;
   }
 
+  function findCardPaymentLine(cardLabel: string) {
+    if (!settings) return undefined;
+    const normalizedCardLabel = cardLabel.trim().toLowerCase();
+    const exactPaymentName = `${normalizedCardLabel} payment`;
+    const candidates = settings.lineItems.filter(
+      (item) =>
+        item.category === "Credit Cards" &&
+        item.paymentMethod === "checking" &&
+        !item.isIncome,
+    );
+
+    return (
+      candidates.find((item) => item.name.trim().toLowerCase() === exactPaymentName) ??
+      candidates.find((item) => {
+        const normalizedName = item.name.trim().toLowerCase();
+        return normalizedName.includes(normalizedCardLabel) && normalizedName.includes("payment");
+      })
+    );
+  }
+
   function openWrapWeekDialog(wi: number) {
     if (isMonthClosed || isMonthAmountsPending || isWeekWrapped(wi)) return;
     setClearAfterConfirm(false);
@@ -583,12 +607,7 @@ async function prevMonth() {
 
         if (total > 0) {
           nextAmounts = nextAmounts ?? await budgetRepo.getMonthlyAmounts(nextMonthKey);
-          const paymentItem = settings.lineItems.find(
-            (item) =>
-              item.category === "Credit Cards" &&
-              item.paymentMethod === "checking" &&
-              item.name.toLowerCase().includes(card.label.toLowerCase())
-          );
+          const paymentItem = findCardPaymentLine(card.label);
           if (paymentItem) {
             const existing: number = Number(nextAmounts[paymentItem.id]?.[2] ?? 0);
             nextAmounts = {
@@ -740,6 +759,7 @@ async function prevMonth() {
                 <button
                   type="button"
                   onClick={openCloseMonthDialog}
+                  title={helpCopy.closeMonth.body}
                   className="px-3 py-2 rounded-lg border border-harbor-navy/20 bg-harbor-navy text-white text-xs font-medium hover:bg-harbor-navy/90 transition-colors"
                 >
                   Close Month
@@ -792,12 +812,20 @@ async function prevMonth() {
 
         </div>
 
+        <InfoCallout id="dock-primer-v1" title="How Dock works">
+          Dock is your week-by-week plan. Add Income (Waves) and Bills &amp; Spending (Ripples),
+          then wrap a week once it has happened so Harbor stops treating it as pending.
+        </InfoCallout>
+
         {/* Anchor summary */}
         <div className="bg-white rounded-2xl p-4 shadow-sm border border-harbor-teal-light">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(220px,auto)] md:items-start">
               <div className="space-y-1">
-                <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">Current Anchor</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">Current Anchor</p>
+                  <HelpTooltip title={helpCopy.currentAnchor.title}>{helpCopy.currentAnchor.body}</HelpTooltip>
+                </div>
                 <div className={`text-2xl font-bold ${currentAnchor >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
                   {formatMoney(currentAnchor)}
                 </div>
@@ -808,7 +836,12 @@ async function prevMonth() {
 
               {!isEditingAnchor && (
                 <div className="space-y-1 md:border-l md:border-harbor-teal-light md:pl-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">{balanceLabel}</p>
+                  <div className="flex items-center gap-2">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">{balanceLabel}</p>
+                    <HelpTooltip title={isMonthClosed ? helpCopy.finalBalance.title : helpCopy.projectedBalance.title}>
+                      {isMonthClosed ? helpCopy.finalBalance.body : helpCopy.projectedBalance.body}
+                    </HelpTooltip>
+                  </div>
                   <div className={`text-xl font-bold ${displayedForwardBalance >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
                     {formatMoney(displayedForwardBalance)}
                   </div>
@@ -893,6 +926,24 @@ async function prevMonth() {
           </div>
         ) : (
           <>
+        {settings.lineItems.length === 0 && (
+          <EmptyState
+            title="No income or spending yet"
+            action={
+              <div className="flex flex-wrap justify-center gap-2">
+                <Link href="/settings#waves" className="rounded-lg bg-harbor-green px-3 py-2 text-sm font-medium text-white hover:bg-harbor-green/90">
+                  Add Income
+                </Link>
+                <Link href="/settings#ripples" className="rounded-lg bg-harbor-red px-3 py-2 text-sm font-medium text-white hover:bg-harbor-red/90">
+                  Add Spending
+                </Link>
+              </div>
+            }
+          >
+            Add Income (Waves) and Bills &amp; Spending (Ripples) when you are ready. Harbor can still start from your Current Anchor.
+          </EmptyState>
+        )}
+
         <div className="hidden md:block bg-white rounded-2xl shadow-sm overflow-x-auto border border-harbor-teal-light">
           <table className="w-full text-sm border-collapse">
             <thead>
@@ -1082,7 +1133,10 @@ async function prevMonth() {
               {/* Week wrap status */}
               <tr className="bg-harbor-navy/5 font-semibold">
                 <td className="px-3 py-2 sticky left-0 bg-harbor-navy/5 text-xs uppercase tracking-wide text-harbor-navy" colSpan={2}>
-                  Week Status
+                  <span className="inline-flex items-center gap-2">
+                    Week Status
+                    <HelpTooltip title={helpCopy.wrapWeek.title}>{helpCopy.wrapWeek.body}</HelpTooltip>
+                  </span>
                 </td>
                 <td />
                 {weeks.map((_, wi) => (
@@ -1207,7 +1261,10 @@ async function prevMonth() {
                   );
                 })}
                 <div className="flex items-center justify-between px-4 py-3 gap-3">
-                  <span className="text-sm font-semibold text-harbor-navy">Week Status</span>
+                  <span className="inline-flex items-center gap-2 text-sm font-semibold text-harbor-navy">
+                    Week Status
+                    <HelpTooltip title={helpCopy.wrapWeek.title}>{helpCopy.wrapWeek.body}</HelpTooltip>
+                  </span>
                   {isWeekWrapped(activeWeekIdx) ? (
                     <span className="text-xs text-harbor-green font-medium">✓ Wrapped</span>
                   ) : (

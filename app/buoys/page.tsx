@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { EmptyState } from "../components/EmptyState";
 import type { Buoy } from "../lib/local-repo";
 import { budgetRepo } from "../lib/repositories/budget-repo";
 
@@ -373,19 +374,23 @@ export default function BuoysPage() {
               <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>
             </svg>
           </div>
-          <div className="text-center">
-            <p className="text-harbor-navy font-semibold text-base">No buoys yet</p>
-            <p className="text-harbor-navy/50 text-sm mt-1">Create your first savings goal to get started</p>
-          </div>
-          <button
-            onClick={openNew}
-            className="mt-2 flex items-center gap-2 bg-harbor-teal text-white px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-harbor-teal/90 transition-colors"
+          <EmptyState
+            title="No buoys yet"
+            className="w-full max-w-md"
+            action={
+              <button
+                onClick={openNew}
+                className="flex items-center gap-2 bg-harbor-teal text-white px-6 py-2.5 rounded-lg text-sm font-medium hover:bg-harbor-teal/90 transition-colors"
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+                </svg>
+                Create First Buoy
+              </button>
+            }
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
-            Create First Buoy
-          </button>
+            Buoys are optional savings goals or attention points you want Harbor to keep visible.
+          </EmptyState>
         </div>
       )}
 

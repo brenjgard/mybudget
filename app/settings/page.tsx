@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
+import { EmptyState } from "../components/EmptyState";
 import { loadSettingsWithSupabaseFallback, saveSettings } from "../lib/budget-settings";
 import { localRepo } from "../lib/local-repo";
 import { SEED_DATA } from "../data/seedData";
@@ -42,6 +43,55 @@ type EditingItem = Omit<LineItem, "id"> & { id?: string };
 
 function blankItem(isIncome: boolean, category: string): EditingItem {
   return { category, name: "", defaultAmount: 0, paymentMethod: "checking", isIncome, frequency: "every-week" };
+}
+
+const CREDIT_CARDS_CATEGORY = "Credit Cards";
+
+function cardPaymentName(cardLabel: string) {
+  return `${cardLabel.trim()} Payment`;
+}
+
+function isLikelyCardPaymentLine(item: LineItem, cardLabel: string) {
+  const normalizedName = item.name.trim().toLowerCase();
+  const normalizedCardLabel = cardLabel.trim().toLowerCase();
+  const expectedName = cardPaymentName(cardLabel).toLowerCase();
+
+  return (
+    item.category === CREDIT_CARDS_CATEGORY &&
+    item.paymentMethod === "checking" &&
+    item.isIncome === false &&
+    (
+      normalizedName === expectedName ||
+      (normalizedName.includes(normalizedCardLabel) && normalizedName.includes("payment"))
+    )
+  );
+}
+
+function ensureCardPaymentLine(settings: AppSettings, card: { id: PaymentMethod; label: string }): AppSettings {
+  const categories = settings.categories.includes(CREDIT_CARDS_CATEGORY)
+    ? settings.categories
+    : [...settings.categories, CREDIT_CARDS_CATEGORY];
+
+  const hasPaymentLine = settings.lineItems.some((item) => isLikelyCardPaymentLine(item, card.label));
+  if (hasPaymentLine) {
+    return { ...settings, categories };
+  }
+
+  const paymentLine: LineItem = {
+    id: uid(),
+    category: CREDIT_CARDS_CATEGORY,
+    name: cardPaymentName(card.label),
+    defaultAmount: 0,
+    paymentMethod: "checking",
+    isIncome: false,
+    frequency: "once-a-month-3",
+  };
+
+  return {
+    ...settings,
+    categories,
+    lineItems: [...settings.lineItems, paymentLine],
+  };
 }
 
 // ── Inline item form ──────────────────────────────────────────────────────────
@@ -318,16 +368,26 @@ export default function Settings() {
   // ── Fleet (Credit Cards) ──────────────────────────────────────────────────────
   function addCard() {
     if (!settings || !newCardLabel.trim()) return;
-    const id = `credit-${crypto.randomUUID()}` as PaymentMethod;
-    persist({ ...settings, creditCards: [...settings.creditCards, { id, label: newCardLabel.trim() }] });
+    const card = {
+      id: `credit-${crypto.randomUUID()}` as PaymentMethod,
+      label: newCardLabel.trim(),
+    };
+    const updatedSettings = ensureCardPaymentLine(
+      { ...settings, creditCards: [...settings.creditCards, card] },
+      card,
+    );
+    persist(updatedSettings);
     setNewCardLabel("");
   }
 
   function removeCard(id: PaymentMethod) {
-    if (!settings || !confirm("Remove this vessel? Items assigned to it will switch to checking.")) return;
+    if (!settings) return;
+    const card = settings.creditCards.find((currentCard) => currentCard.id === id);
+    if (!card) return;
+    if (!confirm(`Remove ${card.label}? Items assigned to it will switch to checking, and its matching payment ripple will be deleted.`)) return;
     const updatedItems = settings.lineItems.map((i) =>
       i.paymentMethod === id ? { ...i, paymentMethod: "checking" as PaymentMethod } : i
-    );
+    ).filter((item) => !isLikelyCardPaymentLine(item, card.label));
     persist({ ...settings, creditCards: settings.creditCards.filter((c) => c.id !== id), lineItems: updatedItems });
   }
 
@@ -400,14 +460,14 @@ export default function Settings() {
                 <polyline points="17 6 23 6 23 12"/>
               </svg>
             }
-            title="Waves"
-            subtitle="Your income streams"
+            title="Waves (Income)"
+            subtitle="Paychecks, freelance income, or other money coming in"
             count={waves.length}
             action={
               !wavesForm && (
                 <button
                   onClick={() => setWavesForm(blankItem(true, settings.categories[0] ?? ""))}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-harbor-green text-white rounded-lg text-sm font-medium hover:bg-harbor-green/90 transition-colors"
+                  className="flex items-center gap-1 px-3 py-2 rounded-lg border border-harbor-green/30 bg-harbor-green/5 text-harbor-green text-xs font-medium hover:bg-harbor-green/10 transition-colors"
                 >
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -439,7 +499,20 @@ export default function Settings() {
 
           <div className="space-y-2 mb-3">
             {visibleWaves.length === 0 && !wavesForm && (
-              <p className="text-sm text-slate-400 italic text-center py-6">No waves yet — add your income streams above.</p>
+              <EmptyState
+                title="No income yet"
+                action={
+                  <button
+                    type="button"
+                    onClick={() => setWavesForm(blankItem(true, settings.categories[0] ?? ""))}
+                    className="rounded-lg border border-harbor-green/30 bg-harbor-green/5 px-3 py-2 text-xs font-medium text-harbor-green hover:bg-harbor-green/10"
+                  >
+                    Add Wave
+                  </button>
+                }
+              >
+                Add Income (Waves) so Harbor can see money coming in.
+              </EmptyState>
             )}
             {visibleWaves.map((item) => (
               <div key={item.id} className="flex items-start justify-between gap-3 bg-harbor-offwhite rounded-xl px-4 py-3 border border-slate-100">
@@ -492,14 +565,14 @@ export default function Settings() {
                 <polyline points="17 18 23 18 23 12"/>
               </svg>
             }
-            title="Ripples"
-            subtitle="Your expenses"
+            title="Ripples (Spending)"
+            subtitle="Bills, subscriptions, groceries, and planned spending"
             count={ripples.length}
             action={
               !ripplesForm && (
                 <button
                   onClick={() => setRipplesForm(blankItem(false, settings.categories[0] ?? ""))}
-                  className="flex items-center gap-1.5 px-4 py-2 bg-harbor-red text-white rounded-lg text-sm font-medium hover:bg-harbor-red/90 transition-colors"
+                  className="flex items-center gap-1 px-3 py-2 rounded-lg border border-harbor-red/30 bg-harbor-red/5 text-harbor-red text-xs font-medium hover:bg-harbor-red/10 transition-colors"
                 >
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
@@ -531,7 +604,20 @@ export default function Settings() {
 
           <div className="space-y-2 mb-3">
             {visibleRipples.length === 0 && !ripplesForm && (
-              <p className="text-sm text-slate-400 italic text-center py-6">No ripples yet — add your expenses above.</p>
+              <EmptyState
+                title="No bills or spending yet"
+                action={
+                  <button
+                    type="button"
+                    onClick={() => setRipplesForm(blankItem(false, settings.categories[0] ?? ""))}
+                    className="rounded-lg border border-harbor-red/30 bg-harbor-red/5 px-3 py-2 text-xs font-medium text-harbor-red hover:bg-harbor-red/10"
+                  >
+                    Add Ripple
+                  </button>
+                }
+              >
+                Add Bills &amp; Spending (Ripples) to plan around what is going out.
+              </EmptyState>
             )}
             {visibleRipples.map((item) => (
               <div key={item.id} className="flex items-start justify-between gap-3 bg-harbor-offwhite rounded-xl px-4 py-3 border border-slate-100">
@@ -660,13 +746,15 @@ export default function Settings() {
               </svg>
             }
             title="Your Fleet"
-            subtitle="Credit cards assigned to your ripples"
+            subtitle="Credit cards assigned to spending. Harbor creates the matching payment ripple automatically."
             count={settings.creditCards.length}
           />
 
           <div className="space-y-2 mb-4">
             {settings.creditCards.length === 0 && (
-              <p className="text-sm text-slate-400 italic text-center py-4">No vessels in your fleet yet.</p>
+              <EmptyState title="No credit cards yet">
+                Add a credit card only if you want Harbor to move wrapped spending into a future card payment.
+              </EmptyState>
             )}
             {settings.creditCards.map((card) => (
               <div key={card.id} className="flex items-center justify-between bg-harbor-offwhite rounded-xl px-4 py-3 border border-slate-100">

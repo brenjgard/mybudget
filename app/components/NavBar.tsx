@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { usePathname } from "next/navigation";
 import { useState, useEffect, useRef } from "react";
 
@@ -54,6 +55,11 @@ export default function NavBar() {
   const menuRef = useRef<HTMLDivElement>(null);
   const isAuthPage = pathname === "/login" || pathname === "/signup" || pathname.startsWith("/beta");
 
+  function openFeedback() {
+    setMenuOpen(false);
+    window.dispatchEvent(new Event("harbor:open-feedback"));
+  }
+
   // Close menu when clicking outside
   useEffect(() => {
     function handleClickOutside(e: MouseEvent) {
@@ -71,12 +77,13 @@ export default function NavBar() {
       {/* ── Row 1: Brand bar ── */}
       <div className="bg-harbor-navy h-20 flex items-center justify-between px-4 md:px-8">
         <Link href={isAuthPage ? "/beta" : "/dashboard"} className="flex items-center gap-3 min-w-0">
-          <img
+          <Image
             src="/harbor-logo.svg"
             alt="Harbor"
             width={52}
             height={52}
-            className="block flex-shrink-0 mix-blend-multiply"
+            className="block flex-shrink-0 object-contain brightness-0 invert"
+            priority
           />
           <span className="font-bold text-white text-xl tracking-wide">Harbor</span>
           <span className="text-harbor-teal text-sm font-medium ml-1 hidden sm:inline">Plan ahead. Stay ahead.</span>
@@ -129,6 +136,18 @@ export default function NavBar() {
             );
           })}
           {!isAuthPage && (
+            <button
+              type="button"
+              onClick={openFeedback}
+              className="flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-harbor-navy hover:border-slate-200 transition-colors whitespace-nowrap"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+              </svg>
+              Feedback
+            </button>
+          )}
+          {!isAuthPage && (
             <form action="/auth/signout" method="post">
               <button
                 type="submit"
@@ -176,6 +195,18 @@ export default function NavBar() {
               </button>
             </form>
           )}
+          <button
+            type="button"
+            onClick={openFeedback}
+            className="flex w-full items-center gap-3 border-t border-slate-100 px-5 py-3.5 text-left text-sm font-medium text-harbor-navy transition-colors hover:bg-slate-50"
+          >
+            <span className="text-slate-400">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+              </svg>
+            </span>
+            Feedback
+          </button>
         </div>
       )}
 
