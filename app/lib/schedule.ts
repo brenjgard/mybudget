@@ -32,6 +32,12 @@ export function getWeekRanges(year: number, month: number) {
 
     if (start > lastDay) break;
 
+    const daysIntoNextMonth = end > lastDay
+      ? Math.round((end.getTime() - lastDay.getTime()) / (1000 * 60 * 60 * 24))
+      : 0;
+
+    if (daysIntoNextMonth >= 4) break;
+
     const fmt = (d: Date) =>
       d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
@@ -339,10 +345,11 @@ export function recurrenceDebugScenarios() {
 
   return {
     mayWeekLabels: mayWeeks.map((week) => week.label),
+    juneWeekLabels: juneWeeks.map((week) => week.label),
     weeklyFriday: applies({ ...base, recurrence: { type: "weekly", daysOfWeek: [5] } }, mayWeeks, 4),
     biweeklyFriday: applies({ ...base, recurrence: { type: "biweekly", daysOfWeek: [5], startDate: "2026-05-01" } }, mayWeeks, 4),
-    twiceMonthly15Last: applies({ ...base, recurrence: { type: "twiceMonthly", daysOfMonth: [15, "last"] } }, mayWeeks, 4),
-    monthlyLastDay: applies({ ...base, recurrence: { type: "monthly", daysOfMonth: ["last"] } }, mayWeeks, 4),
+    twiceMonthly15Last: applies({ ...base, recurrence: { type: "twiceMonthly", daysOfMonth: [15, "last"] } }, juneWeeks, 5),
+    monthlyLastDay: applies({ ...base, recurrence: { type: "monthly", daysOfMonth: ["last"] } }, juneWeeks, 5),
     oldSavedEveryWeek: applies({ ...base, recurrence: undefined }, juneWeeks, 5),
   };
 }

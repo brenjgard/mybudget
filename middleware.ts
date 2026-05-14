@@ -1,5 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { getSupabaseProjectHost, isApprovedBetaUserWithClient } from "./app/lib/beta-access-core";
+import { getSupabaseProjectHost, isApprovedBetaUserWithClient, type SupabaseLikeClient } from "./app/lib/beta-access-core";
 import { updateSession } from "./app/lib/supabase/middleware";
 
 const PUBLIC_PATHS = ["/beta", "/beta/pending", "/login", "/signup"];
@@ -35,7 +35,7 @@ export async function middleware(request: NextRequest) {
   if (user) {
     const email = user.email ?? "";
     const approval = email
-      ? await isApprovedBetaUserWithClient(supabase, email)
+      ? await isApprovedBetaUserWithClient(supabase as unknown as SupabaseLikeClient, email)
       : { approved: false, normalizedEmail: "", count: 0, error: null };
     const isApproved = approval.approved && !approval.error;
 

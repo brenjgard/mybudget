@@ -1,8 +1,10 @@
 import { createClient } from "./supabase/server";
+import { createAdminClient } from "./supabase/admin";
 import {
   isApprovedBetaUserWithClient,
   isDuplicateEmailError,
   normalizeEmail,
+  type SupabaseLikeClient,
 } from "./beta-access-core";
 
 type BetaAccessRequest = {
@@ -14,8 +16,8 @@ type BetaAccessRequest = {
 export type BetaAccessRequestResult = "requested" | "already_requested" | "already_approved";
 
 export async function isApprovedBetaUser(email: string) {
-  const supabase = await createClient();
-  const result = await isApprovedBetaUserWithClient(supabase, email);
+  const supabase = createAdminClient() ?? await createClient();
+  const result = await isApprovedBetaUserWithClient(supabase as unknown as SupabaseLikeClient, email);
   if (result.error) throw result.error;
   return result.approved;
 }
@@ -26,9 +28,9 @@ export async function requestBetaAccess({ name, email, note }: BetaAccessRequest
     throw new Error("Name and email are required.");
   }
 
-  const supabase = await createClient();
+  const supabase = createAdminClient() ?? await createClient();
 
-  const approval = await isApprovedBetaUserWithClient(supabase, normalizedEmail);
+  const approval = await isApprovedBetaUserWithClient(supabase as unknown as SupabaseLikeClient, normalizedEmail);
   if (approval.error) throw approval.error;
   if (approval.approved) {
     return "already_approved";

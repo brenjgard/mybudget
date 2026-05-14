@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getSupabaseProjectHost, isApprovedBetaUserWithClient, normalizeEmail } from "../../lib/beta-access-core";
+import { getSupabaseProjectHost, isApprovedBetaUserWithClient, normalizeEmail, type SupabaseLikeClient } from "../../lib/beta-access-core";
 import { createClient } from "../../lib/supabase/server";
 
 function getNextPath(value: FormDataEntryValue | null) {
@@ -47,7 +47,7 @@ export async function POST(request: Request) {
     return redirectWithAuthCookies(loginUrl);
   }
 
-  const approval = await isApprovedBetaUserWithClient(supabase, email);
+  const approval = await isApprovedBetaUserWithClient(supabase as unknown as SupabaseLikeClient, email);
   const isApproved = approval.approved && !approval.error;
   const redirectPath = isApproved ? next : "/beta/pending";
 

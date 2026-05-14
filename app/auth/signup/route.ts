@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import { isApprovedBetaUser } from "../../lib/beta-access";
+import { getSupabaseProjectHost, normalizeEmail } from "../../lib/beta-access-core";
 import { createClient } from "../../lib/supabase/server";
 
 export async function POST(request: Request) {
   const formData = await request.formData();
-  const email = String(formData.get("email") ?? "").trim();
+  const email = normalizeEmail(String(formData.get("email") ?? ""));
   const password = String(formData.get("password") ?? "");
   const confirmPassword = String(formData.get("confirmPassword") ?? "");
 
@@ -22,9 +23,25 @@ export async function POST(request: Request) {
   let isApproved = false;
   try {
     isApproved = await isApprovedBetaUser(email);
-  } catch {
-    isApproved = false;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown Supabase error";
+    console.error("[beta-signup:approval-error]", {
+      host: request.headers.get("host"),
+      supabaseHost: getSupabaseProjectHost(),
+      email,
+      table: "approved_beta_users",
+      error,
+    });
+    return NextResponse.redirect(signupUrlWithError(`Could not verify beta approval: ${message}`), 303);
   }
+
+  console.info("[beta-signup:approval-result]", {
+    host: request.headers.get("host"),
+    supabaseHost: getSupabaseProjectHost(),
+    email,
+    table: "approved_beta_users",
+    approved: isApproved,
+  });
 
   if (!isApproved) {
     return NextResponse.redirect(signupUrlWithError("You\u2019re not approved yet. Request beta access first."), 303);
