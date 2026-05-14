@@ -94,6 +94,8 @@ type FormState = {
   frequency: FrequencyType;
   anchorDate: string;
   anchorMonth: number | undefined;
+  waveType: "recurring" | "oneTime";
+  oneTimeDate: string;
 };
 
 function ItemForm({
@@ -107,6 +109,8 @@ function ItemForm({
   onAdd: () => void;
   isIncome: boolean;
 }) {
+  const waveType = form.waveType ?? "recurring";
+
   return (
     <div className="bg-slate-50 rounded-2xl p-4 space-y-3">
       {/* Name */}
@@ -151,7 +155,38 @@ function ItemForm({
           </select>
         </div>
 
+        {isIncome && (
+          <div className="col-span-2">
+            <label className="text-xs text-slate-500 block mb-1">Wave Type</label>
+            <select
+              className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
+              value={waveType}
+              onChange={(e) => setForm((p) => ({
+                ...p,
+                waveType: e.target.value as "recurring" | "oneTime",
+                frequency: e.target.value === "oneTime" ? "once-a-month-1" : p.frequency,
+              }))}
+            >
+              <option value="recurring">Recurring</option>
+              <option value="oneTime">One-time</option>
+            </select>
+          </div>
+        )}
+
+        {isIncome && waveType === "oneTime" && (
+          <div className="col-span-2">
+            <label className="text-xs text-slate-500 block mb-1">Date</label>
+            <input
+              type="date"
+              className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
+              value={form.oneTimeDate}
+              onChange={(e) => setForm((p) => ({ ...p, oneTimeDate: e.target.value }))}
+            />
+          </div>
+        )}
+
         {/* Frequency */}
+        {(!isIncome || waveType === "recurring") && (
         <div className="col-span-2">
           <label className="text-xs text-slate-500 block mb-1">Frequency</label>
           <select
@@ -164,9 +199,10 @@ function ItemForm({
             ))}
           </select>
         </div>
+        )}
 
         {/* Anchor Date — biweekly only */}
-        {(form.frequency === "every-other-week" ||
+        {(!isIncome || waveType === "recurring") && (form.frequency === "every-other-week" ||
           form.frequency === "biweekly-odd" ||
           form.frequency === "biweekly-even") && (
           <div className="col-span-2">
@@ -184,7 +220,7 @@ function ItemForm({
         )}
 
         {/* Starting Month — quarterly/annually only */}
-        {(form.frequency === "quarterly" || form.frequency === "annually") && (
+        {(!isIncome || waveType === "recurring") && (form.frequency === "quarterly" || form.frequency === "annually") && (
           <div className="col-span-2">
             <label className="text-xs text-slate-500 block mb-1">Starting Month</label>
             <select
@@ -202,7 +238,7 @@ function ItemForm({
 
       <button
         onClick={onAdd}
-        disabled={!form.name.trim()}
+        disabled={!form.name.trim() || (isIncome && waveType === "oneTime" && !form.oneTimeDate)}
         className={`w-full py-2.5 text-white rounded-xl font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
           isIncome
             ? "bg-harbor-green hover:bg-[#24b047]"
@@ -257,6 +293,8 @@ const BLANK_FORM: FormState = {
   frequency: "every-week",
   anchorDate: "",
   anchorMonth: undefined,
+  waveType: "recurring",
+  oneTimeDate: "",
 };
 
 export default function Setup() {
@@ -285,11 +323,13 @@ export default function Setup() {
         isIncome,
         paymentMethod: "checking",
         frequency: form.frequency,
-        anchorDate: form.anchorDate || undefined,
-        anchorMonth: form.anchorMonth,
+        anchorDate: isIncome && form.waveType === "oneTime" ? undefined : form.anchorDate || undefined,
+        anchorMonth: isIncome && form.waveType === "oneTime" ? undefined : form.anchorMonth,
+        waveType: isIncome ? form.waveType : undefined,
+        oneTimeDate: isIncome && form.waveType === "oneTime" ? form.oneTimeDate || undefined : undefined,
       },
     ]);
-    setForm((p) => ({ ...p, name: "", amount: "", anchorDate: "", anchorMonth: undefined }));
+    setForm((p) => ({ ...p, name: "", amount: "", anchorDate: "", anchorMonth: undefined, oneTimeDate: "" }));
   }
 
   function removeItem(id: string) {

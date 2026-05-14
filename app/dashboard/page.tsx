@@ -10,7 +10,7 @@ import { buildMonthForecast } from "../lib/forecast";
 import { helpCopy } from "../lib/help-copy";
 import type { Buoy, CCCharge } from "../lib/local-repo";
 import { budgetRepo } from "../lib/repositories/budget-repo";
-import { getWeekRanges, itemAppliesToWeek } from "../lib/schedule";
+import { buildProjectedAmounts, getWeekRanges, lineItemAppliesToWeek } from "../lib/schedule";
 import type { AppSettings } from "../lib/types";
 
 function formatMoney(n: number) {
@@ -104,13 +104,17 @@ export default function Dashboard() {
   const weeks = useMemo(() => getWeekRanges(year, month), [year, month]);
   const isMonthClosed = closedMonths.has(monthKey);
   const currentAnchor = anchorOverride ?? settings?.checkingBalance ?? 0;
+  const projectedAmounts = useMemo(
+    () => settings ? buildProjectedAmounts(settings, weeks, month, amounts) : amounts,
+    [settings, weeks, month, amounts],
+  );
 
   const forecast = useMemo(() => {
     if (!settings) return null;
 
     return buildMonthForecast({
       settings,
-      amounts,
+      amounts: projectedAmounts,
       weeks,
       month,
       monthKey,
@@ -123,7 +127,7 @@ export default function Dashboard() {
     });
   }, [
     settings,
-    amounts,
+    projectedAmounts,
     weeks,
     month,
     monthKey,
@@ -167,13 +171,11 @@ export default function Dashboard() {
       if (forecast.isWeekWrapped(weekIndex) || week.end < today || week.start > in21Days) return;
 
       settings.lineItems.forEach((item) => {
-        const applies = itemAppliesToWeek(
-          item.frequency,
+        const applies = lineItemAppliesToWeek(
+          item,
           weekIndex,
           week.start,
           week.end,
-          item.anchorDate,
-          item.anchorMonth,
           month,
         );
         if (!applies) return;
@@ -183,7 +185,7 @@ export default function Dashboard() {
           name: item.name,
           category: item.category,
           isIncome: item.isIncome,
-          amount: amounts[item.id]?.[weekIndex] ?? item.defaultAmount,
+          amount: projectedAmounts[item.id]?.[weekIndex] ?? item.defaultAmount,
           weekIndex,
           weekStart: week.start,
         });
@@ -191,7 +193,7 @@ export default function Dashboard() {
     });
 
     return results.sort((a, b) => a.weekStart.getTime() - b.weekStart.getTime());
-  }, [settings, forecast, weeks, amounts, month]);
+  }, [settings, forecast, weeks, projectedAmounts, month]);
 
   const upcomingWaves = upcomingItems.filter((item) => item.isIncome).slice(0, 4);
   const upcomingRipples = upcomingItems.filter((item) => !item.isIncome).slice(0, 5);

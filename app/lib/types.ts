@@ -20,6 +20,8 @@ export type FrequencyType =
   | "biweekly-odd"
   | "biweekly-even";
 
+export type WaveType = "recurring" | "oneTime";
+
 export type LineItem = {
   id: string;
   category: string;
@@ -30,6 +32,8 @@ export type LineItem = {
   frequency: FrequencyType;
   anchorDate?: string; // YYYY-MM-DD reference date for biweekly/every-other-week
   anchorMonth?: number; // 1-12, which month quarterly/annually items start
+  waveType?: WaveType; // missing means recurring for older saved income
+  oneTimeDate?: string; // YYYY-MM-DD for one-time income waves
 };
 
 export type AppSettings = {

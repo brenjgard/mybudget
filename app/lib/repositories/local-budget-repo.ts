@@ -57,6 +57,14 @@ export const localBudgetRepo = {
     localRepo.saveAmounts(amounts, monthKey);
   },
 
+  clearMonthlyAmountsForItem(monthKey: string, itemId: string) {
+    const amounts = localRepo.loadAmounts(monthKey);
+    if (!(itemId in amounts)) return;
+    const nextAmounts = { ...amounts };
+    delete nextAmounts[itemId];
+    localRepo.saveAmounts(nextAmounts, monthKey);
+  },
+
   getMonthBalances(): Record<string, number> {
     return localRepo.loadMonthBalances();
   },

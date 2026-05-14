@@ -35,6 +35,8 @@ type LineItemRow = {
   frequency: string;
   anchor_date: string | null;
   anchor_month: number | null;
+  wave_type?: "recurring" | "oneTime" | null;
+  one_time_date?: string | null;
 };
 
 type MonthlyAmountRow = {
@@ -152,6 +154,8 @@ function buildSettingsFromSupabase({
       frequency: item.frequency as FrequencyType,
       anchorDate: item.anchor_date ?? undefined,
       anchorMonth: item.anchor_month ?? undefined,
+      waveType: item.is_income ? item.wave_type ?? "recurring" : undefined,
+      oneTimeDate: item.one_time_date ?? undefined,
     })),
   };
 }
@@ -178,7 +182,7 @@ async function loadSettingsForUser(userId: string): Promise<AppSettings | null> 
       .returns<CategoryRow[]>(),
     supabase
       .from("line_items")
-      .select("id, category_id, payment_account_id, name, default_amount, is_income, frequency, anchor_date, anchor_month")
+      .select("id, category_id, payment_account_id, name, default_amount, is_income, frequency, anchor_date, anchor_month, wave_type, one_time_date")
       .eq("user_id", userId)
       .order("sort_order", { ascending: true })
       .returns<LineItemRow[]>(),
@@ -326,6 +330,8 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       frequency: item.frequency,
       anchor_date: item.anchorDate ?? null,
       anchor_month: item.anchorMonth ?? null,
+      wave_type: item.isIncome ? item.waveType ?? "recurring" : null,
+      one_time_date: item.isIncome && item.waveType === "oneTime" ? item.oneTimeDate ?? null : null,
       sort_order: index,
       updated_at: new Date().toISOString(),
     };
@@ -450,6 +456,22 @@ async function clearMonthlyAmounts(monthKey: string) {
     .delete()
     .eq("user_id", user.id)
     .eq("month_key", monthKey);
+
+  if (error) throw error;
+}
+
+async function clearMonthlyAmountsForItem(monthKey: string, itemId: string) {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+  if (!isUuid(itemId)) return;
+
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("monthly_amounts")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("month_key", monthKey)
+    .eq("line_item_id", itemId);
 
   if (error) throw error;
 }
@@ -800,6 +822,7 @@ export const supabaseBudgetRepo = {
   getMonthlyAmounts,
   saveMonthlyAmounts,
   clearMonthlyAmounts,
+  clearMonthlyAmountsForItem,
   getMonthBalances,
   saveMonthBalance,
   getClosedMonths,

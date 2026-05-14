@@ -78,6 +78,23 @@ async function clearMonthlyAmounts(monthKey: string) {
   localBudgetRepo.saveMonthlyAmounts(monthKey, {});
 }
 
+async function clearMonthlyAmountsForItem(monthKey: string, itemId: string) {
+  let supabaseUserChecked = false;
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    supabaseUserChecked = true;
+    if (user) {
+      await supabaseBudgetRepo.clearMonthlyAmountsForItem(monthKey, itemId);
+      return;
+    }
+  } catch (error) {
+    console.error("[BudgetRepo] Supabase item monthly amount clear failed", { monthKey, itemId, error });
+    if (supabaseUserChecked) throw error;
+  }
+
+  localBudgetRepo.clearMonthlyAmountsForItem(monthKey, itemId);
+}
+
 async function getMonthBalances(): Promise<Record<string, number>> {
   try {
     const user = await supabaseBudgetRepo.getUser();
@@ -286,6 +303,7 @@ export const budgetRepo = {
   getMonthlyAmounts,
   saveMonthlyAmounts,
   clearMonthlyAmounts,
+  clearMonthlyAmountsForItem,
   getMonthBalances,
   saveMonthBalance,
   getClosedMonths,

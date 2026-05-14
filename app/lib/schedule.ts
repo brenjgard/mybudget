@@ -1,4 +1,4 @@
-import type { FrequencyType } from "./types";
+import type { FrequencyType, LineItem } from "./types";
 
 export function getWeekRanges(year: number, month: number) {
   const weeks: { start: Date; end: Date; label: string }[] = [];
@@ -101,4 +101,68 @@ export function itemAppliesToWeek(
     }
     default: return false;
   }
+}
+
+function parseISODateOnly(value?: string) {
+  if (!value) return null;
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day);
+}
+
+export function lineItemAppliesToWeek(
+  item: LineItem,
+  weekIdx: number,
+  weekStart: Date,
+  weekEnd: Date,
+  month: number
+): boolean {
+  if (item.isIncome && item.waveType === "oneTime") {
+    const oneTimeDate = parseISODateOnly(item.oneTimeDate);
+    if (!oneTimeDate) return false;
+    return (
+      oneTimeDate.getMonth() === month &&
+      oneTimeDate >= weekStart &&
+      oneTimeDate <= weekEnd
+    );
+  }
+
+  return itemAppliesToWeek(
+    item.frequency,
+    weekIdx,
+    weekStart,
+    weekEnd,
+    item.anchorDate,
+    item.anchorMonth,
+    month
+  );
+}
+
+export function buildProjectedAmounts(
+  settings: { lineItems: LineItem[] },
+  weeks: { start: Date; end: Date }[],
+  month: number,
+  savedAmounts: Record<string, Record<number, number>>
+) {
+  const next: Record<string, Record<number, number>> = {};
+
+  for (const item of settings.lineItems) {
+    next[item.id] = {};
+
+    weeks.forEach((week, weekIndex) => {
+      const savedVal = savedAmounts[item.id]?.[weekIndex];
+      const applies = lineItemAppliesToWeek(item, weekIndex, week.start, week.end, month);
+
+      if (applies) {
+        next[item.id][weekIndex] = savedVal ?? item.defaultAmount;
+        return;
+      }
+
+      if (savedVal !== undefined) {
+        next[item.id][weekIndex] = savedVal;
+      }
+    });
+  }
+
+  return next;
 }

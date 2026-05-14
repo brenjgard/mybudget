@@ -1,4 +1,4 @@
-import { itemAppliesToWeek } from "./schedule";
+import { lineItemAppliesToWeek } from "./schedule";
 import type { AppSettings } from "./types";
 
 type WeekRange = {
@@ -57,7 +57,7 @@ export function buildMonthForecast({
 
     let net = 0;
     for (const item of settings.lineItems) {
-      if (!itemAppliesToWeek(item.frequency, weekIndex, week.start, week.end, item.anchorDate, item.anchorMonth, month)) {
+      if (!lineItemAppliesToWeek(item, weekIndex, week.start, week.end, month)) {
         continue;
       }
 

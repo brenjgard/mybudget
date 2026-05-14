@@ -12,7 +12,7 @@ import { buildMonthForecast } from "./lib/forecast";
 import { helpCopy } from "./lib/help-copy";
 import type { CCCharge } from "./lib/local-repo";
 import { budgetRepo } from "./lib/repositories/budget-repo";
-import { getWeekRanges, itemAppliesToWeek } from "./lib/schedule";
+import { buildProjectedAmounts, getWeekRanges, lineItemAppliesToWeek } from "./lib/schedule";
 import { AppSettings } from "./lib/types";
 
 function formatMoney(n: number) {
@@ -241,27 +241,7 @@ export default function Home() {
     void budgetRepo.getMonthlyAmounts(currentMonthKey).then((saved) => {
       if (cancelled) return;
 
-      const next: Record<string, Record<number, number>> = {};
-    for (const item of settings.lineItems) {
-      next[item.id] = next[item.id] ?? {};
-      weeks.forEach((_, wi) => {
-        if (itemAppliesToWeek(item.frequency, wi, weeks[wi].start, weeks[wi].end, item.anchorDate, item.anchorMonth, month)) {
-          const savedVal = saved[item.id]?.[wi];
-          if (savedVal !== undefined) {
-            // Always preserve saved values — never overwrite with defaults
-            next[item.id][wi] = savedVal;
-          } else if (item.defaultAmount > 0) {
-            next[item.id][wi] = item.defaultAmount;
-          }
-        } else {
-          // Preserve saved values even for weeks the item doesn't apply to
-          // This protects CC payment amounts written by closeWeek
-          if (saved[item.id]?.[wi] !== undefined) {
-            next[item.id][wi] = saved[item.id][wi];
-          }
-        }
-      });
-    }
+      const next = buildProjectedAmounts(settings, weeks, month, saved);
       if (getAmountEditVersion(currentMonthKey) !== loadStartedAtVersion) {
         const localEdits = monthlyAmountSnapshotsRef.current[currentMonthKey] ?? {};
         setMonthAmountsState(currentMonthKey, {
@@ -352,7 +332,7 @@ export default function Home() {
       const byCard: Record<string, number> = {};
       for (const item of settings.lineItems) {
         if (item.isIncome || item.paymentMethod === "checking") continue;
-        if (!itemAppliesToWeek(item.frequency, wi, weeks[wi].start, weeks[wi].end, item.anchorDate, item.anchorMonth, month)) continue;
+        if (!lineItemAppliesToWeek(item, wi, weeks[wi].start, weeks[wi].end, month)) continue;
         const n = visibleAmounts[item.id]?.[wi] ?? 0;
         byCard[item.paymentMethod] = (byCard[item.paymentMethod] ?? 0) + n;
       }
@@ -369,7 +349,7 @@ export default function Home() {
       result[cat] = weeks.map((_, wi) => {
         let total = 0;
         for (const item of catItems) {
-          if (!itemAppliesToWeek(item.frequency, wi, weeks[wi].start, weeks[wi].end, item.anchorDate, item.anchorMonth, month)) continue;
+          if (!lineItemAppliesToWeek(item, wi, weeks[wi].start, weeks[wi].end, month)) continue;
           total += visibleAmounts[item.id]?.[wi] ?? 0;
         }
         return total;
@@ -589,7 +569,7 @@ async function prevMonth() {
           (item) =>
             !item.isIncome &&
             item.paymentMethod === card.id &&
-            itemAppliesToWeek(item.frequency, wi, weeks[wi].start, weeks[wi].end, item.anchorDate, item.anchorMonth, month)
+            lineItemAppliesToWeek(item, wi, weeks[wi].start, weeks[wi].end, month)
         );
         const total = chargeItems.reduce((sum, item) => sum + (amounts[item.id]?.[wi] ?? 0), 0);
 
@@ -1073,7 +1053,7 @@ async function prevMonth() {
                       </Link>
                     </td>
                     {weeks.map((_, wi) => {
-                      const applies = itemAppliesToWeek(item.frequency, wi, weeks[wi].start, weeks[wi].end, item.anchorDate, item.anchorMonth, month);
+                      const applies = lineItemAppliesToWeek(item, wi, weeks[wi].start, weeks[wi].end, month);
                       const val = getAmount(item.id, wi);
                       const isReadOnlyWeek = isWeekReadOnly(wi);
                       return (
@@ -1195,13 +1175,11 @@ async function prevMonth() {
             {settings.categories.map((cat) => {
               const items = settings.lineItems.filter((i) => i.category === cat);
               const applicableItems = items.filter((item) =>
-                itemAppliesToWeek(
-                  item.frequency,
+                lineItemAppliesToWeek(
+                  item,
                   activeWeekIdx,
                   weeks[activeWeekIdx].start,
                   weeks[activeWeekIdx].end,
-                  item.anchorDate,
-                  item.anchorMonth,
                   month
                 )
               );

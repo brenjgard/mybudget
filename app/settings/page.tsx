@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { EmptyState } from "../components/EmptyState";
 import { loadSettingsWithSupabaseFallback, saveSettings } from "../lib/budget-settings";
 import { localRepo } from "../lib/local-repo";
+import { budgetRepo } from "../lib/repositories/budget-repo";
 import { SEED_DATA } from "../data/seedData";
 import { AppSettings, FrequencyType, LineItem, PaymentMethod } from "../lib/types";
 
@@ -42,7 +43,16 @@ const DEFAULT_CATEGORIES = [
 type EditingItem = Omit<LineItem, "id"> & { id?: string };
 
 function blankItem(isIncome: boolean, category: string): EditingItem {
-  return { category, name: "", defaultAmount: 0, paymentMethod: "checking", isIncome, frequency: "every-week" };
+  return { category, name: "", defaultAmount: 0, paymentMethod: "checking", isIncome, frequency: "every-week", waveType: isIncome ? "recurring" : undefined };
+}
+
+function monthKeyFromDate(value?: string) {
+  return value && value.length >= 7 ? value.slice(0, 7) : null;
+}
+
+function currentMonthKey() {
+  const today = new Date();
+  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
 }
 
 const CREDIT_CARDS_CATEGORY = "Credit Cards";
@@ -106,7 +116,7 @@ function ItemForm({
   isIncome: boolean;
 }) {
   const [form, setForm] = useState<EditingItem>(item);
-  const accentColor = isIncome ? "harbor-green" : "harbor-red";
+  const waveType = form.waveType ?? "recurring";
 
   return (
     <div className={`border-2 rounded-2xl p-4 space-y-3 ${isIncome ? "border-harbor-green/20 bg-harbor-green/5" : "border-harbor-red/20 bg-harbor-red/5"}`}>
@@ -137,6 +147,23 @@ function ItemForm({
             />
           </div>
         </div>
+        {isIncome && (
+          <div>
+            <label className="text-xs text-slate-500 block mb-1">Wave Type</label>
+            <select
+              className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
+              value={waveType}
+              onChange={(e) => setForm((p) => ({
+                ...p,
+                waveType: e.target.value as "recurring" | "oneTime",
+                frequency: e.target.value === "oneTime" ? "once-a-month-1" : p.frequency,
+              }))}
+            >
+              <option value="recurring">Recurring</option>
+              <option value="oneTime">One-time</option>
+            </select>
+          </div>
+        )}
         <div>
           <label className="text-xs text-slate-500 block mb-1">Category</label>
           <select
@@ -159,6 +186,18 @@ function ItemForm({
             </select>
           </div>
         )}
+        {isIncome && waveType === "oneTime" && (
+          <div className="sm:col-span-2">
+            <label className="text-xs text-slate-500 block mb-1">Date</label>
+            <input
+              type="date"
+              className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
+              value={form.oneTimeDate ?? ""}
+              onChange={(e) => setForm((p) => ({ ...p, oneTimeDate: e.target.value || undefined }))}
+            />
+          </div>
+        )}
+        {(!isIncome || waveType === "recurring") && (
         <div className={isIncome ? "sm:col-span-2" : ""}>
           <label className="text-xs text-slate-500 block mb-1">Frequency</label>
           <select
@@ -171,7 +210,8 @@ function ItemForm({
             ))}
           </select>
         </div>
-        {(form.frequency === "every-other-week" || form.frequency === "biweekly-odd" || form.frequency === "biweekly-even") && (
+        )}
+        {(!isIncome || waveType === "recurring") && (form.frequency === "every-other-week" || form.frequency === "biweekly-odd" || form.frequency === "biweekly-even") && (
           <div className="sm:col-span-2">
             <label className="text-xs text-slate-500 block mb-1">Anchor Date — a Friday this item is paid on</label>
             <input
@@ -183,7 +223,7 @@ function ItemForm({
             <p className="text-xs text-slate-400 mt-1">e.g. 2026-03-06 for the Mar 6 pay cycle</p>
           </div>
         )}
-        {(form.frequency === "quarterly" || form.frequency === "annually") && (
+        {(!isIncome || waveType === "recurring") && (form.frequency === "quarterly" || form.frequency === "annually") && (
           <div className="sm:col-span-2">
             <label className="text-xs text-slate-500 block mb-1">Starting Month</label>
             <select
@@ -329,15 +369,33 @@ export default function Settings() {
   }
 
   // ── Item CRUD ────────────────────────────────────────────────────────────────
-  function saveItem(form: EditingItem) {
+  async function saveItem(form: EditingItem) {
     if (!settings || !form.name.trim()) return;
+    if (form.isIncome && form.waveType === "oneTime" && !form.oneTimeDate) return;
+
+    const itemToSave: LineItem = {
+      ...(form as LineItem),
+      waveType: form.isIncome ? form.waveType ?? "recurring" : undefined,
+      oneTimeDate: form.isIncome && form.waveType === "oneTime" ? form.oneTimeDate : undefined,
+      anchorDate: form.isIncome && form.waveType === "oneTime" ? undefined : form.anchorDate || undefined,
+      anchorMonth: form.isIncome && form.waveType === "oneTime" ? undefined : form.anchorMonth,
+    };
+
     let updatedItems: LineItem[];
     if (form.id) {
-      updatedItems = settings.lineItems.map((i) => i.id === form.id ? { ...(form as LineItem) } : i);
+      updatedItems = settings.lineItems.map((i) => i.id === form.id ? itemToSave : i);
     } else {
-      updatedItems = [...settings.lineItems, { ...form, id: uid(), anchorDate: form.anchorDate || undefined }];
+      updatedItems = [...settings.lineItems, { ...itemToSave, id: uid() }];
     }
-    persist({ ...settings, lineItems: updatedItems });
+    await persist({ ...settings, lineItems: updatedItems });
+
+    if (itemToSave.isIncome && form.id) {
+      const affectedMonthKeys = new Set<string>([currentMonthKey()]);
+      const datedMonth = monthKeyFromDate(itemToSave.oneTimeDate ?? itemToSave.anchorDate);
+      if (datedMonth) affectedMonthKeys.add(datedMonth);
+      await Promise.all([...affectedMonthKeys].map((key) => budgetRepo.clearMonthlyAmountsForItem(key, form.id!)));
+    }
+
     setWavesForm(null);
     setRipplesForm(null);
   }
@@ -523,7 +581,7 @@ export default function Settings() {
                     <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{item.category}</span>
                   </div>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    ${item.defaultAmount.toLocaleString()} · {FREQ_LABELS[item.frequency]}
+                    ${item.defaultAmount.toLocaleString()} · {item.waveType === "oneTime" ? `One-time · ${item.oneTimeDate ?? "No date"}` : FREQ_LABELS[item.frequency]}
                   </p>
                 </div>
                 <div className="flex gap-2 flex-shrink-0">
