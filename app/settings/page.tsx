@@ -6,33 +6,15 @@ import { EmptyState } from "../components/EmptyState";
 import { loadSettingsWithSupabaseFallback, saveSettings } from "../lib/budget-settings";
 import { localRepo } from "../lib/local-repo";
 import { budgetRepo } from "../lib/repositories/budget-repo";
+import { getDefaultRecurrence, recurrenceFromLegacyFrequency, recurrenceLabel } from "../lib/schedule";
 import { SEED_DATA } from "../data/seedData";
-import { AppSettings, FrequencyType, LineItem, PaymentMethod } from "../lib/types";
+import { AppSettings, DayOfMonth, FrequencyType, LineItem, PaymentMethod, Recurrence, RecurrenceType, RecurrenceUnit } from "../lib/types";
 
 const SHOW_DEV_TOOLS = process.env.NEXT_PUBLIC_SHOW_DEV_TOOLS === "true";
 
 function uid() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
-
-const FREQ_LABELS: Record<FrequencyType, string> = {
-  "every-week": "Every week",
-  "every-other-week": "Every other week",
-  "twice-a-month": "Twice a month (weeks 1 & 3)",
-  "once-a-month-1": "Once a month – Week 1",
-  "once-a-month-2": "Once a month – Week 2",
-  "once-a-month-3": "Once a month – Week 3",
-  "once-a-month-4": "Once a month – Week 4",
-  "quarterly": "Quarterly",
-  "annually": "Annually",
-  "week-1": "Week 1 only",
-  "week-2": "Week 2 only",
-  "week-3": "Week 3 only",
-  "week-4": "Week 4 only",
-  "week-5": "Week 5 only",
-  "biweekly-odd": "Bi-weekly (weeks 1 & 3)",
-  "biweekly-even": "Bi-weekly (weeks 2 & 4)",
-};
 
 const DEFAULT_CATEGORIES = [
   "Pay", "Standard Bills", "Food", "Pets", "Car Stuff",
@@ -43,7 +25,7 @@ const DEFAULT_CATEGORIES = [
 type EditingItem = Omit<LineItem, "id"> & { id?: string };
 
 function blankItem(isIncome: boolean, category: string): EditingItem {
-  return { category, name: "", defaultAmount: 0, paymentMethod: "checking", isIncome, frequency: "every-week", waveType: "recurring" };
+  return { category, name: "", defaultAmount: 0, paymentMethod: "checking", isIncome, frequency: "every-week", waveType: "recurring", recurrence: getDefaultRecurrence() };
 }
 
 function monthKeyFromDate(value?: string) {
@@ -54,6 +36,39 @@ function currentMonthKey() {
   const today = new Date();
   return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
 }
+
+function todayISODate() {
+  const today = new Date();
+  return [
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, "0"),
+    String(today.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function dayOfMonthValue(day: DayOfMonth | undefined) {
+  return day === undefined ? "1" : String(day);
+}
+
+function parseDayOfMonth(value: string): DayOfMonth {
+  return value === "last" ? "last" : Number(value);
+}
+
+function frequencyForRecurrence(recurrence?: Recurrence): FrequencyType {
+  switch (recurrence?.type) {
+    case "biweekly":
+      return "every-other-week";
+    case "twiceMonthly":
+      return "twice-a-month";
+    case "monthly":
+      return "once-a-month-1";
+    default:
+      return "every-week";
+  }
+}
+
+const DAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTH_DAY_OPTIONS: DayOfMonth[] = [...Array.from({ length: 31 }, (_, index) => index + 1), "last"];
 
 const CREDIT_CARDS_CATEGORY = "Credit Cards";
 
@@ -117,6 +132,40 @@ function ItemForm({
 }) {
   const [form, setForm] = useState<EditingItem>(item);
   const waveType = form.waveType ?? "recurring";
+  const recurrence = form.recurrence ?? recurrenceFromLegacyFrequency({ ...(form as LineItem), id: form.id ?? "" });
+
+  function setWaveType(nextWaveType: "recurring" | "oneTime") {
+    setForm((previous) => {
+      const nextRecurrence = previous.recurrence ?? getDefaultRecurrence();
+      return {
+        ...previous,
+        waveType: nextWaveType,
+        recurrence: nextWaveType === "oneTime" ? undefined : nextRecurrence,
+        frequency: nextWaveType === "oneTime" ? "once-a-month-1" : frequencyForRecurrence(nextRecurrence),
+      };
+    });
+  }
+
+  function setRecurrence(nextRecurrence: Recurrence) {
+    setForm((previous) => ({
+      ...previous,
+      recurrence: nextRecurrence,
+      frequency: frequencyForRecurrence(nextRecurrence),
+      anchorDate: nextRecurrence.startDate,
+    }));
+  }
+
+  function setRecurrenceType(nextType: RecurrenceType) {
+    const startDate = recurrence.startDate ?? todayISODate();
+    const defaults: Record<RecurrenceType, Recurrence> = {
+      weekly: { type: "weekly", daysOfWeek: recurrence.daysOfWeek ?? [5] },
+      biweekly: { type: "biweekly", daysOfWeek: recurrence.daysOfWeek ?? [5], startDate },
+      twiceMonthly: { type: "twiceMonthly", daysOfMonth: recurrence.daysOfMonth?.slice(0, 2) ?? [15, "last"] },
+      monthly: { type: "monthly", daysOfMonth: [recurrence.daysOfMonth?.[0] ?? 1] },
+      custom: { type: "custom", interval: recurrence.interval ?? 1, unit: recurrence.unit ?? "weeks", startDate },
+    };
+    setRecurrence(defaults[nextType]);
+  }
 
   return (
     <div className={`border-2 rounded-2xl p-4 space-y-3 ${isIncome ? "border-harbor-green/20 bg-harbor-green/5" : "border-harbor-red/20 bg-harbor-red/5"}`}>
@@ -152,11 +201,7 @@ function ItemForm({
           <select
             className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
             value={waveType}
-            onChange={(e) => setForm((p) => ({
-              ...p,
-              waveType: e.target.value as "recurring" | "oneTime",
-              frequency: e.target.value === "oneTime" ? "once-a-month-1" : p.frequency,
-            }))}
+            onChange={(e) => setWaveType(e.target.value as "recurring" | "oneTime")}
           >
             <option value="recurring">Recurring</option>
             <option value="oneTime">One-time</option>
@@ -197,43 +242,113 @@ function ItemForm({
         )}
         {waveType === "recurring" && (
         <div className={isIncome ? "sm:col-span-2" : ""}>
-          <label className="text-xs text-slate-500 block mb-1">Frequency</label>
+          <label className="text-xs text-slate-500 block mb-1">Repeats</label>
           <select
             className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-            value={form.frequency}
-            onChange={(e) => setForm((p) => ({ ...p, frequency: e.target.value as FrequencyType }))}
+            value={recurrence.type}
+            onChange={(e) => setRecurrenceType(e.target.value as RecurrenceType)}
           >
-            {Object.entries(FREQ_LABELS).map(([k, v]) => (
-              <option key={k} value={k}>{v}</option>
-            ))}
+            <option value="weekly">Weekly</option>
+            <option value="biweekly">Every other week</option>
+            <option value="twiceMonthly">Twice a month</option>
+            <option value="monthly">Monthly</option>
+            <option value="custom">Custom</option>
           </select>
         </div>
         )}
-        {waveType === "recurring" && (form.frequency === "every-other-week" || form.frequency === "biweekly-odd" || form.frequency === "biweekly-even") && (
+        {waveType === "recurring" && (recurrence.type === "weekly" || recurrence.type === "biweekly") && (
+          <div>
+            <label className="text-xs text-slate-500 block mb-1">Day of Week</label>
+            <select
+              className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
+              value={recurrence.daysOfWeek?.[0] ?? 5}
+              onChange={(e) => setRecurrence({ ...recurrence, daysOfWeek: [Number(e.target.value)] })}
+            >
+              {DAY_LABELS.map((label, index) => <option key={label} value={index}>{label}</option>)}
+            </select>
+          </div>
+        )}
+        {waveType === "recurring" && recurrence.type === "biweekly" && (
           <div className="sm:col-span-2">
-            <label className="text-xs text-slate-500 block mb-1">Anchor Date — a Friday this item is paid on</label>
+            <label className="text-xs text-slate-500 block mb-1">Starting Date</label>
             <input
               type="date"
               className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-              value={form.anchorDate ?? ""}
-              onChange={(e) => setForm((p) => ({ ...p, anchorDate: e.target.value || undefined }))}
+              value={recurrence.startDate ?? ""}
+              onChange={(e) => setRecurrence({ ...recurrence, startDate: e.target.value || undefined })}
             />
-            <p className="text-xs text-slate-400 mt-1">e.g. 2026-03-06 for the Mar 6 pay cycle</p>
           </div>
         )}
-        {waveType === "recurring" && (form.frequency === "quarterly" || form.frequency === "annually") && (
+        {waveType === "recurring" && recurrence.type === "twiceMonthly" && (
+          <>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">First Date</label>
+              <select
+                className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
+                value={dayOfMonthValue(recurrence.daysOfMonth?.[0])}
+                onChange={(e) => setRecurrence({ ...recurrence, daysOfMonth: [parseDayOfMonth(e.target.value), recurrence.daysOfMonth?.[1] ?? "last"] })}
+              >
+                {MONTH_DAY_OPTIONS.map((day) => <option key={day} value={day}>{day === "last" ? "Last day" : day}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Second Date</label>
+              <select
+                className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
+                value={dayOfMonthValue(recurrence.daysOfMonth?.[1] ?? "last")}
+                onChange={(e) => setRecurrence({ ...recurrence, daysOfMonth: [recurrence.daysOfMonth?.[0] ?? 15, parseDayOfMonth(e.target.value)] })}
+              >
+                {MONTH_DAY_OPTIONS.map((day) => <option key={day} value={day}>{day === "last" ? "Last day" : day}</option>)}
+              </select>
+            </div>
+          </>
+        )}
+        {waveType === "recurring" && recurrence.type === "monthly" && (
           <div className="sm:col-span-2">
-            <label className="text-xs text-slate-500 block mb-1">Starting Month</label>
+            <label className="text-xs text-slate-500 block mb-1">Date of Month</label>
             <select
               className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-              value={form.anchorMonth ?? 1}
-              onChange={(e) => setForm((p) => ({ ...p, anchorMonth: Number(e.target.value) }))}
+              value={dayOfMonthValue(recurrence.daysOfMonth?.[0])}
+              onChange={(e) => setRecurrence({ ...recurrence, daysOfMonth: [parseDayOfMonth(e.target.value)] })}
             >
-              {["January","February","March","April","May","June","July","August","September","October","November","December"].map((m, i) => (
-                <option key={i + 1} value={i + 1}>{m}</option>
-              ))}
+              {MONTH_DAY_OPTIONS.map((day) => <option key={day} value={day}>{day === "last" ? "Last day" : day}</option>)}
             </select>
           </div>
+        )}
+        {waveType === "recurring" && recurrence.type === "custom" && (
+          <>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Every</label>
+              <input
+                type="number"
+                min="1"
+                className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
+                value={recurrence.interval ?? 1}
+                onChange={(e) => setRecurrence({ ...recurrence, interval: Math.max(1, Number(e.target.value) || 1) })}
+              />
+            </div>
+            <div>
+              <label className="text-xs text-slate-500 block mb-1">Unit</label>
+              <select
+                className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
+                value={recurrence.unit ?? "weeks"}
+                onChange={(e) => setRecurrence({ ...recurrence, unit: e.target.value as RecurrenceUnit })}
+              >
+                <option value="days">Days</option>
+                <option value="weeks">Weeks</option>
+                <option value="months">Months</option>
+              </select>
+            </div>
+            <div className="sm:col-span-2">
+              <label className="text-xs text-slate-500 block mb-1">Starting Date</label>
+              <input
+                type="date"
+                className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
+                value={recurrence.startDate ?? ""}
+                onChange={(e) => setRecurrence({ ...recurrence, startDate: e.target.value || undefined })}
+              />
+            </div>
+          </>
         )}
       </div>
       <div className="flex gap-2 pt-1">
@@ -377,6 +492,7 @@ export default function Settings() {
       oneTimeDate: form.waveType === "oneTime" ? form.oneTimeDate : undefined,
       anchorDate: form.waveType === "oneTime" ? undefined : form.anchorDate || undefined,
       anchorMonth: form.waveType === "oneTime" ? undefined : form.anchorMonth,
+      recurrence: form.waveType === "oneTime" ? undefined : form.recurrence ?? recurrenceFromLegacyFrequency({ ...(form as LineItem), id: form.id ?? "" }),
     };
 
     let updatedItems: LineItem[];
@@ -579,7 +695,7 @@ export default function Settings() {
                     <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{item.category}</span>
                   </div>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    ${item.defaultAmount.toLocaleString()} · {item.waveType === "oneTime" ? `One-time · ${item.oneTimeDate ?? "No date"}` : FREQ_LABELS[item.frequency]}
+                    ${item.defaultAmount.toLocaleString()} · {item.waveType === "oneTime" ? `One-time · ${item.oneTimeDate ?? "No date"}` : recurrenceLabel(item.recurrence ?? recurrenceFromLegacyFrequency(item))}
                   </p>
                 </div>
                 <div className="flex gap-2 flex-shrink-0">
@@ -689,7 +805,7 @@ export default function Settings() {
                     )}
                   </div>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    ${item.defaultAmount.toLocaleString()} · {item.waveType === "oneTime" ? `One-time · ${item.oneTimeDate ?? "No date"}` : FREQ_LABELS[item.frequency]}
+                    ${item.defaultAmount.toLocaleString()} · {item.waveType === "oneTime" ? `One-time · ${item.oneTimeDate ?? "No date"}` : recurrenceLabel(item.recurrence ?? recurrenceFromLegacyFrequency(item))}
                     {item.paymentMethod === "checking" && " · Checking"}
                   </p>
                 </div>

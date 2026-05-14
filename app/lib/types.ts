@@ -21,6 +21,18 @@ export type FrequencyType =
   | "biweekly-even";
 
 export type WaveType = "recurring" | "oneTime";
+export type RecurrenceType = "weekly" | "biweekly" | "twiceMonthly" | "monthly" | "custom";
+export type RecurrenceUnit = "days" | "weeks" | "months";
+export type DayOfMonth = number | "last";
+
+export type Recurrence = {
+  type: RecurrenceType;
+  interval?: number;
+  unit?: RecurrenceUnit;
+  daysOfWeek?: number[];
+  daysOfMonth?: DayOfMonth[];
+  startDate?: string;
+};
 
 export type LineItem = {
   id: string;
@@ -34,6 +46,7 @@ export type LineItem = {
   anchorMonth?: number; // 1-12, which month quarterly/annually items start
   waveType?: WaveType; // missing means recurring for older saved items
   oneTimeDate?: string; // YYYY-MM-DD for one-time waves/ripples
+  recurrence?: Recurrence;
 };
 
 export type AppSettings = {

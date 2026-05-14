@@ -3,7 +3,7 @@
 import { createClient } from "../supabase/client";
 import type { CCCharge } from "../local-repo";
 import type { Buoy } from "../local-repo";
-import type { AppSettings, FrequencyType, LineItem, PaymentMethod } from "../types";
+import type { AppSettings, FrequencyType, LineItem, PaymentMethod, Recurrence } from "../types";
 
 type User = {
   id: string;
@@ -37,6 +37,7 @@ type LineItemRow = {
   anchor_month: number | null;
   wave_type?: "recurring" | "oneTime" | null;
   one_time_date?: string | null;
+  recurrence?: Recurrence | null;
 };
 
 type MonthlyAmountRow = {
@@ -156,6 +157,7 @@ function buildSettingsFromSupabase({
       anchorMonth: item.anchor_month ?? undefined,
       waveType: item.wave_type ?? "recurring",
       oneTimeDate: item.one_time_date ?? undefined,
+      recurrence: item.recurrence ?? undefined,
     })),
   };
 }
@@ -182,7 +184,7 @@ async function loadSettingsForUser(userId: string): Promise<AppSettings | null> 
       .returns<CategoryRow[]>(),
     supabase
       .from("line_items")
-      .select("id, category_id, payment_account_id, name, default_amount, is_income, frequency, anchor_date, anchor_month, wave_type, one_time_date")
+      .select("id, category_id, payment_account_id, name, default_amount, is_income, frequency, anchor_date, anchor_month, wave_type, one_time_date, recurrence")
       .eq("user_id", userId)
       .order("sort_order", { ascending: true })
       .returns<LineItemRow[]>(),
@@ -332,6 +334,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       anchor_month: item.anchorMonth ?? null,
       wave_type: item.waveType ?? "recurring",
       one_time_date: item.waveType === "oneTime" ? item.oneTimeDate ?? null : null,
+      recurrence: item.waveType === "oneTime" ? null : item.recurrence ?? null,
       sort_order: index,
       updated_at: new Date().toISOString(),
     };

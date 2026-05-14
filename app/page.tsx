@@ -12,7 +12,7 @@ import { buildMonthForecast } from "./lib/forecast";
 import { helpCopy } from "./lib/help-copy";
 import type { CCCharge } from "./lib/local-repo";
 import { budgetRepo } from "./lib/repositories/budget-repo";
-import { buildProjectedAmounts, getWeekRanges, lineItemAppliesToWeek } from "./lib/schedule";
+import { buildProjectedAmounts, getWeekRanges, lineItemAppliesToWeek, recurrenceDebugScenarios } from "./lib/schedule";
 import { AppSettings } from "./lib/types";
 
 function formatMoney(n: number) {
@@ -188,6 +188,12 @@ export default function Home() {
     return () => {
       Object.values(monthlyAmountSaveTimersRef.current).forEach(clearTimeout);
     };
+  }, []);
+
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+
+    (window as typeof window & { harborRecurrenceScenarios?: typeof recurrenceDebugScenarios }).harborRecurrenceScenarios = recurrenceDebugScenarios;
   }, []);
 
   useEffect(() => {
