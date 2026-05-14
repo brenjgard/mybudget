@@ -43,7 +43,7 @@ const DEFAULT_CATEGORIES = [
 type EditingItem = Omit<LineItem, "id"> & { id?: string };
 
 function blankItem(isIncome: boolean, category: string): EditingItem {
-  return { category, name: "", defaultAmount: 0, paymentMethod: "checking", isIncome, frequency: "every-week", waveType: isIncome ? "recurring" : undefined };
+  return { category, name: "", defaultAmount: 0, paymentMethod: "checking", isIncome, frequency: "every-week", waveType: "recurring" };
 }
 
 function monthKeyFromDate(value?: string) {
@@ -147,23 +147,21 @@ function ItemForm({
             />
           </div>
         </div>
-        {isIncome && (
-          <div>
-            <label className="text-xs text-slate-500 block mb-1">Wave Type</label>
-            <select
-              className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-              value={waveType}
-              onChange={(e) => setForm((p) => ({
-                ...p,
-                waveType: e.target.value as "recurring" | "oneTime",
-                frequency: e.target.value === "oneTime" ? "once-a-month-1" : p.frequency,
-              }))}
-            >
-              <option value="recurring">Recurring</option>
-              <option value="oneTime">One-time</option>
-            </select>
-          </div>
-        )}
+        <div>
+          <label className="text-xs text-slate-500 block mb-1">{isIncome ? "Wave" : "Ripple"} Type</label>
+          <select
+            className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
+            value={waveType}
+            onChange={(e) => setForm((p) => ({
+              ...p,
+              waveType: e.target.value as "recurring" | "oneTime",
+              frequency: e.target.value === "oneTime" ? "once-a-month-1" : p.frequency,
+            }))}
+          >
+            <option value="recurring">Recurring</option>
+            <option value="oneTime">One-time</option>
+          </select>
+        </div>
         <div>
           <label className="text-xs text-slate-500 block mb-1">Category</label>
           <select
@@ -186,7 +184,7 @@ function ItemForm({
             </select>
           </div>
         )}
-        {isIncome && waveType === "oneTime" && (
+        {waveType === "oneTime" && (
           <div className="sm:col-span-2">
             <label className="text-xs text-slate-500 block mb-1">Date</label>
             <input
@@ -197,7 +195,7 @@ function ItemForm({
             />
           </div>
         )}
-        {(!isIncome || waveType === "recurring") && (
+        {waveType === "recurring" && (
         <div className={isIncome ? "sm:col-span-2" : ""}>
           <label className="text-xs text-slate-500 block mb-1">Frequency</label>
           <select
@@ -211,7 +209,7 @@ function ItemForm({
           </select>
         </div>
         )}
-        {(!isIncome || waveType === "recurring") && (form.frequency === "every-other-week" || form.frequency === "biweekly-odd" || form.frequency === "biweekly-even") && (
+        {waveType === "recurring" && (form.frequency === "every-other-week" || form.frequency === "biweekly-odd" || form.frequency === "biweekly-even") && (
           <div className="sm:col-span-2">
             <label className="text-xs text-slate-500 block mb-1">Anchor Date — a Friday this item is paid on</label>
             <input
@@ -223,7 +221,7 @@ function ItemForm({
             <p className="text-xs text-slate-400 mt-1">e.g. 2026-03-06 for the Mar 6 pay cycle</p>
           </div>
         )}
-        {(!isIncome || waveType === "recurring") && (form.frequency === "quarterly" || form.frequency === "annually") && (
+        {waveType === "recurring" && (form.frequency === "quarterly" || form.frequency === "annually") && (
           <div className="sm:col-span-2">
             <label className="text-xs text-slate-500 block mb-1">Starting Month</label>
             <select
@@ -371,14 +369,14 @@ export default function Settings() {
   // ── Item CRUD ────────────────────────────────────────────────────────────────
   async function saveItem(form: EditingItem) {
     if (!settings || !form.name.trim()) return;
-    if (form.isIncome && form.waveType === "oneTime" && !form.oneTimeDate) return;
+    if (form.waveType === "oneTime" && !form.oneTimeDate) return;
 
     const itemToSave: LineItem = {
       ...(form as LineItem),
-      waveType: form.isIncome ? form.waveType ?? "recurring" : undefined,
-      oneTimeDate: form.isIncome && form.waveType === "oneTime" ? form.oneTimeDate : undefined,
-      anchorDate: form.isIncome && form.waveType === "oneTime" ? undefined : form.anchorDate || undefined,
-      anchorMonth: form.isIncome && form.waveType === "oneTime" ? undefined : form.anchorMonth,
+      waveType: form.waveType ?? "recurring",
+      oneTimeDate: form.waveType === "oneTime" ? form.oneTimeDate : undefined,
+      anchorDate: form.waveType === "oneTime" ? undefined : form.anchorDate || undefined,
+      anchorMonth: form.waveType === "oneTime" ? undefined : form.anchorMonth,
     };
 
     let updatedItems: LineItem[];
@@ -389,7 +387,7 @@ export default function Settings() {
     }
     await persist({ ...settings, lineItems: updatedItems });
 
-    if (itemToSave.isIncome && form.id) {
+    if (form.id) {
       const affectedMonthKeys = new Set<string>([currentMonthKey()]);
       const datedMonth = monthKeyFromDate(itemToSave.oneTimeDate ?? itemToSave.anchorDate);
       if (datedMonth) affectedMonthKeys.add(datedMonth);
@@ -691,7 +689,7 @@ export default function Settings() {
                     )}
                   </div>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    ${item.defaultAmount.toLocaleString()} · {FREQ_LABELS[item.frequency]}
+                    ${item.defaultAmount.toLocaleString()} · {item.waveType === "oneTime" ? `One-time · ${item.oneTimeDate ?? "No date"}` : FREQ_LABELS[item.frequency]}
                     {item.paymentMethod === "checking" && " · Checking"}
                   </p>
                 </div>

@@ -117,7 +117,7 @@ export function lineItemAppliesToWeek(
   weekEnd: Date,
   month: number
 ): boolean {
-  if (item.isIncome && item.waveType === "oneTime") {
+  if (item.waveType === "oneTime") {
     const oneTimeDate = parseISODateOnly(item.oneTimeDate);
     if (!oneTimeDate) return false;
     return (
@@ -158,7 +158,7 @@ export function buildProjectedAmounts(
         return;
       }
 
-      if (savedVal !== undefined) {
+      if (item.waveType !== "oneTime" && savedVal !== undefined) {
         next[item.id][weekIndex] = savedVal;
       }
     });

@@ -4,4 +4,4 @@ alter table line_items
 
 update line_items
 set wave_type = 'recurring'
-where is_income = true and wave_type is null;
+where wave_type is null;

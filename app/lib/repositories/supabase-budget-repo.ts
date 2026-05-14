@@ -154,7 +154,7 @@ function buildSettingsFromSupabase({
       frequency: item.frequency as FrequencyType,
       anchorDate: item.anchor_date ?? undefined,
       anchorMonth: item.anchor_month ?? undefined,
-      waveType: item.is_income ? item.wave_type ?? "recurring" : undefined,
+      waveType: item.wave_type ?? "recurring",
       oneTimeDate: item.one_time_date ?? undefined,
     })),
   };
@@ -330,8 +330,8 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       frequency: item.frequency,
       anchor_date: item.anchorDate ?? null,
       anchor_month: item.anchorMonth ?? null,
-      wave_type: item.isIncome ? item.waveType ?? "recurring" : null,
-      one_time_date: item.isIncome && item.waveType === "oneTime" ? item.oneTimeDate ?? null : null,
+      wave_type: item.waveType ?? "recurring",
+      one_time_date: item.waveType === "oneTime" ? item.oneTimeDate ?? null : null,
       sort_order: index,
       updated_at: new Date().toISOString(),
     };

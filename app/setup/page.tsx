@@ -155,25 +155,22 @@ function ItemForm({
           </select>
         </div>
 
-        {isIncome && (
-          <div className="col-span-2">
-            <label className="text-xs text-slate-500 block mb-1">Wave Type</label>
-            <select
-              className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
-              value={waveType}
-              onChange={(e) => setForm((p) => ({
-                ...p,
-                waveType: e.target.value as "recurring" | "oneTime",
-                frequency: e.target.value === "oneTime" ? "once-a-month-1" : p.frequency,
-              }))}
-            >
-              <option value="recurring">Recurring</option>
-              <option value="oneTime">One-time</option>
-            </select>
-          </div>
-        )}
-
-        {isIncome && waveType === "oneTime" && (
+        <div className="col-span-2">
+          <label className="text-xs text-slate-500 block mb-1">{isIncome ? "Wave" : "Ripple"} Type</label>
+          <select
+            className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
+            value={waveType}
+            onChange={(e) => setForm((p) => ({
+              ...p,
+              waveType: e.target.value as "recurring" | "oneTime",
+              frequency: e.target.value === "oneTime" ? "once-a-month-1" : p.frequency,
+            }))}
+          >
+            <option value="recurring">Recurring</option>
+            <option value="oneTime">One-time</option>
+          </select>
+        </div>
+        {waveType === "oneTime" && (
           <div className="col-span-2">
             <label className="text-xs text-slate-500 block mb-1">Date</label>
             <input
@@ -186,7 +183,7 @@ function ItemForm({
         )}
 
         {/* Frequency */}
-        {(!isIncome || waveType === "recurring") && (
+        {waveType === "recurring" && (
         <div className="col-span-2">
           <label className="text-xs text-slate-500 block mb-1">Frequency</label>
           <select
@@ -202,7 +199,7 @@ function ItemForm({
         )}
 
         {/* Anchor Date — biweekly only */}
-        {(!isIncome || waveType === "recurring") && (form.frequency === "every-other-week" ||
+        {waveType === "recurring" && (form.frequency === "every-other-week" ||
           form.frequency === "biweekly-odd" ||
           form.frequency === "biweekly-even") && (
           <div className="col-span-2">
@@ -220,7 +217,7 @@ function ItemForm({
         )}
 
         {/* Starting Month — quarterly/annually only */}
-        {(!isIncome || waveType === "recurring") && (form.frequency === "quarterly" || form.frequency === "annually") && (
+        {waveType === "recurring" && (form.frequency === "quarterly" || form.frequency === "annually") && (
           <div className="col-span-2">
             <label className="text-xs text-slate-500 block mb-1">Starting Month</label>
             <select
@@ -238,7 +235,7 @@ function ItemForm({
 
       <button
         onClick={onAdd}
-        disabled={!form.name.trim() || (isIncome && waveType === "oneTime" && !form.oneTimeDate)}
+        disabled={!form.name.trim() || (waveType === "oneTime" && !form.oneTimeDate)}
         className={`w-full py-2.5 text-white rounded-xl font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
           isIncome
             ? "bg-harbor-green hover:bg-[#24b047]"
@@ -271,7 +268,9 @@ function ItemList({
             <span className={`text-sm font-semibold tabular-nums ${item.isIncome ? "text-harbor-green" : "text-harbor-red"}`}>
               {item.isIncome ? "+" : "-"}${item.defaultAmount}
             </span>
-            <span className="text-xs text-slate-400 hidden sm:inline">{FREQ_LABELS[item.frequency]}</span>
+            <span className="text-xs text-slate-400 hidden sm:inline">
+              {item.waveType === "oneTime" ? `One-time - ${item.oneTimeDate ?? "No date"}` : FREQ_LABELS[item.frequency]}
+            </span>
             <button
               onClick={() => onRemove(item.id)}
               className="text-slate-300 hover:text-harbor-red transition-colors leading-none"
@@ -323,10 +322,10 @@ export default function Setup() {
         isIncome,
         paymentMethod: "checking",
         frequency: form.frequency,
-        anchorDate: isIncome && form.waveType === "oneTime" ? undefined : form.anchorDate || undefined,
-        anchorMonth: isIncome && form.waveType === "oneTime" ? undefined : form.anchorMonth,
-        waveType: isIncome ? form.waveType : undefined,
-        oneTimeDate: isIncome && form.waveType === "oneTime" ? form.oneTimeDate || undefined : undefined,
+        anchorDate: form.waveType === "oneTime" ? undefined : form.anchorDate || undefined,
+        anchorMonth: form.waveType === "oneTime" ? undefined : form.anchorMonth,
+        waveType: form.waveType,
+        oneTimeDate: form.waveType === "oneTime" ? form.oneTimeDate || undefined : undefined,
       },
     ]);
     setForm((p) => ({ ...p, name: "", amount: "", anchorDate: "", anchorMonth: undefined, oneTimeDate: "" }));
@@ -515,7 +514,9 @@ export default function Setup() {
                                 <span className={`text-sm font-semibold tabular-nums ${item.isIncome ? "text-harbor-green" : "text-harbor-red"}`}>
                                   {item.isIncome ? "+" : "-"}${item.defaultAmount}
                                 </span>
-                                <span className="text-xs text-slate-400 hidden sm:inline">{FREQ_LABELS[item.frequency]}</span>
+                                <span className="text-xs text-slate-400 hidden sm:inline">
+                                  {item.waveType === "oneTime" ? `One-time - ${item.oneTimeDate ?? "No date"}` : FREQ_LABELS[item.frequency]}
+                                </span>
                                 <button
                                   onClick={() => removeItem(item.id)}
                                   className="text-slate-300 hover:text-harbor-red transition-colors"
