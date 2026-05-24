@@ -46,6 +46,28 @@ function todayISODate() {
   ].join("-");
 }
 
+function parseISODateOnly(value?: string) {
+  if (!value) return null;
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  return new Date(year, month - 1, day);
+}
+
+function isPastOneTimeItem(item: LineItem) {
+  if (item.waveType !== "oneTime") return false;
+  const date = parseISODateOnly(item.oneTimeDate);
+  if (!date) return false;
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return date < today;
+}
+
+function defaultRippleCategory(categories: string[], selectedCategory: string) {
+  if (selectedCategory !== "all") return selectedCategory;
+  return categories.find((category) => category !== "Pay") ?? categories[0] ?? "";
+}
+
 function dayOfMonthValue(day: DayOfMonth | undefined) {
   return day === undefined ? "1" : String(day);
 }
@@ -441,7 +463,7 @@ export default function Settings() {
       } else if (hash === "#ripples") {
         setTimeout(() => {
           ripplesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-          setRipplesForm(blankItem(false, s.categories[0] ?? ""));
+          setRipplesForm(blankItem(false, defaultRippleCategory(s.categories, "all")));
         }, 150);
       } else if (hash === "#fleet") {
         setTimeout(() => fleetRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
@@ -577,12 +599,14 @@ export default function Settings() {
   const unusedDefaults = DEFAULT_CATEGORIES.filter((c) => !settings.categories.includes(c));
 
   const waves = settings.lineItems.filter((i) => i.isIncome);
+  const activeWaves = waves.filter((i) => !isPastOneTimeItem(i));
+  const pastWaves = waves.filter(isPastOneTimeItem);
   const ripples = settings.lineItems.filter((i) => !i.isIncome);
 
-  const waveCategories = ["all", ...Array.from(new Set(waves.map((i) => i.category)))];
+  const waveCategories = ["all", ...Array.from(new Set(activeWaves.map((i) => i.category)))];
   const rippleCategories = ["all", ...Array.from(new Set(ripples.map((i) => i.category)))];
 
-  const visibleWaves = wavesCat === "all" ? waves : waves.filter((i) => i.category === wavesCat);
+  const visibleWaves = wavesCat === "all" ? activeWaves : activeWaves.filter((i) => i.category === wavesCat);
   const visibleRipples = ripplesCat === "all" ? ripples : ripples.filter((i) => i.category === ripplesCat);
 
   return (
@@ -634,7 +658,7 @@ export default function Settings() {
             }
             title="Waves (Income)"
             subtitle="Paychecks, freelance income, or other money coming in"
-            count={waves.length}
+            count={activeWaves.length}
             action={
               !wavesForm && (
                 <button
@@ -672,7 +696,7 @@ export default function Settings() {
           <div className="space-y-2 mb-3">
             {visibleWaves.length === 0 && !wavesForm && (
               <EmptyState
-                title="No income yet"
+                title={pastWaves.length > 0 ? "No active income" : "No income yet"}
                 action={
                   <button
                     type="button"
@@ -728,6 +752,53 @@ export default function Settings() {
           )}
         </div>
 
+        {pastWaves.length > 0 && (
+          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
+            <SectionHeader
+              icon={
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10"/>
+                  <polyline points="12 6 12 12 16 14"/>
+                </svg>
+              }
+              title="Past Waves"
+              subtitle="One-time income that has already happened"
+              count={pastWaves.length}
+            />
+
+            <div className="space-y-2">
+              {pastWaves.map((item) => (
+                <div key={item.id} className="flex items-start justify-between gap-3 bg-harbor-offwhite rounded-xl px-4 py-3 border border-slate-100">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="font-medium text-sm text-harbor-navy">{item.name}</span>
+                      <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-medium">Past Wave</span>
+                      <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{item.category}</span>
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      ${item.defaultAmount.toLocaleString()} &middot; One-time &middot; {item.oneTimeDate ?? "No date"}
+                    </p>
+                  </div>
+                  <div className="flex gap-2 flex-shrink-0">
+                    <button
+                      onClick={() => { setWavesForm({ ...item }); setRipplesForm(null); }}
+                      className="px-3 py-2 text-xs bg-harbor-teal/10 text-harbor-teal rounded-lg hover:bg-harbor-teal/20 font-medium"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      onClick={() => deleteItem(item.id)}
+                      className="px-3 py-2 text-xs bg-harbor-red/10 text-harbor-red rounded-lg hover:bg-harbor-red/20 font-medium"
+                    >
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
         {/* ── Ripples ── */}
         <div ref={ripplesRef} id="ripples" className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 scroll-mt-32">
           <SectionHeader
@@ -743,7 +814,7 @@ export default function Settings() {
             action={
               !ripplesForm && (
                 <button
-                  onClick={() => setRipplesForm(blankItem(false, settings.categories[0] ?? ""))}
+                  onClick={() => setRipplesForm(blankItem(false, defaultRippleCategory(settings.categories, ripplesCat)))}
                   className="flex items-center gap-1 px-3 py-2 rounded-lg border border-harbor-red/30 bg-harbor-red/5 text-harbor-red text-xs font-medium hover:bg-harbor-red/10 transition-colors"
                 >
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -781,7 +852,7 @@ export default function Settings() {
                 action={
                   <button
                     type="button"
-                    onClick={() => setRipplesForm(blankItem(false, settings.categories[0] ?? ""))}
+                    onClick={() => setRipplesForm(blankItem(false, defaultRippleCategory(settings.categories, ripplesCat)))}
                     className="rounded-lg border border-harbor-red/30 bg-harbor-red/5 px-3 py-2 text-xs font-medium text-harbor-red hover:bg-harbor-red/10"
                   >
                     Add Ripple

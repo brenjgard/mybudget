@@ -8,10 +8,17 @@ import type { AppSettings } from "../types";
 
 async function loadSettings(): Promise<AppSettings | null> {
   try {
-    const supabaseSettings = await supabaseBudgetRepo.loadSettings();
-    if (supabaseSettings) return supabaseSettings;
-  } catch {
-    // Fall through to local settings if Supabase is unavailable.
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      const supabaseSettings = await supabaseBudgetRepo.loadSettings();
+      if (supabaseSettings) {
+        localBudgetRepo.saveSettings(supabaseSettings);
+      }
+      return supabaseSettings;
+    }
+  } catch (error) {
+    console.error("[BudgetRepo] Supabase settings load failed", { error });
+    throw error;
   }
 
   return localBudgetRepo.loadSettings();
@@ -21,10 +28,13 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
   try {
     const user = await supabaseBudgetRepo.getUser();
     if (user) {
-      return await supabaseBudgetRepo.saveSettings(settings);
+      const savedSettings = await supabaseBudgetRepo.saveSettings(settings);
+      localBudgetRepo.saveSettings(savedSettings);
+      return savedSettings;
     }
-  } catch {
-    // Fall through to local persistence if auth/Supabase is unavailable.
+  } catch (error) {
+    console.error("[BudgetRepo] Supabase settings save failed", { error });
+    throw error;
   }
 
   return localBudgetRepo.saveSettings(settings);
@@ -164,10 +174,13 @@ async function getAnchorOverride(): Promise<number | null> {
   try {
     const user = await supabaseBudgetRepo.getUser();
     if (user) {
-      return await supabaseBudgetRepo.getAnchorOverride();
+      const savedOverride = await supabaseBudgetRepo.getAnchorOverride();
+      localBudgetRepo.saveAnchorOverride(savedOverride);
+      return savedOverride;
     }
-  } catch {
-    // Fall through to local persistence if auth/Supabase is unavailable.
+  } catch (error) {
+    console.error("[BudgetRepo] Supabase anchor load failed", { error });
+    throw error;
   }
 
   return localBudgetRepo.getAnchorOverride();
@@ -181,8 +194,9 @@ async function saveAnchorOverride(override: number | null): Promise<number | nul
       localBudgetRepo.saveAnchorOverride(savedOverride);
       return savedOverride;
     }
-  } catch {
-    // Fall through to local persistence if auth/Supabase is unavailable.
+  } catch (error) {
+    console.error("[BudgetRepo] Supabase anchor save failed", { error });
+    throw error;
   }
 
   return localBudgetRepo.saveAnchorOverride(override);

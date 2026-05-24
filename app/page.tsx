@@ -19,6 +19,35 @@ function formatMoney(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
 }
 
+function HarborSpinner({ label }: { label: string }) {
+  return (
+    <div className="inline-flex items-center gap-2 text-harbor-navy/60">
+      <span className="relative inline-flex h-6 w-6 items-center justify-center" aria-hidden="true">
+        <span className="absolute h-6 w-6 rounded-full border-2 border-harbor-teal/20 border-t-harbor-teal animate-spin" />
+        <svg className="h-3.5 w-3.5 text-harbor-navy" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="5" r="2" />
+          <path d="M12 7v14" />
+          <path d="M5 14h14" />
+          <path d="M7 17c1.2 2.5 3 4 5 4s3.8-1.5 5-4" />
+          <path d="M5 14l2-2" />
+          <path d="M19 14l-2-2" />
+        </svg>
+      </span>
+      <span className="text-sm font-medium">{label}</span>
+    </div>
+  );
+}
+
+function closedWeekIndexesFromKeys(monthKey: string, keys: Set<string>) {
+  return new Set(
+    [...keys].flatMap((key) => {
+      if (!key.startsWith(`${monthKey}-`)) return [];
+      const weekIndex = Number(key.split("-").at(-1));
+      return Number.isInteger(weekIndex) ? [weekIndex] : [];
+    })
+  );
+}
+
 type PendingConfirmation =
   | { type: "wrap-week"; weekIndex: number }
   | { type: "close-month" };
@@ -153,26 +182,35 @@ export default function Home() {
     let cancelled = false;
 
     async function loadInitialData() {
-      const [s, savedAmounts, savedMonthBalances, savedAnchorOverride, savedClosedMonths] = await Promise.all([
+      const [s, savedAmounts, savedMonthBalances, savedAnchorOverride, savedClosedMonths, savedClosedWeeks] = await Promise.all([
         loadSettingsWithSupabaseFallback(),
         budgetRepo.getMonthlyAmounts(monthKey),
         budgetRepo.getMonthBalances(),
         budgetRepo.getAnchorOverride(),
         budgetRepo.getClosedMonths(),
+        budgetRepo.getClosedWeeks(monthKey),
       ]);
       if (cancelled) return;
       if (!s) { router.push("/setup"); return; }
+      const initialWeeks = getWeekRanges(year, month);
+      const initialAmounts = buildProjectedAmounts(
+        s,
+        initialWeeks,
+        month,
+        savedAmounts,
+        closedWeekIndexesFromKeys(monthKey, savedClosedWeeks),
+      );
+
       setSettings(s);
       setCurrentBalance(savedAnchorOverride ?? "");
       const nextAnchorDraft = savedAnchorOverride === null ? "" : String(savedAnchorOverride);
       anchorDraftRef.current = nextAnchorDraft;
       anchorDirtyRef.current = false;
       setAnchorDraft(nextAnchorDraft);
-      setMonthAmountsState(monthKey, savedAmounts);
-      setMonthAmountsLoading(true);
+      setMonthAmountsState(monthKey, initialAmounts);
       setMonthBalances(savedMonthBalances);
       setClosedMonths(savedClosedMonths);
-      setClosedWeeks(await budgetRepo.getClosedWeeks(monthKey));
+      setClosedWeeks(savedClosedWeeks);
       setLoaded(true);
       setAutoFill(true);
     }
@@ -215,19 +253,6 @@ export default function Home() {
     };
   }, [loaded, monthKey]);
 
-  useEffect(() => {
-    if (!loaded) return;
-    let cancelled = false;
-
-    void budgetRepo.getClosedWeeks(monthKey).then((savedClosedWeeks) => {
-      if (!cancelled) setClosedWeeks(savedClosedWeeks);
-    });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [loaded, monthKey]);
-
   // Save the visible month's amounts after edits settle.
   useEffect(() => {
     if (!loaded || isMonthClosed || amountsMonthKey !== monthKey) return;
@@ -243,11 +268,29 @@ export default function Home() {
     let cancelled = false;
     const currentMonthKey = `${year}-${String(month + 1).padStart(2, "0")}`;
     const loadStartedAtVersion = getAmountEditVersion(currentMonthKey);
-    setMonthAmountsLoading(true);
-    void budgetRepo.getMonthlyAmounts(currentMonthKey).then((saved) => {
+    const hasLoadedVisibleMonth =
+      amountsMonthKeyRef.current === currentMonthKey
+      && monthlyAmountSnapshotsRef.current[currentMonthKey] !== undefined;
+
+    if (!hasLoadedVisibleMonth) {
+      setMonthAmountsLoading(true);
+    }
+
+    void Promise.all([
+      budgetRepo.getMonthlyAmounts(currentMonthKey),
+      budgetRepo.getClosedWeeks(currentMonthKey),
+    ]).then(([saved, savedClosedWeeks]) => {
       if (cancelled) return;
 
-      const next = buildProjectedAmounts(settings, weeks, month, saved);
+      setClosedWeeks(savedClosedWeeks);
+
+      const next = buildProjectedAmounts(
+        settings,
+        weeks,
+        month,
+        saved,
+        closedWeekIndexesFromKeys(currentMonthKey, savedClosedWeeks),
+      );
       if (getAmountEditVersion(currentMonthKey) !== loadStartedAtVersion) {
         const localEdits = monthlyAmountSnapshotsRef.current[currentMonthKey] ?? {};
         setMonthAmountsState(currentMonthKey, {
@@ -331,6 +374,13 @@ export default function Home() {
   const projectedForwardBalance = forecast?.projectedForwardBalance ?? startingBalance;
   const displayedForwardBalance = forecast?.displayedForwardBalance ?? projectedForwardBalance;
   const balanceLabel = forecast?.balanceLabel ?? (isMonthClosed ? "Final Balance" : "Projected Balance");
+  const isProjectedBalanceLoading = !isMonthClosed && isMonthAmountsPending;
+
+  function itemAppliesToVisibleMonth(item: AppSettings["lineItems"][number]) {
+    return weeks.some((week, weekIndex) =>
+      lineItemAppliesToWeek(item, weekIndex, week.start, week.end, month)
+    );
+  }
 
   const creditTotals = useMemo(() => {
     if (!settings) return [];
@@ -657,7 +707,7 @@ async function prevMonth() {
   if (!loaded || !settings) {
     return (
       <main className="flex-1 bg-harbor-offwhite flex items-center justify-center">
-        <p className="text-harbor-navy/50">Dropping anchor...</p>
+        <HarborSpinner label="Dropping anchor..." />
       </main>
     );
   }
@@ -828,11 +878,19 @@ async function prevMonth() {
                       {isMonthClosed ? helpCopy.finalBalance.body : helpCopy.projectedBalance.body}
                     </HelpTooltip>
                   </div>
-                  <div className={`text-xl font-bold ${displayedForwardBalance >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
-                    {formatMoney(displayedForwardBalance)}
-                  </div>
+                  {isProjectedBalanceLoading ? (
+                    <div className="mt-1">
+                      <HarborSpinner label="Charting balance..." />
+                    </div>
+                  ) : (
+                    <div className={`text-xl font-bold ${displayedForwardBalance >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>
+                      {formatMoney(displayedForwardBalance)}
+                    </div>
+                  )}
                   <p className="max-w-sm text-sm text-harbor-navy/55">
-                    {isMonthClosed
+                    {isProjectedBalanceLoading
+                      ? "Loading scheduled waves and ripples from Harbor."
+                      : isMonthClosed
                       ? "The balance saved when this month was closed."
                       : "Where Harbor expects this month to end after scheduled waves and ripples."}
                   </p>
@@ -899,10 +957,7 @@ async function prevMonth() {
 
         {isMonthAmountsPending ? (
           <div className="rounded-2xl border border-harbor-teal-light bg-white p-6 shadow-sm">
-            <div className="flex items-center gap-3 text-harbor-navy/60">
-              <div className="h-4 w-4 rounded-full border-2 border-harbor-teal/25 border-t-harbor-teal animate-spin" />
-              <span className="text-sm font-medium">Loading month...</span>
-            </div>
+            <HarborSpinner label="Loading month..." />
             <div className="mt-5 grid gap-3">
               <div className="h-9 rounded-lg bg-harbor-teal-light/60" />
               <div className="h-9 rounded-lg bg-slate-100" />
@@ -947,7 +1002,9 @@ async function prevMonth() {
             </thead>
             <tbody>
               {settings.categories.map((cat) => {
-                const items = settings.lineItems.filter((i) => i.category === cat);
+                const items = settings.lineItems.filter((i) => (
+                  i.category === cat && itemAppliesToVisibleMonth(i)
+                ));
                 if (items.length === 0) return null;
 
                 const isCollapsed = collapsed[cat] ?? false;

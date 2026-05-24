@@ -183,11 +183,9 @@ function recurrenceHasOccurrenceOnDate(recurrence: Recurrence, date: Date) {
 function recurrenceAppliesToWeek(
   recurrence: Recurrence,
   weekStart: Date,
-  weekEnd: Date,
-  month: number
+  weekEnd: Date
 ) {
   for (let date = new Date(weekStart); date <= weekEnd; date = addDays(date, 1)) {
-    if (date.getMonth() !== month) continue;
     if (recurrenceHasOccurrenceOnDate(recurrence, date)) return true;
   }
 
@@ -274,15 +272,11 @@ export function lineItemAppliesToWeek(
   if (item.waveType === "oneTime") {
     const oneTimeDate = parseISODateOnly(item.oneTimeDate);
     if (!oneTimeDate) return false;
-    return (
-      oneTimeDate.getMonth() === month &&
-      oneTimeDate >= weekStart &&
-      oneTimeDate <= weekEnd
-    );
+    return oneTimeDate >= weekStart && oneTimeDate <= weekEnd;
   }
 
   if (item.recurrence) {
-    return recurrenceAppliesToWeek(item.recurrence, weekStart, weekEnd, month);
+    return recurrenceAppliesToWeek(item.recurrence, weekStart, weekEnd);
   }
 
   return itemAppliesToWeek(
@@ -300,7 +294,8 @@ export function buildProjectedAmounts(
   settings: { lineItems: LineItem[] },
   weeks: { start: Date; end: Date }[],
   month: number,
-  savedAmounts: Record<string, Record<number, number>>
+  savedAmounts: Record<string, Record<number, number>>,
+  closedWeekIndexes: Set<number> = new Set()
 ) {
   const next: Record<string, Record<number, number>> = {};
 
@@ -312,7 +307,14 @@ export function buildProjectedAmounts(
       const applies = lineItemAppliesToWeek(item, weekIndex, week.start, week.end, month);
 
       if (applies) {
-        next[item.id][weekIndex] = savedVal ?? item.defaultAmount;
+        if (savedVal !== undefined) {
+          next[item.id][weekIndex] = savedVal;
+          return;
+        }
+
+        if (!closedWeekIndexes.has(weekIndex)) {
+          next[item.id][weekIndex] = item.defaultAmount;
+        }
         return;
       }
 

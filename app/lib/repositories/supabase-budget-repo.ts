@@ -214,19 +214,28 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
   if (!user) throw new Error("Not authenticated");
 
   const supabase = createClient();
-
-  const { error: settingsError } = await supabase
+  const { data: existingBudgetSettings, error: existingSettingsError } = await supabase
     .from("budget_settings")
-    .upsert(
-      {
-        user_id: user.id,
-        checking_balance: settings.checkingBalance,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "user_id" },
-    );
+    .select("checking_balance")
+    .eq("user_id", user.id)
+    .maybeSingle<BudgetSettingsRow>();
 
-  if (settingsError) throw settingsError;
+  if (existingSettingsError) throw existingSettingsError;
+
+  if (existingBudgetSettings?.checking_balance === null || existingBudgetSettings?.checking_balance === undefined) {
+    const { error: settingsError } = await supabase
+      .from("budget_settings")
+      .upsert(
+        {
+          user_id: user.id,
+          checking_balance: settings.checkingBalance,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "user_id" },
+      );
+
+    if (settingsError) throw settingsError;
+  }
 
   const desiredAccounts = [
     {
