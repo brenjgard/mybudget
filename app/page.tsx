@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo, useEffect, useRef } from "react";
-import type { MouseEvent } from "react";
+import type { KeyboardEvent, MouseEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { EmptyState } from "./components/EmptyState";
@@ -12,8 +12,9 @@ import { buildMonthForecast } from "./lib/forecast";
 import { helpCopy } from "./lib/help-copy";
 import type { CCCharge } from "./lib/local-repo";
 import { budgetRepo } from "./lib/repositories/budget-repo";
+import { getDockItemKind, getItemBehavior, isFlexibleRipple } from "./lib/ripple-type";
 import { buildProjectedAmounts, getWeekRanges, lineItemAppliesToWeek, recurrenceDebugScenarios } from "./lib/schedule";
-import { AppSettings } from "./lib/types";
+import type { AppSettings, DockItemState, DockItemStatus, ItemBehavior, PaymentMethod, SpendLogEntry } from "./lib/types";
 
 function formatMoney(n: number) {
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(n);
@@ -52,6 +53,56 @@ type PendingConfirmation =
   | { type: "wrap-week"; weekIndex: number }
   | { type: "close-month" };
 
+type SpendLogDraft = {
+  rippleId: string;
+  weekIndex: number;
+  amount: string;
+  paymentMethod: PaymentMethod;
+  date: string;
+  note: string;
+};
+
+type SpendLogTarget = {
+  source: "global" | "detail";
+};
+
+type DockActionTarget = {
+  item: AppSettings["lineItems"][number];
+  weekIndex: number;
+};
+
+type DockActionDraft = {
+  amount: string;
+  pendingUntil: string;
+  activeAction: DockItemStatus | null;
+  note: string;
+};
+
+const BLANK_SPEND_LOG: SpendLogDraft = {
+  rippleId: "",
+  weekIndex: 0,
+  amount: "",
+  paymentMethod: "checking",
+  date: "",
+  note: "",
+};
+
+function todayISODate() {
+  const today = new Date();
+  return [
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, "0"),
+    String(today.getDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function weekdayLabel(value?: string) {
+  if (!value) return "";
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return "";
+  return new Date(year, month - 1, day).toLocaleDateString("en-US", { weekday: "short" });
+}
+
 export default function Home() {
   const router = useRouter();
   const now = new Date();
@@ -62,12 +113,19 @@ export default function Home() {
   const [anchorDraft, setAnchorDraft] = useState("");
   const [isEditingAnchor, setIsEditingAnchor] = useState(false);
   const [amounts, setAmounts] = useState<Record<string, Record<number, number>>>({});
+  const [spendLogs, setSpendLogs] = useState<SpendLogEntry[]>([]);
+  const [dockItemStates, setDockItemStates] = useState<DockItemState[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [autoFill, setAutoFill] = useState(false);
   const [monthAmountsLoading, setMonthAmountsLoading] = useState(true);
   const [monthBalances, setMonthBalances] = useState<Record<string, number>>({});
   const [pendingConfirmation, setPendingConfirmation] = useState<PendingConfirmation | null>(null);
   const [clearAfterConfirm, setClearAfterConfirm] = useState(false);
+  const [spendLogTarget, setSpendLogTarget] = useState<SpendLogTarget | null>(null);
+  const [spendLogDraft, setSpendLogDraft] = useState<SpendLogDraft>(BLANK_SPEND_LOG);
+  const [isEditingBudget, setIsEditingBudget] = useState(false);
+  const [dockActionTarget, setDockActionTarget] = useState<DockActionTarget | null>(null);
+  const [dockActionDraft, setDockActionDraft] = useState<DockActionDraft>({ amount: "", pendingUntil: "", activeAction: null, note: "" });
 
   // ── Feature 1: Collapsible categories ────────────────────────────────────
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -182,13 +240,15 @@ export default function Home() {
     let cancelled = false;
 
     async function loadInitialData() {
-      const [s, savedAmounts, savedMonthBalances, savedAnchorOverride, savedClosedMonths, savedClosedWeeks] = await Promise.all([
+      const [s, savedAmounts, savedMonthBalances, savedAnchorOverride, savedClosedMonths, savedClosedWeeks, savedSpendLogs, savedDockItemStates] = await Promise.all([
         loadSettingsWithSupabaseFallback(),
         budgetRepo.getMonthlyAmounts(monthKey),
         budgetRepo.getMonthBalances(),
         budgetRepo.getAnchorOverride(),
         budgetRepo.getClosedMonths(),
         budgetRepo.getClosedWeeks(monthKey),
+        budgetRepo.getSpendLogs(monthKey),
+        budgetRepo.getDockItemStates(monthKey),
       ]);
       if (cancelled) return;
       if (!s) { router.push("/setup"); return; }
@@ -208,6 +268,8 @@ export default function Home() {
       anchorDirtyRef.current = false;
       setAnchorDraft(nextAnchorDraft);
       setMonthAmountsState(monthKey, initialAmounts);
+      setSpendLogs(savedSpendLogs);
+      setDockItemStates(savedDockItemStates);
       setMonthBalances(savedMonthBalances);
       setClosedMonths(savedClosedMonths);
       setClosedWeeks(savedClosedWeeks);
@@ -279,10 +341,14 @@ export default function Home() {
     void Promise.all([
       budgetRepo.getMonthlyAmounts(currentMonthKey),
       budgetRepo.getClosedWeeks(currentMonthKey),
-    ]).then(([saved, savedClosedWeeks]) => {
+      budgetRepo.getSpendLogs(currentMonthKey),
+      budgetRepo.getDockItemStates(currentMonthKey),
+    ]).then(([saved, savedClosedWeeks, savedSpendLogs, savedDockItemStates]) => {
       if (cancelled) return;
 
       setClosedWeeks(savedClosedWeeks);
+      setSpendLogs(savedSpendLogs);
+      setDockItemStates(savedDockItemStates);
 
       const next = buildProjectedAmounts(
         settings,
@@ -336,6 +402,44 @@ export default function Home() {
     [amounts, isMonthAmountsPending],
   );
 
+  const spendLogsByRippleWeek = useMemo(() => {
+    const result: Record<string, SpendLogEntry[]> = {};
+    spendLogs.forEach((entry) => {
+      const key = `${entry.rippleId}-${entry.weekIndex}`;
+      result[key] = result[key] ?? [];
+      result[key].push(entry);
+    });
+    return result;
+  }, [spendLogs]);
+  const dockStatesByItemWeek = useMemo(() => {
+    const result: Record<string, DockItemState> = {};
+    dockItemStates.forEach((state) => {
+      result[`${state.itemId}-${state.itemKind}-${state.weekIndex}`] = state;
+    });
+    return result;
+  }, [dockItemStates]);
+  const flexibleSpendItems = useMemo(() => (
+    settings?.lineItems.filter((item) => getItemBehavior(item) === "flexible_spend") ?? []
+  ), [settings]);
+
+  const forecastAmounts = useMemo(() => {
+    if (!settings) return visibleAmounts;
+
+    return settings.lineItems.reduce<Record<string, Record<number, number>>>((nextAmounts, item) => {
+      if (getItemBehavior(item) !== "flexible_spend") return nextAmounts;
+
+      const nextByWeek = { ...(nextAmounts[item.id] ?? {}) };
+      weeks.forEach((_, weekIndex) => {
+        const planned = Number(visibleAmounts[item.id]?.[weekIndex] ?? 0);
+        const spent = spendLogsByRippleWeek[`${item.id}-${weekIndex}`]?.reduce((sum, entry) => sum + entry.amount, 0) ?? 0;
+        const state = dockStatesByItemWeek[`${item.id}-${getDockItemKind(item)}-${weekIndex}`];
+        nextByWeek[weekIndex] = state?.status === "cleared" ? spent : Math.max(planned, spent);
+      });
+
+      return { ...nextAmounts, [item.id]: nextByWeek };
+    }, visibleAmounts);
+  }, [dockStatesByItemWeek, settings, spendLogsByRippleWeek, visibleAmounts, weeks]);
+
   const forecast = useMemo(() => {
     if (!settings) {
       return null;
@@ -343,7 +447,7 @@ export default function Home() {
 
     return buildMonthForecast({
       settings,
-      amounts: visibleAmounts,
+      amounts: forecastAmounts,
       weeks,
       month,
       monthKey,
@@ -356,7 +460,7 @@ export default function Home() {
     });
   }, [
     settings,
-    visibleAmounts,
+    forecastAmounts,
     weeks,
     month,
     monthKey,
@@ -382,6 +486,59 @@ export default function Home() {
     );
   }
 
+  function getSpendEntries(itemId: string, weekIndex: number) {
+    return spendLogsByRippleWeek[`${itemId}-${weekIndex}`] ?? [];
+  }
+
+  function getSpentTotal(itemId: string, weekIndex: number) {
+    return getSpendEntries(itemId, weekIndex).reduce((sum, entry) => sum + entry.amount, 0);
+  }
+
+  function getDockState(item: AppSettings["lineItems"][number], weekIndex: number) {
+    const itemKind = getDockItemKind(item);
+    return dockStatesByItemWeek[`${item.id}-${itemKind}-${weekIndex}`];
+  }
+
+  function getStatusLabel(status: DockItemStatus | undefined, behavior: ItemBehavior) {
+    if (status === "pending") return "Pending";
+    if (status === "skipped") return "Skipped";
+    if (status === "adjusted") return "Adjusted";
+    if (status === "cleared") {
+      if (behavior === "income") return "Received";
+      if (behavior === "credit_card_payment") return "Cleared";
+      if (behavior === "flexible_spend") return "Done";
+      return "Paid";
+    }
+    return "Upcoming";
+  }
+
+  function getCellStatusLabel(status: DockItemStatus | undefined, behavior: ItemBehavior, isWrapped: boolean) {
+    if (isWrapped && (!status || status === "upcoming")) return "Wrapped";
+    if (!status || status === "upcoming") return "";
+    return getStatusLabel(status, behavior);
+  }
+
+  function statusBadgeTone(status: DockItemStatus | "wrapped" | undefined, remaining?: number) {
+    if (status === "wrapped") return "bg-harbor-green/10 text-harbor-green";
+    if (status === "pending") return "bg-amber-100 text-amber-800";
+    if (status === "cleared") return "bg-harbor-green/10 text-harbor-green";
+    if (status === "skipped") return "bg-slate-100 text-slate-500";
+    if (status === "adjusted") return "bg-harbor-teal/10 text-harbor-teal";
+    if (remaining !== undefined && remaining < 0) return "bg-harbor-red/10 text-harbor-red";
+    return "bg-slate-100 text-slate-500";
+  }
+
+  function endAmountEdit() {
+    return;
+  }
+
+  function handleAmountEditKey(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Enter" || event.key === "Escape") {
+      event.currentTarget.blur();
+      endAmountEdit();
+    }
+  }
+
   const creditTotals = useMemo(() => {
     if (!settings) return [];
     return weeks.map((_, wi) => {
@@ -389,12 +546,12 @@ export default function Home() {
       for (const item of settings.lineItems) {
         if (item.isIncome || item.paymentMethod === "checking") continue;
         if (!lineItemAppliesToWeek(item, wi, weeks[wi].start, weeks[wi].end, month)) continue;
-        const n = visibleAmounts[item.id]?.[wi] ?? 0;
+        const n = forecastAmounts[item.id]?.[wi] ?? 0;
         byCard[item.paymentMethod] = (byCard[item.paymentMethod] ?? 0) + n;
       }
       return byCard;
     });
-  }, [visibleAmounts, weeks, settings, month]);
+  }, [forecastAmounts, weeks, settings, month]);
 
   // Category totals per week — used by collapsed rows
   const categoryWeekTotals = useMemo(() => {
@@ -406,13 +563,13 @@ export default function Home() {
         let total = 0;
         for (const item of catItems) {
           if (!lineItemAppliesToWeek(item, wi, weeks[wi].start, weeks[wi].end, month)) continue;
-          total += visibleAmounts[item.id]?.[wi] ?? 0;
+          total += forecastAmounts[item.id]?.[wi] ?? 0;
         }
         return total;
       });
     }
     return result;
-  }, [visibleAmounts, weeks, settings, month]);
+  }, [forecastAmounts, weeks, settings, month]);
 
   // Save ending balance for this month whenever projectedBalances changes
   useEffect(() => {
@@ -446,6 +603,173 @@ export default function Home() {
       monthlyAmountSnapshotsRef.current[monthKey] = next;
       return next;
     });
+  }
+
+  function openSpendLog(item: AppSettings["lineItems"][number], weekIndex: number) {
+    if (!isFlexibleRipple(item) || isWeekReadOnly(weekIndex)) return;
+    setSpendLogTarget({ source: "detail" });
+    setSpendLogDraft({
+      ...BLANK_SPEND_LOG,
+      rippleId: item.id,
+      weekIndex,
+      paymentMethod: item.paymentMethod,
+      date: todayISODate(),
+    });
+  }
+
+  function openGlobalSpendLog() {
+    const fallbackItem = flexibleSpendItems.find((item) => (
+      lineItemAppliesToWeek(item, activeWeekIdx, weeks[activeWeekIdx]?.start, weeks[activeWeekIdx]?.end, month)
+    )) ?? flexibleSpendItems[0];
+
+    setSpendLogTarget({ source: "global" });
+    setSpendLogDraft({
+      ...BLANK_SPEND_LOG,
+      rippleId: fallbackItem?.id ?? "",
+      weekIndex: activeWeekIdx,
+      paymentMethod: fallbackItem?.paymentMethod ?? "checking",
+      date: todayISODate(),
+    });
+  }
+
+  function openDockActions(item: AppSettings["lineItems"][number], weekIndex: number) {
+    if (isWeekReadOnly(weekIndex)) return;
+    const planned = Number(getAmount(item.id, weekIndex) || 0);
+    const existing = getDockState(item, weekIndex);
+    setDockActionTarget({ item, weekIndex });
+    setDockActionDraft({
+      amount: String(existing?.actualAmount ?? planned),
+      pendingUntil: existing?.pendingUntil ?? "",
+      activeAction: null,
+      note: existing?.note ?? "",
+    });
+  }
+
+  function closeDockActions() {
+    setDockActionTarget(null);
+    setDockActionDraft({ amount: "", pendingUntil: "", activeAction: null, note: "" });
+  }
+
+  function openSpendLogFromDockActions() {
+    if (!dockActionTarget) return;
+    const { item, weekIndex } = dockActionTarget;
+    closeDockActions();
+    openSpendLog(item, weekIndex);
+  }
+
+  async function saveDockStatus(status: DockItemStatus) {
+    if (!dockActionTarget) return;
+    const { item, weekIndex } = dockActionTarget;
+    const behaviorType = getItemBehavior(item);
+    const needsActionInput = status === "adjusted" || status === "pending" || (status === "cleared" && behaviorType !== "flexible_spend");
+    if (needsActionInput && dockActionDraft.activeAction !== status) {
+      setDockActionDraft((draft) => ({
+        ...draft,
+        activeAction: status,
+        pendingUntil: status === "pending" ? draft.pendingUntil || todayISODate() : draft.pendingUntil,
+      }));
+      return;
+    }
+
+    const itemKind = getDockItemKind(item);
+    const plannedAmount = Number(getAmount(item.id, weekIndex) || 0);
+    const amount = Number(dockActionDraft.amount);
+    const actualAmount = behaviorType === "flexible_spend" && status === "cleared"
+      ? getSpentTotal(item.id, weekIndex)
+      : Number.isFinite(amount) && amount >= 0 ? amount : plannedAmount;
+    const now = new Date().toISOString();
+
+    // TODO: Pending state should feed a future Safe Anchor display without changing the current Anchor.
+    const savedState = await budgetRepo.saveDockItemState({
+      ...getDockState(item, weekIndex),
+      monthKey,
+      weekIndex,
+      itemId: item.id,
+      itemKind,
+      behaviorType,
+      status,
+      statusUpdatedAt: now,
+      plannedAmount,
+      actualAmount,
+      pendingUntil: status === "pending" ? dockActionDraft.pendingUntil || undefined : undefined,
+      clearedAt: status === "cleared" ? now : undefined,
+      note: dockActionDraft.note.trim() || undefined,
+    });
+
+    setDockItemStates((current) => {
+      const without = current.filter((state) => !(
+        state.itemId === item.id
+        && state.itemKind === itemKind
+        && state.weekIndex === weekIndex
+      ));
+      return [...without, savedState];
+    });
+
+    if (status === "adjusted" && actualAmount !== plannedAmount) {
+      setAmount(item.id, weekIndex, actualAmount);
+      await saveMonthlyAmountsNow(monthKey, {
+        ...amounts,
+        [item.id]: { ...(amounts[item.id] ?? {}), [weekIndex]: actualAmount },
+      });
+    }
+
+    closeDockActions();
+  }
+
+  async function clearDockStatus() {
+    if (!dockActionTarget) return;
+    const { item, weekIndex } = dockActionTarget;
+    const itemKind = getDockItemKind(item);
+    await budgetRepo.deleteDockItemState(monthKey, item.id, itemKind, weekIndex);
+    setDockItemStates((current) => current.filter((state) => !(
+      state.itemId === item.id
+      && state.itemKind === itemKind
+      && state.weekIndex === weekIndex
+    )));
+    closeDockActions();
+  }
+
+  function closeSpendLogDialog() {
+    setSpendLogTarget(null);
+    setSpendLogDraft(BLANK_SPEND_LOG);
+  }
+
+  async function saveSpendLog() {
+    if (!spendLogTarget) return;
+    const selectedItem = flexibleSpendItems.find((item) => item.id === spendLogDraft.rippleId);
+    if (!selectedItem) return;
+    const amount = Number(spendLogDraft.amount);
+    if (!Number.isFinite(amount) || amount <= 0) return;
+
+    const now = new Date().toISOString();
+    const savedEntry = await budgetRepo.saveSpendLog({
+      id: crypto.randomUUID(),
+      monthKey,
+      weekIndex: spendLogDraft.weekIndex,
+      rippleId: selectedItem.id,
+      amount,
+      paymentMethod: spendLogDraft.paymentMethod,
+      date: spendLogDraft.date || todayISODate(),
+      note: spendLogDraft.note.trim() || undefined,
+      createdAt: now,
+      updatedAt: now,
+    });
+
+    setSpendLogs((current) => [...current, savedEntry]);
+    await moveLoggedCardSpendToNextPayment(savedEntry, 1);
+    setSpendLogDraft({
+      ...BLANK_SPEND_LOG,
+      rippleId: selectedItem.id,
+      weekIndex: spendLogDraft.weekIndex,
+      paymentMethod: spendLogDraft.paymentMethod,
+      date: spendLogDraft.date || todayISODate(),
+    });
+  }
+
+  async function deleteSpendLog(entry: SpendLogEntry) {
+    await budgetRepo.deleteSpendLog(entry.monthKey, entry.id);
+    setSpendLogs((current) => current.filter((item) => item.id !== entry.id));
+    await moveLoggedCardSpendToNextPayment(entry, -1);
   }
 
   function changeAnchorDraft(value: string) {
@@ -577,6 +901,106 @@ async function prevMonth() {
     );
   }
 
+  function nextMonthKeyFrom(sourceMonthKey: string) {
+    const [sourceYear, sourceMonth] = sourceMonthKey.split("-").map(Number);
+    if (!sourceYear || !sourceMonth) return monthKey;
+    return sourceMonth === 12
+      ? `${sourceYear + 1}-01`
+      : `${sourceYear}-${String(sourceMonth + 1).padStart(2, "0")}`;
+  }
+
+  function monthKeyFromDateParts(yearValue: number, monthIndex: number) {
+    return `${yearValue}-${String(monthIndex + 1).padStart(2, "0")}`;
+  }
+
+  function lastDayOfMonth(yearValue: number, monthIndex: number) {
+    return new Date(yearValue, monthIndex + 1, 0).getDate();
+  }
+
+  function clampedStatementCloseDate(yearValue: number, monthIndex: number, closingDay: number) {
+    return new Date(yearValue, monthIndex, Math.min(closingDay, lastDayOfMonth(yearValue, monthIndex)));
+  }
+
+  function statementMonthForSpendDate(spendDate: string, statementClosingDay?: number) {
+    const [spendYear, spendMonth, spendDay] = spendDate.slice(0, 10).split("-").map(Number);
+    if (!spendYear || !spendMonth || !spendDay) return monthKey;
+
+    const closingDay = Math.min(31, Math.max(1, statementClosingDay ?? 31));
+    const spend = new Date(spendYear, spendMonth - 1, spendDay);
+    const thisMonthClose = clampedStatementCloseDate(spendYear, spendMonth - 1, closingDay);
+
+    if (spend <= thisMonthClose) {
+      return monthKeyFromDateParts(spendYear, spendMonth - 1);
+    }
+
+    const nextMonth = spendMonth === 12 ? 0 : spendMonth;
+    const nextYear = spendMonth === 12 ? spendYear + 1 : spendYear;
+    return monthKeyFromDateParts(nextYear, nextMonth);
+  }
+
+  function cardPaymentWeekIndex(paymentItem: AppSettings["lineItems"][number], targetMonthKey: string) {
+    const [targetYear, targetMonth] = targetMonthKey.split("-").map(Number);
+    if (!targetYear || !targetMonth) return 2;
+
+    const targetWeeks = getWeekRanges(targetYear, targetMonth - 1);
+    const matchingWeekIndex = targetWeeks.findIndex((week, weekIndex) => (
+      lineItemAppliesToWeek(paymentItem, weekIndex, week.start, week.end, targetMonth - 1)
+    ));
+
+    return matchingWeekIndex >= 0 ? matchingWeekIndex : 2;
+  }
+
+  async function moveLoggedCardSpendToNextPayment(entry: SpendLogEntry, direction: 1 | -1) {
+    if (!settings || entry.paymentMethod === "checking") return;
+
+    const card = settings.creditCards.find((candidate) => candidate.id === entry.paymentMethod);
+    if (!card) return;
+
+    const paymentItem = findCardPaymentLine(card.label);
+    if (!paymentItem) return;
+
+    const targetMonthKey = statementMonthForSpendDate(entry.date, card.statementClosingDay);
+    const targetWeekIndex = cardPaymentWeekIndex(paymentItem, targetMonthKey);
+    const targetAmounts = await budgetRepo.getMonthlyAmounts(targetMonthKey);
+    const current = Number(targetAmounts[paymentItem.id]?.[targetWeekIndex] ?? 0);
+    const next = Math.max(0, current + direction * entry.amount);
+    const nextAmounts = {
+      ...targetAmounts,
+      [paymentItem.id]: { ...(targetAmounts[paymentItem.id] ?? {}), [targetWeekIndex]: next },
+    };
+
+    await budgetRepo.saveMonthlyAmounts(targetMonthKey, nextAmounts);
+  }
+
+  function loggedSpendForCard(itemId: string, weekIndex: number, cardId: PaymentMethod) {
+    return getSpendEntries(itemId, weekIndex)
+      .filter((entry) => entry.paymentMethod === cardId)
+      .reduce((sum, entry) => sum + entry.amount, 0);
+  }
+
+  function forecastAmountForWrap(item: AppSettings["lineItems"][number], weekIndex: number) {
+    const planned = amounts[item.id]?.[weekIndex] ?? 0;
+    if (getItemBehavior(item) !== "flexible_spend") return planned;
+
+    const spent = getSpentTotal(item.id, weekIndex);
+    const state = getDockState(item, weekIndex);
+    return state?.status === "cleared" ? spent : Math.max(planned, spent);
+  }
+
+  function statementMonthForWeek(card: AppSettings["creditCards"][number], weekIndex: number) {
+    const weekEnd = weeks[weekIndex]?.end;
+    if (!weekEnd) return nextMonthKeyFrom(monthKey);
+
+    return statementMonthForSpendDate(
+      [
+        weekEnd.getFullYear(),
+        String(weekEnd.getMonth() + 1).padStart(2, "0"),
+        String(weekEnd.getDate()).padStart(2, "0"),
+      ].join("-"),
+      card.statementClosingDay,
+    );
+  }
+
   function openWrapWeekDialog(wi: number) {
     if (isMonthClosed || isMonthAmountsPending || isWeekWrapped(wi)) return;
     setClearAfterConfirm(false);
@@ -613,11 +1037,7 @@ async function prevMonth() {
     wrappingWeekKeysRef.current.add(wrapKey);
 
     try {
-      const nextMonthKey =
-        month === 11
-          ? `${year + 1}-01`
-          : `${year}-${String(month + 2).padStart(2, "0")}`;
-      let nextAmounts: Record<string, Record<number, number>> | null = null;
+      const targetAmountsByMonth: Record<string, Record<string, Record<number, number>>> = {};
       const newCharges: CCCharge[] = [];
 
       for (const card of settings.creditCards) {
@@ -627,36 +1047,47 @@ async function prevMonth() {
             item.paymentMethod === card.id &&
             lineItemAppliesToWeek(item, wi, weeks[wi].start, weeks[wi].end, month)
         );
-        const total = chargeItems.reduce((sum, item) => sum + (amounts[item.id]?.[wi] ?? 0), 0);
+        const total = chargeItems.reduce((sum, item) => {
+          const alreadyMovedLoggedSpend = loggedSpendForCard(item.id, wi, card.id);
+          return sum + Math.max(0, forecastAmountForWrap(item, wi) - alreadyMovedLoggedSpend);
+        }, 0);
 
         newCharges.push(...chargeItems
-          .filter((item) => (amounts[item.id]?.[wi] ?? 0) > 0)
-          .map((item) => ({
-            itemId: item.id,
-            itemName: item.name,
-            card: card.id,
-            cardLabel: card.label,
-            amount: amounts[item.id]?.[wi] ?? 0,
-            weekLabel: weeks[wi].label,
-            dateMoved: new Date().toISOString(),
-          })));
+          .flatMap((item) => {
+            const amount = Math.max(0, forecastAmountForWrap(item, wi) - loggedSpendForCard(item.id, wi, card.id));
+            if (amount <= 0) return [];
+
+            return {
+              itemId: item.id,
+              itemName: item.name,
+              card: card.id,
+              cardLabel: card.label,
+              amount,
+              weekLabel: weeks[wi].label,
+              dateMoved: new Date().toISOString(),
+            };
+          }));
 
         if (total > 0) {
-          nextAmounts = nextAmounts ?? await budgetRepo.getMonthlyAmounts(nextMonthKey);
           const paymentItem = findCardPaymentLine(card.label);
           if (paymentItem) {
-            const existing: number = Number(nextAmounts[paymentItem.id]?.[2] ?? 0);
-            nextAmounts = {
-              ...nextAmounts,
-              [paymentItem.id]: { ...nextAmounts[paymentItem.id], 2: existing + total },
+            const targetMonthKey = statementMonthForWeek(card, wi);
+            const targetWeekIndex = cardPaymentWeekIndex(paymentItem, targetMonthKey);
+            const targetAmounts = targetAmountsByMonth[targetMonthKey] ?? await budgetRepo.getMonthlyAmounts(targetMonthKey);
+            const existing: number = Number(targetAmounts[paymentItem.id]?.[targetWeekIndex] ?? 0);
+            targetAmountsByMonth[targetMonthKey] = {
+              ...targetAmounts,
+              [paymentItem.id]: { ...targetAmounts[paymentItem.id], [targetWeekIndex]: existing + total },
             };
           }
         }
       }
 
-      if (nextAmounts) {
-        await budgetRepo.saveMonthlyAmounts(nextMonthKey, nextAmounts);
-      }
+      await Promise.all(
+        Object.entries(targetAmountsByMonth).map(([targetMonthKey, targetAmounts]) =>
+          budgetRepo.saveMonthlyAmounts(targetMonthKey, targetAmounts)
+        )
+      );
 
       const savedClosedWeeks = await budgetRepo.closeWeek({
         monthKey,
@@ -711,6 +1142,9 @@ async function prevMonth() {
       </main>
     );
   }
+
+  const selectedSpendItem = flexibleSpendItems.find((item) => item.id === spendLogDraft.rippleId);
+  const selectedSpendWeek = weeks[spendLogDraft.weekIndex] ?? weeks[activeWeekIdx];
 
   return (
     <main className="flex-1 bg-harbor-offwhite text-slate-900 p-4">
@@ -801,6 +1235,34 @@ async function prevMonth() {
                   Close Month
                 </button>
               )}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-slate-100 bg-white/70 px-3 py-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">Quick actions</span>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={openGlobalSpendLog}
+                disabled={isMonthClosed || flexibleSpendItems.length === 0}
+                className="px-3 py-1.5 rounded-lg border border-harbor-red/25 bg-white text-harbor-red text-xs font-medium hover:bg-harbor-red/5 transition-colors disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-300"
+              >
+                Log Spend
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsEditingBudget((current) => !current);
+                }}
+                disabled={isMonthClosed}
+                className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-50 disabled:text-slate-300 ${
+                  isEditingBudget
+                    ? "border-harbor-teal bg-harbor-teal text-white hover:bg-harbor-teal/90"
+                    : "border-harbor-teal/30 bg-white text-harbor-navy hover:bg-harbor-teal-light"
+                }`}
+              >
+                {isEditingBudget ? "Done Editing" : "Edit Budget"}
+              </button>
             </div>
           </div>
 
@@ -991,7 +1453,7 @@ async function prevMonth() {
               <tr className="bg-harbor-navy text-white">
                 <th className="text-left px-3 py-3 w-28 sticky left-0 bg-harbor-navy">Category</th>
                 <th className="text-left px-3 py-3 w-44 sticky left-28 bg-harbor-navy">Item</th>
-                <th className="text-center px-2 py-3 w-24">Method</th>
+                <th className="text-center px-2 py-3 w-28">Method</th>
                 {weeks.map((w, i) => (
                   <th key={i} className="text-center px-2 py-3 min-w-[130px]">
                     <div className="text-xs font-normal opacity-60">Week {i + 1}</div>
@@ -1102,7 +1564,7 @@ async function prevMonth() {
                           void navigateAfterAnchorCommit(e, "/settings");
                         }}
                         title="Change method in Settings"
-                        className={`text-xs px-2 py-0.5 rounded-full font-medium hover:ring-2 hover:ring-offset-1 transition-all ${
+                        className={`inline-flex max-w-[6.5rem] items-center justify-center truncate whitespace-nowrap text-xs px-2 py-0.5 rounded-full font-medium hover:ring-2 hover:ring-offset-1 transition-all ${
                           isMonthClosed
                             ? "pointer-events-none bg-slate-100 text-slate-400"
                             : item.paymentMethod === "checking"
@@ -1119,9 +1581,29 @@ async function prevMonth() {
                       const applies = lineItemAppliesToWeek(item, wi, weeks[wi].start, weeks[wi].end, month);
                       const val = getAmount(item.id, wi);
                       const isReadOnlyWeek = isWeekReadOnly(wi);
+                      const planned = Number(val || 0);
+                      const behavior = getItemBehavior(item);
+                      const isFlexible = behavior === "flexible_spend";
+                      const spent = isFlexible ? getSpentTotal(item.id, wi) : 0;
+                      const remaining = planned - spent;
+                      const dockState = getDockState(item, wi);
+                      const status = dockState?.status ?? "upcoming";
+                      const displayAmount = dockState?.actualAmount ?? planned;
+                      const isWrappedWeek = isWeekWrapped(wi);
+                      const statusLabel = getCellStatusLabel(status, behavior, isWrappedWeek);
+                      const statusTone = isWrappedWeek && status === "upcoming" ? "wrapped" : status;
+                      const pendingText = status === "pending" && dockState?.pendingUntil
+                        ? `Pending - clears ${weekdayLabel(dockState.pendingUntil)}`
+                        : statusLabel;
                       return (
-                        <td key={wi} className="px-2 py-1 text-center">
+                        <td key={wi} className="px-2 py-2 text-center align-top">
                           {applies ? (
+                            <div className={`flex min-h-[4rem] flex-col items-center justify-center gap-1 rounded-xl px-2 py-2 ${status === "pending" ? "bg-amber-50/80" : ""}`}>
+                              {isEditingBudget ? (
+                                <>
+                                  <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-harbor-navy/35">
+                                    {isFlexible ? "Budget" : "Planned"}
+                                  </span>
                             <input
                               type="number"
                               min="0"
@@ -1130,10 +1612,58 @@ async function prevMonth() {
                               placeholder="—"
                               value={val === 0 ? "" : val}
                               onChange={(e) => setAmount(item.id, wi, e.target.value === "" ? "" : Number(e.target.value))}
+                              onBlur={endAmountEdit}
+                              onKeyDown={handleAmountEditKey}
                               className={item.isIncome
                                 ? "w-24 text-right rounded-lg border-l-2 border-l-harbor-green border-t border-r border-b border-slate-200 px-2 py-1 text-sm text-harbor-green focus:outline-none focus:ring-1 focus:ring-harbor-teal/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
                                 : "w-24 text-right rounded-lg border-l-2 border-l-harbor-red border-t border-r border-b border-slate-200 px-2 py-1 text-sm text-harbor-red focus:outline-none focus:ring-1 focus:ring-harbor-red/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"}
                             />
+                                </>
+                              ) : isFlexible ? (
+                              <div className="w-full space-y-1 text-[11px] leading-tight text-slate-500">
+                                <button
+                                  type="button"
+                                  onClick={() => openDockActions(item, wi)}
+                                  disabled={isReadOnlyWeek}
+                                  title="Open details"
+                                  className={`block w-full text-center text-sm font-bold leading-tight disabled:cursor-default ${remaining < 0 ? "text-harbor-red" : "text-harbor-green"}`}
+                                >
+                                  {formatMoney(remaining)} left
+                                </button>
+                                {spent > 0 && (
+                                  <div className="text-[11px] leading-tight text-slate-500">
+                                    {formatMoney(spent)} spent
+                                  </div>
+                                )}
+                                {pendingText && (
+                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusBadgeTone(statusTone, remaining)}`}>
+                                    {pendingText}
+                                  </span>
+                                )}
+                              </div>
+                            ) : (
+                              <div className="space-y-1">
+                                <button
+                                  type="button"
+                                  onClick={() => openDockActions(item, wi)}
+                                  disabled={isReadOnlyWeek}
+                                  title="Open details"
+                                  className={`block rounded-lg px-2 py-0.5 text-sm font-semibold transition-colors disabled:cursor-default ${
+                                    item.isIncome
+                                      ? "text-harbor-green hover:bg-harbor-green/5"
+                                      : "text-harbor-navy hover:bg-harbor-navy/5"
+                                  }`}
+                                >
+                                  {formatMoney(displayAmount)}
+                                </button>
+                                {pendingText && (
+                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusBadgeTone(statusTone)}`}>
+                                    {pendingText}
+                                  </span>
+                                )}
+                              </div>
+                            )}
+                            </div>
                           ) : (
                             <span className="text-slate-200 text-xs">—</span>
                           )}
@@ -1256,27 +1786,98 @@ async function prevMonth() {
                     {applicableItems.map((item) => {
                       const val = getAmount(item.id, activeWeekIdx);
                       const isReadOnlyWeek = isWeekReadOnly(activeWeekIdx);
+                      const planned = Number(val || 0);
+                      const behavior = getItemBehavior(item);
+                      const isFlexible = behavior === "flexible_spend";
+                      const spent = isFlexible ? getSpentTotal(item.id, activeWeekIdx) : 0;
+                      const remaining = planned - spent;
+                      const dockState = getDockState(item, activeWeekIdx);
+                      const status = dockState?.status ?? "upcoming";
+                      const displayAmount = dockState?.actualAmount ?? planned;
+                      const isWrappedWeek = isWeekWrapped(activeWeekIdx);
+                      const statusLabel = getCellStatusLabel(status, behavior, isWrappedWeek);
+                      const statusTone = isWrappedWeek && status === "upcoming" ? "wrapped" : status;
+                      const pendingText = status === "pending" && dockState?.pendingUntil
+                        ? `Pending - clears ${weekdayLabel(dockState.pendingUntil)}`
+                        : statusLabel;
                       return (
-                        <div key={item.id} className="flex items-center justify-between px-4 py-2.5 gap-3">
-                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                            <span className="text-sm text-slate-700 truncate">{item.name}</span>
+                        <div
+                          key={item.id}
+                          role={isEditingBudget || isReadOnlyWeek ? undefined : "button"}
+                          tabIndex={isEditingBudget || isReadOnlyWeek ? undefined : 0}
+                          onClick={() => {
+                            if (!isEditingBudget && !isReadOnlyWeek) openDockActions(item, activeWeekIdx);
+                          }}
+                          onKeyDown={(event) => {
+                            if (isEditingBudget || isReadOnlyWeek) return;
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              openDockActions(item, activeWeekIdx);
+                            }
+                          }}
+                          className={`flex items-start justify-between px-4 py-3 gap-3 ${status === "pending" ? "bg-amber-50/80" : ""} ${isEditingBudget || isReadOnlyWeek ? "" : "cursor-pointer hover:bg-harbor-offwhite"}`}
+                        >
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm text-slate-700 truncate">{item.name}</span>
                             {item.isIncome && <span className="text-xs text-harbor-green font-medium flex-shrink-0">↑</span>}
+                            </div>
+                            {isFlexible && spent > 0 && (
+                              <div className="mt-1 text-xs leading-5 text-slate-500">
+                                <span>{formatMoney(spent)} spent</span>
+                              </div>
+                            )}
+                            {isFlexible && pendingText && (
+                              <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusBadgeTone(statusTone, remaining)}`}>
+                                {pendingText}
+                              </span>
+                            )}
+                            {!isFlexible && pendingText && (
+                              <span className={`mt-1 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusBadgeTone(statusTone)}`}>
+                                {pendingText}
+                              </span>
+                            )}
                           </div>
-                          <input
-                            type="number"
-                            inputMode="decimal"
-                            min="0"
-                            step="0.01"
-                            disabled={isReadOnlyWeek}
-                            placeholder="0"
-                            value={val === 0 ? "" : val}
-                            onChange={(e) => setAmount(item.id, activeWeekIdx, e.target.value === "" ? "" : Number(e.target.value))}
-                            className={`w-24 text-right rounded-lg border-l-2 px-2 py-2 text-sm flex-shrink-0 focus:outline-none focus:ring-1 ${
-                              item.isIncome
-                                ? "border-l-harbor-green border border-slate-200 text-harbor-green focus:ring-harbor-teal/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-                                : "border-l-harbor-red border border-slate-200 text-harbor-red focus:ring-harbor-red/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
-                            }`}
-                          />
+                          <div className="flex flex-col items-end gap-2">
+                            {isEditingBudget ? (
+                              <div className="flex flex-col items-end gap-1">
+                                <span className="text-[10px] font-semibold uppercase tracking-wide text-harbor-navy/35">
+                                  {isFlexible ? "Budget" : "Planned"}
+                                </span>
+                              <input
+                                type="number"
+                                inputMode="decimal"
+                                min="0"
+                                step="0.01"
+                                disabled={isReadOnlyWeek}
+                                placeholder="0"
+                                value={val === 0 ? "" : val}
+                                onChange={(e) => setAmount(item.id, activeWeekIdx, e.target.value === "" ? "" : Number(e.target.value))}
+                                onBlur={endAmountEdit}
+                                onKeyDown={handleAmountEditKey}
+                                className={`w-24 text-right rounded-lg border-l-2 px-2 py-2 text-sm flex-shrink-0 focus:outline-none focus:ring-1 ${
+                                  item.isIncome
+                                    ? "border-l-harbor-green border border-slate-200 text-harbor-green focus:ring-harbor-teal/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                                    : "border-l-harbor-red border border-slate-200 text-harbor-red focus:ring-harbor-red/20 disabled:cursor-not-allowed disabled:bg-slate-50 disabled:text-slate-400"
+                                }`}
+                              />
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => openDockActions(item, activeWeekIdx)}
+                                disabled={isReadOnlyWeek}
+                                title="Open details"
+                                className={`rounded-lg px-2 py-1 text-right text-sm font-semibold disabled:cursor-default ${
+                                  isFlexible
+                                    ? remaining < 0 ? "text-harbor-red" : "text-harbor-green"
+                                    : item.isIncome ? "text-harbor-green" : "text-harbor-red"
+                                }`}
+                              >
+                                {isFlexible ? `${formatMoney(remaining)} left` : formatMoney(displayAmount)}
+                              </button>
+                            )}
+                          </div>
                         </div>
                       );
                     })}
@@ -1339,6 +1940,312 @@ async function prevMonth() {
         )}
 
       </div>
+
+      {dockActionTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-harbor-navy/45 px-4 py-6">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="dock-action-title"
+            className="w-full max-w-md rounded-2xl border border-harbor-teal-light bg-white p-5 shadow-xl"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-harbor-teal">Update Dock</p>
+                <h2 id="dock-action-title" className="mt-1 text-xl font-bold text-harbor-navy">{dockActionTarget.item.name}</h2>
+                <p className="mt-1 text-sm text-harbor-navy/55">
+                  Week {dockActionTarget.weekIndex + 1} - {weeks[dockActionTarget.weekIndex]?.label}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeDockActions}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-harbor-navy/60 hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-4 rounded-xl bg-harbor-offwhite px-4 py-3 text-sm text-harbor-navy/70">
+              <div className="flex items-center justify-between gap-3">
+                <span>Status</span>
+                <span className={`rounded-full px-2 py-0.5 text-xs font-semibold ${statusBadgeTone(
+                  isWeekWrapped(dockActionTarget.weekIndex) && (getDockState(dockActionTarget.item, dockActionTarget.weekIndex)?.status ?? "upcoming") === "upcoming"
+                    ? "wrapped"
+                    : getDockState(dockActionTarget.item, dockActionTarget.weekIndex)?.status ?? "upcoming",
+                )}`}>
+                  {getCellStatusLabel(
+                    getDockState(dockActionTarget.item, dockActionTarget.weekIndex)?.status ?? "upcoming",
+                    getItemBehavior(dockActionTarget.item),
+                    isWeekWrapped(dockActionTarget.weekIndex),
+                  ) || "Upcoming"}
+                </span>
+              </div>
+              {getDockState(dockActionTarget.item, dockActionTarget.weekIndex)?.pendingUntil && (
+                <div className="mt-2 flex items-center justify-between gap-3">
+                  <span>Clears</span>
+                  <span>{weekdayLabel(getDockState(dockActionTarget.item, dockActionTarget.weekIndex)?.pendingUntil)}</span>
+                </div>
+              )}
+            </div>
+
+            {dockActionDraft.activeAction && (
+              <div className="mt-5 grid gap-3 rounded-xl border border-harbor-teal-light bg-white px-4 py-3 sm:grid-cols-2">
+                <div>
+                  <label className="mb-1 block text-xs font-medium text-slate-500">
+                    {dockActionDraft.activeAction === "adjusted" ? "New amount" : "Amount"}
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      inputMode="decimal"
+                      value={dockActionDraft.amount}
+                      onChange={(e) => setDockActionDraft((draft) => ({ ...draft, amount: e.target.value }))}
+                      className="w-full rounded-xl border border-slate-200 py-2 pl-7 pr-3 text-sm text-harbor-navy focus:border-harbor-teal focus:outline-none"
+                      autoFocus
+                    />
+                  </div>
+                </div>
+                {dockActionDraft.activeAction === "pending" && (
+                  <div>
+                    <label className="mb-1 block text-xs font-medium text-slate-500">Pending until</label>
+                    <input
+                      type="date"
+                      value={dockActionDraft.pendingUntil}
+                      onChange={(e) => setDockActionDraft((draft) => ({ ...draft, pendingUntil: e.target.value }))}
+                      className="w-full rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-2 text-sm text-harbor-navy focus:border-amber-300 focus:outline-none"
+                    />
+                  </div>
+                )}
+                <div className="sm:col-span-2">
+                  <label className="mb-1 block text-xs font-medium text-slate-500">Note</label>
+                  <input
+                    type="text"
+                    value={dockActionDraft.note}
+                    onChange={(e) => setDockActionDraft((draft) => ({ ...draft, note: e.target.value }))}
+                    className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-harbor-navy focus:border-harbor-teal focus:outline-none"
+                    placeholder="Optional"
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="mt-5 grid gap-2">
+              {getItemBehavior(dockActionTarget.item) === "flexible_spend" ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={openSpendLogFromDockActions}
+                    className="rounded-lg border border-harbor-red/25 px-4 py-2 text-sm font-medium text-harbor-red hover:bg-harbor-red/5"
+                  >
+                    Log Spend
+                  </button>
+                  <button type="button" onClick={() => void saveDockStatus("adjusted")} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-harbor-navy hover:bg-slate-50">
+                    {dockActionDraft.activeAction === "adjusted" ? "Save Budget" : "Adjust Budget"}
+                  </button>
+                  <button type="button" onClick={() => void saveDockStatus("cleared")} className="rounded-lg border border-harbor-green/25 px-4 py-2 text-sm font-medium text-harbor-green hover:bg-harbor-green/5">
+                    Mark Done
+                  </button>
+                </>
+              ) : getItemBehavior(dockActionTarget.item) === "income" ? (
+                <>
+                  <button type="button" onClick={() => void saveDockStatus("cleared")} className="rounded-lg border border-harbor-green/25 px-4 py-2 text-sm font-medium text-harbor-green hover:bg-harbor-green/5">
+                    {dockActionDraft.activeAction === "cleared" ? "Save Received" : "Mark Received"}
+                  </button>
+                  <button type="button" onClick={() => void saveDockStatus("pending")} className="rounded-lg border border-amber-200 px-4 py-2 text-sm font-medium text-amber-800 hover:bg-amber-50">
+                    {dockActionDraft.activeAction === "pending" ? "Save Pending" : "Mark Pending"}
+                  </button>
+                  <button type="button" onClick={() => void saveDockStatus("adjusted")} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-harbor-navy hover:bg-slate-50">
+                    {dockActionDraft.activeAction === "adjusted" ? "Save Amount" : "Adjust Amount"}
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button type="button" onClick={() => void saveDockStatus("cleared")} className="rounded-lg border border-harbor-green/25 px-4 py-2 text-sm font-medium text-harbor-green hover:bg-harbor-green/5">
+                    {dockActionDraft.activeAction === "cleared"
+                      ? getItemBehavior(dockActionTarget.item) === "credit_card_payment" ? "Save Cleared" : "Save Paid"
+                      : getItemBehavior(dockActionTarget.item) === "credit_card_payment" ? "Mark Cleared" : "Mark Paid"}
+                  </button>
+                  <button type="button" onClick={() => void saveDockStatus("pending")} className="rounded-lg border border-amber-200 px-4 py-2 text-sm font-medium text-amber-800 hover:bg-amber-50">
+                    {dockActionDraft.activeAction === "pending" ? "Save Pending" : "Mark Pending"}
+                  </button>
+                  <button type="button" onClick={() => void saveDockStatus("adjusted")} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-harbor-navy hover:bg-slate-50">
+                    {dockActionDraft.activeAction === "adjusted" ? "Save Amount" : "Adjust Amount"}
+                  </button>
+                  {getItemBehavior(dockActionTarget.item) !== "credit_card_payment" && (
+                    <button type="button" onClick={() => void saveDockStatus("skipped")} className="rounded-lg border border-slate-200 px-4 py-2 text-sm font-medium text-slate-500 hover:bg-slate-50">
+                      Skip This Week
+                    </button>
+                  )}
+                </>
+              )}
+              <button type="button" onClick={() => void clearDockStatus()} className="rounded-lg px-4 py-2 text-sm font-medium text-harbor-navy/50 hover:bg-slate-50">
+                Clear Status
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {spendLogTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-harbor-navy/45 px-4 py-6">
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="spend-log-title"
+            className="w-full max-w-lg rounded-2xl border border-harbor-teal-light bg-white p-5 shadow-xl"
+          >
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-harbor-teal">Log Spend</p>
+                <h2 id="spend-log-title" className="mt-1 text-xl font-bold text-harbor-navy">
+                  {selectedSpendItem?.name ?? "Flexible spending"}
+                </h2>
+                <p className="mt-1 text-sm text-harbor-navy/55">
+                  {selectedSpendWeek ? `Week ${spendLogDraft.weekIndex + 1} - ${selectedSpendWeek.label}` : "Choose where this spend belongs"}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeSpendLogDialog}
+                className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm font-medium text-harbor-navy/60 hover:bg-slate-50"
+              >
+                Close
+              </button>
+            </div>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-2">
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-500">Spending area</label>
+                <select
+                  value={spendLogDraft.rippleId}
+                  onChange={(e) => {
+                    const nextItem = flexibleSpendItems.find((item) => item.id === e.target.value);
+                    setSpendLogDraft((draft) => ({
+                      ...draft,
+                      rippleId: e.target.value,
+                      paymentMethod: nextItem?.paymentMethod ?? draft.paymentMethod,
+                    }));
+                  }}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-harbor-navy focus:border-harbor-teal focus:outline-none"
+                  autoFocus
+                >
+                  {flexibleSpendItems.length === 0 ? (
+                    <option value="">No flexible spending set up</option>
+                  ) : (
+                    flexibleSpendItems.map((item) => (
+                      <option key={item.id} value={item.id}>{item.name}</option>
+                    ))
+                  )}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-500">Week</label>
+                <select
+                  value={spendLogDraft.weekIndex}
+                  onChange={(e) => setSpendLogDraft((draft) => ({ ...draft, weekIndex: Number(e.target.value) }))}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-harbor-navy focus:border-harbor-teal focus:outline-none"
+                >
+                  {weeks.map((week, weekIndex) => (
+                    <option key={weekIndex} value={weekIndex}>
+                      Week {weekIndex + 1} - {week.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-500">Amount</label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    inputMode="decimal"
+                    value={spendLogDraft.amount}
+                    onChange={(e) => setSpendLogDraft((draft) => ({ ...draft, amount: e.target.value }))}
+                    className="w-full rounded-xl border border-slate-200 py-2 pl-7 pr-3 text-sm text-harbor-navy focus:border-harbor-teal focus:outline-none"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-500">Payment method</label>
+                <select
+                  value={spendLogDraft.paymentMethod}
+                  onChange={(e) => setSpendLogDraft((draft) => ({ ...draft, paymentMethod: e.target.value as PaymentMethod }))}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-harbor-navy focus:border-harbor-teal focus:outline-none"
+                >
+                  <option value="checking">Checking / Anchor</option>
+                  {settings.creditCards.map((card) => (
+                    <option key={card.id} value={card.id}>{card.label}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-500">Date</label>
+                <input
+                  type="date"
+                  value={spendLogDraft.date}
+                  onChange={(e) => setSpendLogDraft((draft) => ({ ...draft, date: e.target.value }))}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-harbor-navy focus:border-harbor-teal focus:outline-none"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium text-slate-500">Note</label>
+                <input
+                  type="text"
+                  value={spendLogDraft.note}
+                  onChange={(e) => setSpendLogDraft((draft) => ({ ...draft, note: e.target.value }))}
+                  className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm text-harbor-navy focus:border-harbor-teal focus:outline-none"
+                  placeholder="Optional"
+                />
+              </div>
+            </div>
+
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => void saveSpendLog()}
+                disabled={!selectedSpendItem}
+                className="rounded-lg bg-harbor-red px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-harbor-red/90 disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
+              >
+                Log Spend
+              </button>
+            </div>
+
+            <div className="mt-5 border-t border-slate-100 pt-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">Logged Spend</p>
+              <div className="mt-2 max-h-52 overflow-y-auto divide-y divide-slate-100">
+                {!selectedSpendItem || getSpendEntries(selectedSpendItem.id, spendLogDraft.weekIndex).length === 0 ? (
+                  <p className="py-3 text-sm text-harbor-navy/45">No spend logged yet.</p>
+                ) : (
+                  getSpendEntries(selectedSpendItem.id, spendLogDraft.weekIndex).map((entry) => (
+                    <div key={entry.id} className="flex items-start justify-between gap-3 py-3">
+                      <div className="min-w-0">
+                        <p className="text-sm font-semibold text-harbor-navy">{formatMoney(entry.amount)}</p>
+                        <p className="text-xs text-harbor-navy/45">
+                          {entry.date} - {entry.paymentMethod === "checking" ? "Checking / Anchor" : cardLookup[entry.paymentMethod] ?? entry.paymentMethod}
+                          {entry.note ? ` - ${entry.note}` : ""}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => void deleteSpendLog(entry)}
+                        className="rounded-lg border border-harbor-red/20 px-2.5 py-1 text-xs font-medium text-harbor-red hover:bg-harbor-red/5"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {pendingConfirmation && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-harbor-navy/45 px-4 py-6">

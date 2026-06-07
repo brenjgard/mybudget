@@ -21,6 +21,10 @@ export type FrequencyType =
   | "biweekly-even";
 
 export type WaveType = "recurring" | "oneTime";
+export type RippleType = "fixed" | "flexible";
+export type ItemBehavior = "fixed_bill" | "flexible_spend" | "credit_card_payment" | "income";
+export type DockItemKind = "ripple" | "wave" | "credit_card_payment";
+export type DockItemStatus = "upcoming" | "pending" | "cleared" | "skipped" | "adjusted";
 export type RecurrenceType = "weekly" | "biweekly" | "twiceMonthly" | "monthly" | "custom";
 export type RecurrenceUnit = "days" | "weeks" | "months";
 export type DayOfMonth = number | "last";
@@ -47,11 +51,45 @@ export type LineItem = {
   waveType?: WaveType; // missing means recurring for older saved items
   oneTimeDate?: string; // YYYY-MM-DD for one-time waves/ripples
   recurrence?: Recurrence;
+  rippleType?: RippleType; // missing means fixed unless inferred for older saved ripples
+};
+
+export type SpendLogEntry = {
+  id: string;
+  userId?: string;
+  monthKey: string;
+  weekIndex: number;
+  rippleId: string;
+  amount: number;
+  paymentMethod: PaymentMethod;
+  date: string;
+  note?: string;
+  createdAt: string;
+  updatedAt?: string;
+};
+
+export type DockItemState = {
+  id?: string;
+  userId?: string;
+  monthKey: string;
+  weekIndex: number;
+  itemId: string;
+  itemKind: DockItemKind;
+  behaviorType: ItemBehavior;
+  status: DockItemStatus;
+  statusUpdatedAt?: string;
+  plannedAmount?: number;
+  actualAmount?: number;
+  pendingUntil?: string;
+  clearedAt?: string;
+  note?: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
 export type AppSettings = {
   checkingBalance: number;
-  creditCards: { id: PaymentMethod; label: string }[];
+  creditCards: { id: PaymentMethod; label: string; statementClosingDay?: number }[];
   categories: string[];
   lineItems: LineItem[];
 };

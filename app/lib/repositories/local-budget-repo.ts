@@ -4,7 +4,7 @@ import { localRepo } from "../local-repo";
 import type { CCCharge } from "../local-repo";
 import type { Buoy } from "../local-repo";
 import { scopedStorageKey, warnIfLegacyStorageExists } from "../local-storage-scope";
-import type { AppSettings } from "../types";
+import type { AppSettings, DockItemState, SpendLogEntry } from "../types";
 
 const CLOSED_WEEKS_KEY = "harbor_closed_weeks";
 const CLOSED_MONTHS_KEY = "harbor_closed_months";
@@ -117,6 +117,75 @@ export const localBudgetRepo = {
 
   getCCCharges(): CCCharge[] {
     return localRepo.loadCCCharges();
+  },
+
+  getSpendLogs(monthKey: string): SpendLogEntry[] {
+    return localRepo.loadSpendLogs(monthKey);
+  },
+
+  getDockItemStates(monthKey: string): DockItemState[] {
+    return localRepo.loadDockItemStates(monthKey);
+  },
+
+  saveDockItemState(state: DockItemState): DockItemState {
+    const now = new Date().toISOString();
+    const existing = localRepo.loadDockItemStates(state.monthKey);
+    const savedState = {
+      ...state,
+      id: state.id || crypto.randomUUID(),
+      statusUpdatedAt: state.statusUpdatedAt || now,
+      createdAt: state.createdAt || now,
+      updatedAt: now,
+    };
+    const updated = existing.some((item) => (
+      item.itemId === savedState.itemId
+      && item.itemKind === savedState.itemKind
+      && item.weekIndex === savedState.weekIndex
+    ))
+      ? existing.map((item) => (
+        item.itemId === savedState.itemId && item.itemKind === savedState.itemKind && item.weekIndex === savedState.weekIndex
+          ? savedState
+          : item
+      ))
+      : [...existing, savedState];
+
+    localRepo.saveDockItemStates(state.monthKey, updated);
+    return savedState;
+  },
+
+  deleteDockItemState(monthKey: string, itemId: string, itemKind: DockItemState["itemKind"], weekIndex: number) {
+    localRepo.saveDockItemStates(
+      monthKey,
+      localRepo.loadDockItemStates(monthKey).filter((state) => !(
+        state.itemId === itemId
+        && state.itemKind === itemKind
+        && state.weekIndex === weekIndex
+      )),
+    );
+  },
+
+  saveSpendLog(entry: SpendLogEntry): SpendLogEntry {
+    const now = new Date().toISOString();
+    const existing = localRepo.loadSpendLogs(entry.monthKey);
+    const savedEntry = {
+      ...entry,
+      id: entry.id || crypto.randomUUID(),
+      createdAt: entry.createdAt || now,
+      updatedAt: now,
+    };
+    const updated = existing.some((item) => item.id === savedEntry.id)
+      ? existing.map((item) => (item.id === savedEntry.id ? savedEntry : item))
+      : [...existing, savedEntry];
+
+    localRepo.saveSpendLogs(entry.monthKey, updated);
+    return savedEntry;
+  },
+
+  deleteSpendLog(monthKey: string, entryId: string) {
+    localRepo.saveSpendLogs(
+      monthKey,
+      localRepo.loadSpendLogs(monthKey).filter((entry) => entry.id !== entryId),
+    );
   },
 
   addCCCharges(charges: CCCharge[]) {

@@ -3,8 +3,9 @@
 import { useState, type Dispatch, type SetStateAction } from "react";
 import { useRouter } from "next/navigation";
 import { saveSettings } from "../lib/budget-settings";
+import { defaultRippleTypeForCategory, getRippleType } from "../lib/ripple-type";
 import { getDefaultRecurrence, recurrenceLabel } from "../lib/schedule";
-import { AppSettings, DayOfMonth, FrequencyType, LineItem, Recurrence, RecurrenceType, RecurrenceUnit } from "../lib/types";
+import { AppSettings, DayOfMonth, FrequencyType, LineItem, Recurrence, RecurrenceType, RecurrenceUnit, RippleType } from "../lib/types";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 // ── Helpers ────────────────────────────────────────────────────────────────
@@ -112,6 +113,7 @@ type FormState = {
   waveType: "recurring" | "oneTime";
   oneTimeDate: string;
   recurrence: Recurrence;
+  rippleType: RippleType;
 };
 
 function ItemForm({
@@ -197,13 +199,34 @@ function ItemForm({
           <select
             className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
             value={form.category}
-            onChange={(e) => setForm((p) => ({ ...p, category: e.target.value }))}
+            onChange={(e) => {
+              const category = e.target.value;
+              setForm((p) => ({
+                ...p,
+                category,
+                rippleType: isIncome ? p.rippleType : defaultRippleTypeForCategory(category),
+              }));
+            }}
           >
             {DEFAULT_CATEGORIES.map((c) => (
               <option key={c} value={c}>{c}</option>
             ))}
           </select>
         </div>
+
+        {!isIncome && (
+          <div className="col-span-2">
+            <label className="text-xs text-slate-500 block mb-1">Spend Style</label>
+            <select
+              className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
+              value={form.rippleType}
+              onChange={(e) => setForm((p) => ({ ...p, rippleType: e.target.value as RippleType }))}
+            >
+              <option value="fixed">Fixed obligation</option>
+              <option value="flexible">Flexible spending</option>
+            </select>
+          </div>
+        )}
 
         <div className="col-span-2">
           <label className="text-xs text-slate-500 block mb-1">{isIncome ? "Wave" : "Ripple"} Type</label>
@@ -378,6 +401,11 @@ function ItemList({
           <div className="min-w-0 flex-1">
             <span className="font-medium text-sm">{item.name}</span>
             <span className="text-xs text-slate-400 ml-2">{item.category}</span>
+            {!item.isIncome && (
+              <span className="text-xs text-slate-400 ml-2">
+                {getRippleType(item) === "flexible" ? "Flexible" : "Fixed"}
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-2 flex-shrink-0 ml-3">
             <span className={`text-sm font-semibold tabular-nums ${item.isIncome ? "text-harbor-green" : "text-harbor-red"}`}>
@@ -410,6 +438,7 @@ const BLANK_FORM: FormState = {
   waveType: "recurring",
   oneTimeDate: "",
   recurrence: getDefaultRecurrence(),
+  rippleType: "fixed",
 };
 
 export default function Setup() {
@@ -443,6 +472,7 @@ export default function Setup() {
         waveType: form.waveType,
         oneTimeDate: form.waveType === "oneTime" ? form.oneTimeDate || undefined : undefined,
         recurrence: form.waveType === "oneTime" ? undefined : form.recurrence,
+        rippleType: isIncome ? undefined : form.rippleType,
       },
     ]);
     setForm((p) => ({ ...p, name: "", amount: "", anchorDate: "", anchorMonth: undefined, oneTimeDate: "" }));

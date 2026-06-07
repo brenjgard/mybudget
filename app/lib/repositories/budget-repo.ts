@@ -4,7 +4,7 @@ import { localBudgetRepo } from "./local-budget-repo";
 import { supabaseBudgetRepo } from "./supabase-budget-repo";
 import type { CCCharge } from "../local-repo";
 import type { Buoy } from "../local-repo";
-import type { AppSettings } from "../types";
+import type { AppSettings, DockItemState, SpendLogEntry } from "../types";
 
 async function loadSettings(): Promise<AppSettings | null> {
   try {
@@ -231,6 +231,97 @@ async function getCCCharges(): Promise<CCCharge[]> {
   return localBudgetRepo.getCCCharges();
 }
 
+async function getSpendLogs(monthKey: string): Promise<SpendLogEntry[]> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      return await supabaseBudgetRepo.getSpendLogs(monthKey);
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.getSpendLogs(monthKey);
+}
+
+async function getDockItemStates(monthKey: string): Promise<DockItemState[]> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      return await supabaseBudgetRepo.getDockItemStates(monthKey);
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.getDockItemStates(monthKey);
+}
+
+async function saveDockItemState(state: DockItemState): Promise<DockItemState> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      const savedState = await supabaseBudgetRepo.saveDockItemState(state);
+      localBudgetRepo.saveDockItemState(savedState);
+      return savedState;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.saveDockItemState(state);
+}
+
+async function deleteDockItemState(
+  monthKey: string,
+  itemId: string,
+  itemKind: DockItemState["itemKind"],
+  weekIndex: number,
+) {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      await supabaseBudgetRepo.deleteDockItemState(monthKey, itemId, itemKind, weekIndex);
+      localBudgetRepo.deleteDockItemState(monthKey, itemId, itemKind, weekIndex);
+      return;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  localBudgetRepo.deleteDockItemState(monthKey, itemId, itemKind, weekIndex);
+}
+
+async function saveSpendLog(entry: SpendLogEntry): Promise<SpendLogEntry> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      const savedEntry = await supabaseBudgetRepo.saveSpendLog(entry);
+      localBudgetRepo.saveSpendLog(savedEntry);
+      return savedEntry;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.saveSpendLog(entry);
+}
+
+async function deleteSpendLog(monthKey: string, entryId: string) {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      await supabaseBudgetRepo.deleteSpendLog(monthKey, entryId);
+      localBudgetRepo.deleteSpendLog(monthKey, entryId);
+      return;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  localBudgetRepo.deleteSpendLog(monthKey, entryId);
+}
+
 async function addCCCharges(charges: CCCharge[]) {
   try {
     const user = await supabaseBudgetRepo.getUser();
@@ -328,6 +419,12 @@ export const budgetRepo = {
   getClosedWeeks,
   closeWeek,
   getCCCharges,
+  getDockItemStates,
+  saveDockItemState,
+  deleteDockItemState,
+  getSpendLogs,
+  saveSpendLog,
+  deleteSpendLog,
   addCCCharges,
   getBuoys,
   saveBuoy,

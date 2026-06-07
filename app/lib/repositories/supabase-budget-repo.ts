@@ -3,7 +3,7 @@
 import { createClient } from "../supabase/client";
 import type { CCCharge } from "../local-repo";
 import type { Buoy } from "../local-repo";
-import type { AppSettings, FrequencyType, LineItem, PaymentMethod, Recurrence } from "../types";
+import type { AppSettings, DockItemKind, DockItemState, DockItemStatus, FrequencyType, ItemBehavior, LineItem, PaymentMethod, Recurrence, RippleType, SpendLogEntry } from "../types";
 
 type User = {
   id: string;
@@ -18,6 +18,7 @@ type PaymentAccountRow = {
   account_key: string;
   kind: "checking" | "credit";
   label: string;
+  statement_closing_day?: number | null;
 };
 
 type CategoryRow = {
@@ -38,6 +39,7 @@ type LineItemRow = {
   wave_type?: "recurring" | "oneTime" | null;
   one_time_date?: string | null;
   recurrence?: Recurrence | null;
+  ripple_type?: RippleType | null;
 };
 
 type MonthlyAmountRow = {
@@ -68,6 +70,39 @@ type CCChargeRow = {
   amount: number | string;
   week_label: string;
   date_moved: string;
+};
+
+type SpendLogRow = {
+  id: string;
+  user_id: string;
+  month_key: string;
+  week_index: number;
+  ripple_id: string | null;
+  payment_account_id: string;
+  amount: number | string;
+  spend_date: string;
+  note: string | null;
+  created_at: string;
+  updated_at: string | null;
+};
+
+type DockItemStateRow = {
+  id: string;
+  user_id: string;
+  month_key: string;
+  week_index: number;
+  item_id: string;
+  item_kind: DockItemKind;
+  behavior_type: ItemBehavior;
+  status: DockItemStatus;
+  status_updated_at: string | null;
+  planned_amount: number | string | null;
+  actual_amount: number | string | null;
+  pending_until: string | null;
+  cleared_at: string | null;
+  note: string | null;
+  created_at: string;
+  updated_at: string | null;
 };
 
 type BuoyRow = {
@@ -143,6 +178,7 @@ function buildSettingsFromSupabase({
       .map((account) => ({
         id: account.account_key as PaymentMethod,
         label: account.label,
+        statementClosingDay: account.statement_closing_day ?? undefined,
       })),
     categories: categories.map((category) => category.name),
     lineItems: lineItems.map<LineItem>((item) => ({
@@ -158,7 +194,45 @@ function buildSettingsFromSupabase({
       waveType: item.wave_type ?? "recurring",
       oneTimeDate: item.one_time_date ?? undefined,
       recurrence: item.recurrence ?? undefined,
+      rippleType: item.ripple_type ?? undefined,
     })),
+  };
+}
+
+function fromSpendLogRow(row: SpendLogRow, accountKeysById: Map<string, string>): SpendLogEntry {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    monthKey: row.month_key,
+    weekIndex: row.week_index,
+    rippleId: row.ripple_id ?? "",
+    amount: Number(row.amount),
+    paymentMethod: (accountKeysById.get(row.payment_account_id) ?? "checking") as PaymentMethod,
+    date: row.spend_date,
+    note: row.note ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at ?? undefined,
+  };
+}
+
+function fromDockItemStateRow(row: DockItemStateRow): DockItemState {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    monthKey: row.month_key,
+    weekIndex: row.week_index,
+    itemId: row.item_id,
+    itemKind: row.item_kind,
+    behaviorType: row.behavior_type,
+    status: row.status,
+    statusUpdatedAt: row.status_updated_at ?? undefined,
+    plannedAmount: row.planned_amount === null ? undefined : Number(row.planned_amount),
+    actualAmount: row.actual_amount === null ? undefined : Number(row.actual_amount),
+    pendingUntil: row.pending_until ?? undefined,
+    clearedAt: row.cleared_at ?? undefined,
+    note: row.note ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at ?? undefined,
   };
 }
 
@@ -172,7 +246,7 @@ async function loadSettingsForUser(userId: string): Promise<AppSettings | null> 
       .maybeSingle<BudgetSettingsRow>(),
     supabase
       .from("payment_accounts")
-      .select("id, account_key, kind, label")
+      .select("id, account_key, kind, label, statement_closing_day")
       .eq("user_id", userId)
       .order("sort_order", { ascending: true })
       .returns<PaymentAccountRow[]>(),
@@ -184,7 +258,7 @@ async function loadSettingsForUser(userId: string): Promise<AppSettings | null> 
       .returns<CategoryRow[]>(),
     supabase
       .from("line_items")
-      .select("id, category_id, payment_account_id, name, default_amount, is_income, frequency, anchor_date, anchor_month, wave_type, one_time_date, recurrence")
+      .select("id, category_id, payment_account_id, name, default_amount, is_income, frequency, anchor_date, anchor_month, wave_type, one_time_date, recurrence, ripple_type")
       .eq("user_id", userId)
       .order("sort_order", { ascending: true })
       .returns<LineItemRow[]>(),
@@ -250,6 +324,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       account_key: card.id,
       kind: "credit",
       label: card.label,
+      statement_closing_day: card.statementClosingDay ?? null,
       sort_order: index + 1,
     })),
   ];
@@ -280,7 +355,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
   const [accountsResult, categoriesResult, existingLineItemsResult] = await Promise.all([
     supabase
       .from("payment_accounts")
-      .select("id, account_key, kind, label")
+      .select("id, account_key, kind, label, statement_closing_day")
       .eq("user_id", user.id)
       .returns<PaymentAccountRow[]>(),
     supabase
@@ -344,6 +419,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       wave_type: item.waveType ?? "recurring",
       one_time_date: item.waveType === "oneTime" ? item.oneTimeDate ?? null : null,
       recurrence: item.waveType === "oneTime" ? null : item.recurrence ?? null,
+      ripple_type: item.isIncome ? null : item.rippleType ?? null,
       sort_order: index,
       updated_at: new Date().toISOString(),
     };
@@ -631,8 +707,8 @@ async function reopenMonth(monthKey: string): Promise<Set<string>> {
 async function getPaymentAccounts(userId: string): Promise<PaymentAccountRow[]> {
   const supabase = createClient();
   const { data, error } = await supabase
-    .from("payment_accounts")
-    .select("id, account_key, kind, label")
+      .from("payment_accounts")
+      .select("id, account_key, kind, label, statement_closing_day")
     .eq("user_id", userId)
     .returns<PaymentAccountRow[]>();
 
@@ -692,6 +768,158 @@ async function getCCCharges(): Promise<CCCharge[]> {
     weekLabel: charge.week_label,
     dateMoved: charge.date_moved,
   }));
+}
+
+async function getSpendLogs(monthKey: string): Promise<SpendLogEntry[]> {
+  const user = await getUser();
+  if (!user) return [];
+
+  const supabase = createClient();
+  const [accounts, spendLogsResult] = await Promise.all([
+    getPaymentAccounts(user.id),
+    supabase
+      .from("spend_logs")
+      .select("id, user_id, month_key, week_index, ripple_id, payment_account_id, amount, spend_date, note, created_at, updated_at")
+      .eq("user_id", user.id)
+      .eq("month_key", monthKey)
+      .order("spend_date", { ascending: false })
+      .order("created_at", { ascending: false })
+      .returns<SpendLogRow[]>(),
+  ]);
+
+  if (spendLogsResult.error) throw spendLogsResult.error;
+
+  const accountKeysById = new Map(accounts.map((account) => [account.id, account.account_key]));
+  return (spendLogsResult.data ?? []).map((row) => fromSpendLogRow(row, accountKeysById));
+}
+
+async function getDockItemStates(monthKey: string): Promise<DockItemState[]> {
+  const user = await getUser();
+  if (!user) return [];
+
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("dock_item_states")
+    .select("id, user_id, month_key, week_index, item_id, item_kind, behavior_type, status, status_updated_at, planned_amount, actual_amount, pending_until, cleared_at, note, created_at, updated_at")
+    .eq("user_id", user.id)
+    .eq("month_key", monthKey)
+    .returns<DockItemStateRow[]>();
+
+  if (error) throw error;
+  return (data ?? []).map(fromDockItemStateRow);
+}
+
+async function saveDockItemState(state: DockItemState): Promise<DockItemState> {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const now = new Date().toISOString();
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("dock_item_states")
+    .upsert(
+      {
+        id: isUuid(state.id ?? "") ? state.id : crypto.randomUUID(),
+        user_id: user.id,
+        month_key: state.monthKey,
+        week_index: state.weekIndex,
+        item_id: state.itemId,
+        item_kind: state.itemKind,
+        behavior_type: state.behaviorType,
+        status: state.status,
+        status_updated_at: state.statusUpdatedAt ?? now,
+        planned_amount: state.plannedAmount ?? null,
+        actual_amount: state.actualAmount ?? null,
+        pending_until: state.pendingUntil?.slice(0, 10) ?? null,
+        cleared_at: state.clearedAt ?? null,
+        note: state.note?.trim() || null,
+        created_at: state.createdAt ?? now,
+        updated_at: now,
+      },
+      { onConflict: "user_id,month_key,week_index,item_id,item_kind" },
+    )
+    .select("id, user_id, month_key, week_index, item_id, item_kind, behavior_type, status, status_updated_at, planned_amount, actual_amount, pending_until, cleared_at, note, created_at, updated_at")
+    .single<DockItemStateRow>();
+
+  if (error) throw error;
+  return fromDockItemStateRow(data);
+}
+
+async function deleteDockItemState(
+  monthKey: string,
+  itemId: string,
+  itemKind: DockItemKind,
+  weekIndex: number,
+) {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("dock_item_states")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("month_key", monthKey)
+    .eq("week_index", weekIndex)
+    .eq("item_id", itemId)
+    .eq("item_kind", itemKind);
+
+  if (error) throw error;
+}
+
+async function saveSpendLog(entry: SpendLogEntry): Promise<SpendLogEntry> {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const accounts = await getPaymentAccounts(user.id);
+  const accountsByKey = new Map(accounts.map((account) => [account.account_key, account]));
+  const paymentAccount = accountsByKey.get(entry.paymentMethod);
+  if (!paymentAccount) throw new Error("Payment account could not be found.");
+
+  const now = new Date().toISOString();
+  const id = isUuid(entry.id) ? entry.id : crypto.randomUUID();
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("spend_logs")
+    .upsert(
+      {
+        id,
+        user_id: user.id,
+        month_key: entry.monthKey,
+        week_index: entry.weekIndex,
+        ripple_id: isUuid(entry.rippleId) ? entry.rippleId : null,
+        payment_account_id: paymentAccount.id,
+        amount: entry.amount,
+        spend_date: entry.date.slice(0, 10),
+        note: entry.note?.trim() || null,
+        created_at: entry.createdAt || now,
+        updated_at: now,
+      },
+      { onConflict: "id" },
+    )
+    .select("id, user_id, month_key, week_index, ripple_id, payment_account_id, amount, spend_date, note, created_at, updated_at")
+    .single<SpendLogRow>();
+
+  if (error) throw error;
+
+  const accountKeysById = new Map(accounts.map((account) => [account.id, account.account_key]));
+  return fromSpendLogRow(data, accountKeysById);
+}
+
+async function deleteSpendLog(monthKey: string, entryId: string) {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+  if (!isUuid(entryId)) return;
+
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("spend_logs")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("month_key", monthKey)
+    .eq("id", entryId);
+
+  if (error) throw error;
 }
 
 async function addCCCharges(charges: CCCharge[]) {
@@ -845,6 +1073,12 @@ export const supabaseBudgetRepo = {
   getClosedWeeks,
   closeWeek,
   getCCCharges,
+  getDockItemStates,
+  saveDockItemState,
+  deleteDockItemState,
+  getSpendLogs,
+  saveSpendLog,
+  deleteSpendLog,
   addCCCharges,
   getBuoys,
   saveBuoy,
