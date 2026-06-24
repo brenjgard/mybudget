@@ -2,6 +2,27 @@ export type PaymentMethod =
   | "checking"
   | (string & {});
 
+export type PaymentAccountType = "checking" | "credit_card" | "savings" | "cash";
+
+export type LegacyPaymentAccountKind = "checking" | "credit";
+
+export type PaymentAccount = {
+  id: string;
+  userId?: string;
+  accountKey: string;
+  kind?: LegacyPaymentAccountKind;
+  type?: PaymentAccountType;
+  label: string;
+  currentBalance: number;
+  statementCloseDay?: number;
+  statementClosingDay?: number;
+  paymentDueDay?: number;
+  active: boolean;
+  sortOrder?: number;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
 export type FrequencyType =
   | "every-week"
   | "every-other-week"
@@ -92,4 +113,73 @@ export type AppSettings = {
   creditCards: { id: PaymentMethod; label: string; statementClosingDay?: number }[];
   categories: string[];
   lineItems: LineItem[];
+};
+
+export type BudgetItem = {
+  id: string;
+  userId?: string;
+  categoryId: string;
+  categoryName?: string;
+  name: string;
+  amount: number;
+  recurrenceType: string;
+  recurrenceConfig?: Recurrence | Record<string, unknown> | null;
+  defaultPaymentAccountId?: string;
+  defaultCashAccountId?: string;
+  paymentMethod: PaymentAccountType;
+  active: boolean;
+  legacyLineItemId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type ActualTransaction = {
+  id: string;
+  userId?: string;
+  date: string;
+  merchant?: string;
+  amount: number;
+  categoryId: string;
+  categoryName?: string;
+  accountId: string;
+  paymentMethod: PaymentAccountType;
+  notes?: string;
+  source: "manual" | "planned" | "imported";
+  plannedItemId?: string;
+  legacySpendLogId?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type CreditCardPayment = {
+  id: string;
+  userId?: string;
+  creditCardAccountId: string;
+  cashAccountId: string;
+  amount: number;
+  scheduledDate: string;
+  status: "planned" | "paid" | "skipped";
+  statementPeriodStart?: string;
+  statementPeriodEnd?: string;
+  dueDate?: string;
+  notes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type CashFlowEvent = {
+  id: string;
+  userId?: string;
+  date: string;
+  amount: number;
+  direction: "inflow" | "outflow";
+  cashAccountId: string;
+  linkedAccountId?: string;
+  linkedTransactionId?: string;
+  linkedCreditCardPaymentId?: string;
+  name: string;
+  category: string;
+  status: "projected" | "scheduled" | "cleared" | "skipped";
+  createdAt?: string;
+  updatedAt?: string;
 };

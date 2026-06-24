@@ -4,7 +4,7 @@ import { localRepo } from "../local-repo";
 import type { CCCharge } from "../local-repo";
 import type { Buoy } from "../local-repo";
 import { scopedStorageKey, warnIfLegacyStorageExists } from "../local-storage-scope";
-import type { AppSettings, DockItemState, SpendLogEntry } from "../types";
+import type { ActualTransaction, AppSettings, BudgetItem, CashFlowEvent, CreditCardPayment, DockItemState, SpendLogEntry } from "../types";
 
 const CLOSED_WEEKS_KEY = "harbor_closed_weeks";
 const CLOSED_MONTHS_KEY = "harbor_closed_months";
@@ -39,6 +39,22 @@ function saveClosedMonthKeys(keys: string[]) {
   localStorage.setItem(scopedStorageKey(CLOSED_MONTHS_KEY), JSON.stringify(keys));
 }
 
+function upsertById<T extends { id: string; createdAt?: string; updatedAt?: string }>(entries: T[], entry: T): T[] {
+  return entries.some((item) => item.id === entry.id)
+    ? entries.map((item) => (item.id === entry.id ? entry : item))
+    : [...entries, entry];
+}
+
+function stampEntry<T extends { id: string; createdAt?: string; updatedAt?: string }>(entry: T): T {
+  const now = new Date().toISOString();
+  return {
+    ...entry,
+    id: entry.id || crypto.randomUUID(),
+    createdAt: entry.createdAt || now,
+    updatedAt: now,
+  };
+}
+
 export const localBudgetRepo = {
   loadSettings(): AppSettings | null {
     return localRepo.loadSettings();
@@ -47,6 +63,70 @@ export const localBudgetRepo = {
   saveSettings(settings: AppSettings): AppSettings {
     localRepo.saveSettings(settings);
     return settings;
+  },
+
+  getBudgetItems(): BudgetItem[] {
+    return localRepo.loadBudgetItems();
+  },
+
+  saveBudgetItem(item: BudgetItem): BudgetItem {
+    const savedItem = stampEntry(item);
+    localRepo.saveBudgetItems(upsertById(localRepo.loadBudgetItems(), savedItem));
+    return savedItem;
+  },
+
+  deleteBudgetItem(itemId: string) {
+    localRepo.saveBudgetItems(
+      localRepo.loadBudgetItems().filter((item) => item.id !== itemId),
+    );
+  },
+
+  getActualTransactions(): ActualTransaction[] {
+    return localRepo.loadActualTransactions();
+  },
+
+  saveActualTransaction(transaction: ActualTransaction): ActualTransaction {
+    const savedTransaction = stampEntry(transaction);
+    localRepo.saveActualTransactions(upsertById(localRepo.loadActualTransactions(), savedTransaction));
+    return savedTransaction;
+  },
+
+  deleteActualTransaction(transactionId: string) {
+    localRepo.saveActualTransactions(
+      localRepo.loadActualTransactions().filter((transaction) => transaction.id !== transactionId),
+    );
+  },
+
+  getCreditCardPayments(): CreditCardPayment[] {
+    return localRepo.loadCreditCardPayments();
+  },
+
+  saveCreditCardPayment(payment: CreditCardPayment): CreditCardPayment {
+    const savedPayment = stampEntry(payment);
+    localRepo.saveCreditCardPayments(upsertById(localRepo.loadCreditCardPayments(), savedPayment));
+    return savedPayment;
+  },
+
+  deleteCreditCardPayment(paymentId: string) {
+    localRepo.saveCreditCardPayments(
+      localRepo.loadCreditCardPayments().filter((payment) => payment.id !== paymentId),
+    );
+  },
+
+  getCashFlowEvents(): CashFlowEvent[] {
+    return localRepo.loadCashFlowEvents();
+  },
+
+  saveCashFlowEvent(event: CashFlowEvent): CashFlowEvent {
+    const savedEvent = stampEntry(event);
+    localRepo.saveCashFlowEvents(upsertById(localRepo.loadCashFlowEvents(), savedEvent));
+    return savedEvent;
+  },
+
+  deleteCashFlowEvent(eventId: string) {
+    localRepo.saveCashFlowEvents(
+      localRepo.loadCashFlowEvents().filter((event) => event.id !== eventId),
+    );
   },
 
   getMonthlyAmounts(monthKey: string): Record<string, Record<number, number>> {

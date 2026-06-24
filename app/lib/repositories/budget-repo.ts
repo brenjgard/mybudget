@@ -4,7 +4,7 @@ import { localBudgetRepo } from "./local-budget-repo";
 import { supabaseBudgetRepo } from "./supabase-budget-repo";
 import type { CCCharge } from "../local-repo";
 import type { Buoy } from "../local-repo";
-import type { AppSettings, DockItemState, SpendLogEntry } from "../types";
+import type { ActualTransaction, AppSettings, BudgetItem, CashFlowEvent, CreditCardPayment, DockItemState, SpendLogEntry } from "../types";
 
 async function loadSettings(): Promise<AppSettings | null> {
   try {
@@ -38,6 +38,178 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
   }
 
   return localBudgetRepo.saveSettings(settings);
+}
+
+async function getBudgetItems(): Promise<BudgetItem[]> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      return await supabaseBudgetRepo.getBudgetItems();
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.getBudgetItems();
+}
+
+async function saveBudgetItem(item: BudgetItem): Promise<BudgetItem> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      const savedItem = await supabaseBudgetRepo.saveBudgetItem(item);
+      localBudgetRepo.saveBudgetItem(savedItem);
+      return savedItem;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.saveBudgetItem(item);
+}
+
+async function deleteBudgetItem(itemId: string) {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      await supabaseBudgetRepo.deleteBudgetItem(itemId);
+      localBudgetRepo.deleteBudgetItem(itemId);
+      return;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  localBudgetRepo.deleteBudgetItem(itemId);
+}
+
+async function getActualTransactions(): Promise<ActualTransaction[]> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      return await supabaseBudgetRepo.getActualTransactions();
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.getActualTransactions();
+}
+
+async function saveActualTransaction(transaction: ActualTransaction): Promise<ActualTransaction> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      const savedTransaction = await supabaseBudgetRepo.saveActualTransaction(transaction);
+      localBudgetRepo.saveActualTransaction(savedTransaction);
+      return savedTransaction;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.saveActualTransaction(transaction);
+}
+
+async function deleteActualTransaction(transactionId: string) {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      await supabaseBudgetRepo.deleteActualTransaction(transactionId);
+      localBudgetRepo.deleteActualTransaction(transactionId);
+      return;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  localBudgetRepo.deleteActualTransaction(transactionId);
+}
+
+async function getCreditCardPayments(): Promise<CreditCardPayment[]> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      return await supabaseBudgetRepo.getCreditCardPayments();
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.getCreditCardPayments();
+}
+
+async function saveCreditCardPayment(payment: CreditCardPayment): Promise<CreditCardPayment> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      const savedPayment = await supabaseBudgetRepo.saveCreditCardPayment(payment);
+      localBudgetRepo.saveCreditCardPayment(savedPayment);
+      return savedPayment;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.saveCreditCardPayment(payment);
+}
+
+async function deleteCreditCardPayment(paymentId: string) {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      await supabaseBudgetRepo.deleteCreditCardPayment(paymentId);
+      localBudgetRepo.deleteCreditCardPayment(paymentId);
+      return;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  localBudgetRepo.deleteCreditCardPayment(paymentId);
+}
+
+async function getCashFlowEvents(): Promise<CashFlowEvent[]> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      return await supabaseBudgetRepo.getCashFlowEvents();
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.getCashFlowEvents();
+}
+
+async function saveCashFlowEvent(event: CashFlowEvent): Promise<CashFlowEvent> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      const savedEvent = await supabaseBudgetRepo.saveCashFlowEvent(event);
+      localBudgetRepo.saveCashFlowEvent(savedEvent);
+      return savedEvent;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.saveCashFlowEvent(event);
+}
+
+async function deleteCashFlowEvent(eventId: string) {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      await supabaseBudgetRepo.deleteCashFlowEvent(eventId);
+      localBudgetRepo.deleteCashFlowEvent(eventId);
+      return;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  localBudgetRepo.deleteCashFlowEvent(eventId);
 }
 
 async function getMonthlyAmounts(monthKey: string): Promise<Record<string, Record<number, number>>> {
@@ -405,6 +577,18 @@ async function closeWeek({
 export const budgetRepo = {
   loadSettings,
   saveSettings,
+  getBudgetItems,
+  saveBudgetItem,
+  deleteBudgetItem,
+  getActualTransactions,
+  saveActualTransaction,
+  deleteActualTransaction,
+  getCreditCardPayments,
+  saveCreditCardPayment,
+  deleteCreditCardPayment,
+  getCashFlowEvents,
+  saveCashFlowEvent,
+  deleteCashFlowEvent,
   getMonthlyAmounts,
   saveMonthlyAmounts,
   clearMonthlyAmounts,

@@ -15,12 +15,12 @@ export const helpCopy: Record<HelpTopic, { title: string; body: string }> = {
     body: "Your actual checking balance the last time you updated Harbor. Forecasts start from here.",
   },
   projectedBalance: {
-    title: "Projected Balance",
-    body: "Where Harbor expects your balance to land after open weeks, income, and planned bills.",
+    title: "Projected Checking Cash",
+    body: "Where Harbor expects checking cash to land after cash inflows, checking/cash outflows, and scheduled card payments.",
   },
   finalBalance: {
-    title: "Final Balance",
-    body: "The saved ending balance for a closed month. Closed months are read-only.",
+    title: "Final Checking Cash",
+    body: "The saved checking cash balance for a closed month. Closed months are read-only.",
   },
   incomeWaves: {
     title: "Income (Waves)",
@@ -43,8 +43,8 @@ export const helpCopy: Record<HelpTopic, { title: string; body: string }> = {
     body: "Savings goals or attention points you want to keep visible while planning.",
   },
   dock: {
-    title: "Dock",
-    body: "The week-by-week planning surface where you review income, bills, spending, and balances.",
+    title: "Cash Flow Dock",
+    body: "The week-by-week cash surface where you review checking cash inflows, outflows, card payments, and projected checking cash.",
   },
 };
 

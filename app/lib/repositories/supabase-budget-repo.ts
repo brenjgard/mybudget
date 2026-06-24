@@ -1,9 +1,10 @@
 "use client";
 
 import { createClient } from "../supabase/client";
+import { getPaymentAccountType } from "../cash-flow-model";
 import type { CCCharge } from "../local-repo";
 import type { Buoy } from "../local-repo";
-import type { AppSettings, DockItemKind, DockItemState, DockItemStatus, FrequencyType, ItemBehavior, LineItem, PaymentMethod, Recurrence, RippleType, SpendLogEntry } from "../types";
+import type { ActualTransaction, AppSettings, BudgetItem, CashFlowEvent, CreditCardPayment, DockItemKind, DockItemState, DockItemStatus, FrequencyType, ItemBehavior, LineItem, PaymentAccountType, PaymentMethod, Recurrence, RippleType, SpendLogEntry } from "../types";
 
 type User = {
   id: string;
@@ -17,8 +18,13 @@ type PaymentAccountRow = {
   id: string;
   account_key: string;
   kind: "checking" | "credit";
+  type?: PaymentAccountType | null;
   label: string;
+  current_balance?: number | string | null;
+  statement_close_day?: number | null;
   statement_closing_day?: number | null;
+  payment_due_day?: number | null;
+  active?: boolean | null;
 };
 
 type CategoryRow = {
@@ -115,6 +121,73 @@ type BuoyRow = {
   last_auto_save: string | null;
 };
 
+type BudgetItemRow = {
+  id: string;
+  user_id: string;
+  category_id: string;
+  name: string;
+  amount: number | string;
+  recurrence_type: string;
+  recurrence_config: Recurrence | Record<string, unknown> | null;
+  default_payment_account_id: string | null;
+  default_cash_account_id: string | null;
+  payment_method: PaymentAccountType;
+  active: boolean;
+  legacy_line_item_id: string | null;
+  created_at: string;
+  updated_at: string | null;
+};
+
+type ActualTransactionRow = {
+  id: string;
+  user_id: string;
+  date: string;
+  merchant: string | null;
+  amount: number | string;
+  category_id: string;
+  account_id: string;
+  payment_method: PaymentAccountType;
+  notes: string | null;
+  source: "manual" | "planned" | "imported";
+  planned_item_id: string | null;
+  legacy_spend_log_id: string | null;
+  created_at: string;
+  updated_at: string | null;
+};
+
+type CreditCardPaymentRow = {
+  id: string;
+  user_id: string;
+  credit_card_account_id: string;
+  cash_account_id: string;
+  amount: number | string;
+  scheduled_date: string;
+  status: "planned" | "paid" | "skipped";
+  statement_period_start: string | null;
+  statement_period_end: string | null;
+  due_date: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string | null;
+};
+
+type CashFlowEventRow = {
+  id: string;
+  user_id: string;
+  date: string;
+  amount: number | string;
+  direction: "inflow" | "outflow";
+  cash_account_id: string;
+  linked_account_id: string | null;
+  linked_transaction_id: string | null;
+  linked_credit_card_payment_id: string | null;
+  name: string;
+  category: string;
+  status: "projected" | "scheduled" | "cleared" | "skipped";
+  created_at: string;
+  updated_at: string | null;
+};
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isUuid(value: string) {
@@ -174,11 +247,11 @@ function buildSettingsFromSupabase({
   return {
     checkingBalance: Number(budgetSettings.checking_balance),
     creditCards: paymentAccounts
-      .filter((account) => account.kind === "credit")
+      .filter((account) => getPaymentAccountType(account) === "credit_card")
       .map((account) => ({
         id: account.account_key as PaymentMethod,
         label: account.label,
-        statementClosingDay: account.statement_closing_day ?? undefined,
+        statementClosingDay: account.statement_close_day ?? account.statement_closing_day ?? undefined,
       })),
     categories: categories.map((category) => category.name),
     lineItems: lineItems.map<LineItem>((item) => ({
@@ -236,6 +309,103 @@ function fromDockItemStateRow(row: DockItemStateRow): DockItemState {
   };
 }
 
+function fromBudgetItemRow(row: BudgetItemRow): BudgetItem {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    categoryId: row.category_id,
+    name: row.name,
+    amount: Number(row.amount),
+    recurrenceType: row.recurrence_type,
+    recurrenceConfig: row.recurrence_config,
+    defaultPaymentAccountId: row.default_payment_account_id ?? undefined,
+    defaultCashAccountId: row.default_cash_account_id ?? undefined,
+    paymentMethod: row.payment_method,
+    active: row.active,
+    legacyLineItemId: row.legacy_line_item_id ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at ?? undefined,
+  };
+}
+
+function fromActualTransactionRow(row: ActualTransactionRow): ActualTransaction {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    date: row.date,
+    merchant: row.merchant ?? undefined,
+    amount: Number(row.amount),
+    categoryId: row.category_id,
+    accountId: row.account_id,
+    paymentMethod: row.payment_method,
+    notes: row.notes ?? undefined,
+    source: row.source,
+    plannedItemId: row.planned_item_id ?? undefined,
+    legacySpendLogId: row.legacy_spend_log_id ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at ?? undefined,
+  };
+}
+
+function fromCreditCardPaymentRow(row: CreditCardPaymentRow): CreditCardPayment {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    creditCardAccountId: row.credit_card_account_id,
+    cashAccountId: row.cash_account_id,
+    amount: Number(row.amount),
+    scheduledDate: row.scheduled_date,
+    status: row.status,
+    statementPeriodStart: row.statement_period_start ?? undefined,
+    statementPeriodEnd: row.statement_period_end ?? undefined,
+    dueDate: row.due_date ?? undefined,
+    notes: row.notes ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at ?? undefined,
+  };
+}
+
+function fromCreditCardPaymentRowWithAccountKeys(
+  row: CreditCardPaymentRow,
+  accountKeysById: Map<string, string>,
+): CreditCardPayment {
+  return {
+    ...fromCreditCardPaymentRow(row),
+    creditCardAccountId: accountKeysById.get(row.credit_card_account_id) ?? row.credit_card_account_id,
+    cashAccountId: accountKeysById.get(row.cash_account_id) ?? row.cash_account_id,
+  };
+}
+
+function fromCashFlowEventRow(row: CashFlowEventRow): CashFlowEvent {
+  return {
+    id: row.id,
+    userId: row.user_id,
+    date: row.date,
+    amount: Number(row.amount),
+    direction: row.direction,
+    cashAccountId: row.cash_account_id,
+    linkedAccountId: row.linked_account_id ?? undefined,
+    linkedTransactionId: row.linked_transaction_id ?? undefined,
+    linkedCreditCardPaymentId: row.linked_credit_card_payment_id ?? undefined,
+    name: row.name,
+    category: row.category,
+    status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at ?? undefined,
+  };
+}
+
+function fromCashFlowEventRowWithAccountKeys(
+  row: CashFlowEventRow,
+  accountKeysById: Map<string, string>,
+): CashFlowEvent {
+  return {
+    ...fromCashFlowEventRow(row),
+    cashAccountId: accountKeysById.get(row.cash_account_id) ?? row.cash_account_id,
+    linkedAccountId: row.linked_account_id ? accountKeysById.get(row.linked_account_id) ?? row.linked_account_id : undefined,
+  };
+}
+
 async function loadSettingsForUser(userId: string): Promise<AppSettings | null> {
   const supabase = createClient();
   const [budgetSettingsResult, paymentAccountsResult, categoriesResult, lineItemsResult] = await Promise.all([
@@ -246,7 +416,7 @@ async function loadSettingsForUser(userId: string): Promise<AppSettings | null> 
       .maybeSingle<BudgetSettingsRow>(),
     supabase
       .from("payment_accounts")
-      .select("id, account_key, kind, label, statement_closing_day")
+      .select("id, account_key, kind, type, label, current_balance, statement_close_day, statement_closing_day, payment_due_day, active")
       .eq("user_id", userId)
       .order("sort_order", { ascending: true })
       .returns<PaymentAccountRow[]>(),
@@ -283,6 +453,382 @@ async function loadSettings(): Promise<AppSettings | null> {
   return loadSettingsForUser(user.id);
 }
 
+async function getBudgetItems(): Promise<BudgetItem[]> {
+  const user = await getUser();
+  if (!user) return [];
+
+  const supabase = createClient();
+  const [itemsResult, categoriesResult, accounts] = await Promise.all([
+    supabase
+      .from("budget_items")
+      .select("id, user_id, category_id, name, amount, recurrence_type, recurrence_config, default_payment_account_id, default_cash_account_id, payment_method, active, legacy_line_item_id, created_at, updated_at")
+      .eq("user_id", user.id)
+      .order("created_at", { ascending: true })
+      .returns<BudgetItemRow[]>(),
+    supabase
+      .from("categories")
+      .select("id, name")
+      .eq("user_id", user.id)
+      .returns<CategoryRow[]>(),
+    getPaymentAccounts(user.id),
+  ]);
+
+  if (itemsResult.error) throw itemsResult.error;
+  if (categoriesResult.error) throw categoriesResult.error;
+  const categoryNamesById = new Map((categoriesResult.data ?? []).map((category) => [category.id, category.name]));
+  const accountKeysById = new Map(accounts.map((account) => [account.id, account.account_key]));
+  return (itemsResult.data ?? []).map((row) => ({
+    ...fromBudgetItemRow(row),
+    categoryName: categoryNamesById.get(row.category_id),
+    defaultPaymentAccountId: row.default_payment_account_id ? accountKeysById.get(row.default_payment_account_id) ?? row.default_payment_account_id : undefined,
+    defaultCashAccountId: row.default_cash_account_id ? accountKeysById.get(row.default_cash_account_id) ?? row.default_cash_account_id : undefined,
+  }));
+}
+
+async function saveBudgetItem(item: BudgetItem): Promise<BudgetItem> {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const now = new Date().toISOString();
+  const id = isUuid(item.id) ? item.id : crypto.randomUUID();
+  const supabase = createClient();
+  let categoryId = item.categoryId;
+  if (!isUuid(categoryId)) {
+    const { data: category, error: categoryError } = await supabase
+      .from("categories")
+      .select("id, name")
+      .eq("user_id", user.id)
+      .eq("name", categoryId)
+      .maybeSingle<CategoryRow>();
+    if (categoryError) throw categoryError;
+    if (!category) throw new Error("Category could not be found.");
+    categoryId = category.id;
+  }
+
+  const accounts = await getPaymentAccounts(user.id);
+  const accountsByKey = new Map(accounts.map((account) => [account.account_key, account]));
+  const paymentAccountId = item.defaultPaymentAccountId
+    ? isUuid(item.defaultPaymentAccountId)
+      ? item.defaultPaymentAccountId
+      : accountsByKey.get(item.defaultPaymentAccountId)?.id
+    : null;
+  const cashAccountId = item.defaultCashAccountId
+    ? isUuid(item.defaultCashAccountId)
+      ? item.defaultCashAccountId
+      : accountsByKey.get(item.defaultCashAccountId)?.id
+    : null;
+
+  const { data, error } = await supabase
+    .from("budget_items")
+    .upsert(
+      {
+        id,
+        user_id: user.id,
+        category_id: categoryId,
+        name: item.name,
+        amount: item.amount,
+        recurrence_type: item.recurrenceType,
+        recurrence_config: item.recurrenceConfig ?? null,
+        default_payment_account_id: paymentAccountId,
+        default_cash_account_id: cashAccountId,
+        payment_method: item.paymentMethod,
+        active: item.active,
+        legacy_line_item_id: item.legacyLineItemId ?? null,
+        created_at: item.createdAt ?? now,
+        updated_at: now,
+      },
+      { onConflict: "id" },
+    )
+    .select("id, user_id, category_id, name, amount, recurrence_type, recurrence_config, default_payment_account_id, default_cash_account_id, payment_method, active, legacy_line_item_id, created_at, updated_at")
+    .single<BudgetItemRow>();
+
+  if (error) throw error;
+  return {
+    ...fromBudgetItemRow(data),
+    categoryId: item.categoryId,
+    categoryName: item.categoryName ?? item.categoryId,
+    defaultPaymentAccountId: item.defaultPaymentAccountId,
+    defaultCashAccountId: item.defaultCashAccountId,
+  };
+}
+
+async function deleteBudgetItem(itemId: string) {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+  if (!isUuid(itemId)) return;
+
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("budget_items")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("id", itemId);
+
+  if (error) throw error;
+}
+
+async function getActualTransactions(): Promise<ActualTransaction[]> {
+  const user = await getUser();
+  if (!user) return [];
+
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("actual_transactions")
+    .select("id, user_id, date, merchant, amount, category_id, account_id, payment_method, notes, source, planned_item_id, legacy_spend_log_id, created_at, updated_at")
+    .eq("user_id", user.id)
+    .order("date", { ascending: false })
+    .returns<ActualTransactionRow[]>();
+
+  if (error) throw error;
+  return (data ?? []).map(fromActualTransactionRow);
+}
+
+async function saveActualTransaction(transaction: ActualTransaction): Promise<ActualTransaction> {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const supabase = createClient();
+  let accountId = transaction.accountId;
+  if (!isUuid(accountId)) {
+    const accounts = await getPaymentAccounts(user.id);
+    const account = accounts.find((candidate) => candidate.account_key === accountId);
+    if (!account) throw new Error("Payment account could not be found.");
+    accountId = account.id;
+  }
+
+  let categoryId = transaction.categoryId;
+  if (!isUuid(categoryId)) {
+    const { data: category, error: categoryError } = await supabase
+      .from("categories")
+      .select("id, name")
+      .eq("user_id", user.id)
+      .eq("name", categoryId)
+      .maybeSingle<CategoryRow>();
+    if (categoryError) throw categoryError;
+    if (!category) throw new Error("Category could not be found.");
+    categoryId = category.id;
+  }
+
+  let plannedItemId = transaction.plannedItemId;
+  if (plannedItemId && !isUuid(plannedItemId)) {
+    const { data: budgetItem, error: budgetItemError } = await supabase
+      .from("budget_items")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("legacy_line_item_id", plannedItemId)
+      .maybeSingle<Pick<BudgetItemRow, "id">>();
+    if (budgetItemError) throw budgetItemError;
+    plannedItemId = budgetItem?.id;
+  }
+
+  const now = new Date().toISOString();
+  const id = isUuid(transaction.id) ? transaction.id : crypto.randomUUID();
+  const { data, error } = await supabase
+    .from("actual_transactions")
+    .upsert(
+      {
+        id,
+        user_id: user.id,
+        date: transaction.date.slice(0, 10),
+        merchant: transaction.merchant?.trim() || null,
+        amount: transaction.amount,
+        category_id: categoryId,
+        account_id: accountId,
+        payment_method: transaction.paymentMethod,
+        notes: transaction.notes?.trim() || null,
+        source: transaction.source,
+        planned_item_id: plannedItemId ?? null,
+        legacy_spend_log_id: transaction.legacySpendLogId ?? null,
+        created_at: transaction.createdAt ?? now,
+        updated_at: now,
+      },
+      { onConflict: "id" },
+    )
+    .select("id, user_id, date, merchant, amount, category_id, account_id, payment_method, notes, source, planned_item_id, legacy_spend_log_id, created_at, updated_at")
+    .single<ActualTransactionRow>();
+
+  if (error) throw error;
+  return fromActualTransactionRow(data);
+}
+
+async function deleteActualTransaction(transactionId: string) {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+  if (!isUuid(transactionId)) return;
+
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("actual_transactions")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("id", transactionId);
+
+  if (error) throw error;
+}
+
+async function getCreditCardPayments(): Promise<CreditCardPayment[]> {
+  const user = await getUser();
+  if (!user) return [];
+
+  const supabase = createClient();
+  const [accounts, paymentsResult] = await Promise.all([
+    getPaymentAccounts(user.id),
+    supabase
+      .from("credit_card_payments")
+      .select("id, user_id, credit_card_account_id, cash_account_id, amount, scheduled_date, status, statement_period_start, statement_period_end, due_date, notes, created_at, updated_at")
+      .eq("user_id", user.id)
+      .order("scheduled_date", { ascending: true })
+      .returns<CreditCardPaymentRow[]>(),
+  ]);
+
+  if (paymentsResult.error) throw paymentsResult.error;
+  const accountKeysById = new Map(accounts.map((account) => [account.id, account.account_key]));
+  return (paymentsResult.data ?? []).map((row) => fromCreditCardPaymentRowWithAccountKeys(row, accountKeysById));
+}
+
+async function saveCreditCardPayment(payment: CreditCardPayment): Promise<CreditCardPayment> {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const accounts = await getPaymentAccounts(user.id);
+  const accountsByKey = new Map(accounts.map((account) => [account.account_key, account]));
+  const accountKeysById = new Map(accounts.map((account) => [account.id, account.account_key]));
+  const creditCardAccount = isUuid(payment.creditCardAccountId)
+    ? accounts.find((account) => account.id === payment.creditCardAccountId)
+    : accountsByKey.get(payment.creditCardAccountId);
+  const cashAccount = isUuid(payment.cashAccountId)
+    ? accounts.find((account) => account.id === payment.cashAccountId)
+    : accountsByKey.get(payment.cashAccountId);
+  if (!creditCardAccount || !cashAccount) throw new Error("Payment accounts could not be found.");
+
+  const now = new Date().toISOString();
+  const id = isUuid(payment.id) ? payment.id : crypto.randomUUID();
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("credit_card_payments")
+    .upsert(
+      {
+        id,
+        user_id: user.id,
+        credit_card_account_id: creditCardAccount.id,
+        cash_account_id: cashAccount.id,
+        amount: payment.amount,
+        scheduled_date: payment.scheduledDate.slice(0, 10),
+        status: payment.status,
+        statement_period_start: payment.statementPeriodStart?.slice(0, 10) ?? null,
+        statement_period_end: payment.statementPeriodEnd?.slice(0, 10) ?? null,
+        due_date: payment.dueDate?.slice(0, 10) ?? null,
+        notes: payment.notes?.trim() || null,
+        created_at: payment.createdAt ?? now,
+        updated_at: now,
+      },
+      { onConflict: "id" },
+    )
+    .select("id, user_id, credit_card_account_id, cash_account_id, amount, scheduled_date, status, statement_period_start, statement_period_end, due_date, notes, created_at, updated_at")
+    .single<CreditCardPaymentRow>();
+
+  if (error) throw error;
+  return fromCreditCardPaymentRowWithAccountKeys(data, accountKeysById);
+}
+
+async function deleteCreditCardPayment(paymentId: string) {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+  if (!isUuid(paymentId)) return;
+
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("credit_card_payments")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("id", paymentId);
+
+  if (error) throw error;
+}
+
+async function getCashFlowEvents(): Promise<CashFlowEvent[]> {
+  const user = await getUser();
+  if (!user) return [];
+
+  const supabase = createClient();
+  const [accounts, eventsResult] = await Promise.all([
+    getPaymentAccounts(user.id),
+    supabase
+      .from("cash_flow_events")
+      .select("id, user_id, date, amount, direction, cash_account_id, linked_account_id, linked_transaction_id, linked_credit_card_payment_id, name, category, status, created_at, updated_at")
+      .eq("user_id", user.id)
+      .order("date", { ascending: true })
+      .returns<CashFlowEventRow[]>(),
+  ]);
+
+  if (eventsResult.error) throw eventsResult.error;
+  const accountKeysById = new Map(accounts.map((account) => [account.id, account.account_key]));
+  return (eventsResult.data ?? []).map((row) => fromCashFlowEventRowWithAccountKeys(row, accountKeysById));
+}
+
+async function saveCashFlowEvent(event: CashFlowEvent): Promise<CashFlowEvent> {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const accounts = await getPaymentAccounts(user.id);
+  const accountsByKey = new Map(accounts.map((account) => [account.account_key, account]));
+  const accountKeysById = new Map(accounts.map((account) => [account.id, account.account_key]));
+  const cashAccount = isUuid(event.cashAccountId)
+    ? accounts.find((account) => account.id === event.cashAccountId)
+    : accountsByKey.get(event.cashAccountId);
+  const linkedAccount = event.linkedAccountId
+    ? isUuid(event.linkedAccountId)
+      ? accounts.find((account) => account.id === event.linkedAccountId)
+      : accountsByKey.get(event.linkedAccountId)
+    : undefined;
+  if (!cashAccount) throw new Error("Cash account could not be found.");
+
+  const now = new Date().toISOString();
+  const id = isUuid(event.id) ? event.id : crypto.randomUUID();
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("cash_flow_events")
+    .upsert(
+      {
+        id,
+        user_id: user.id,
+        date: event.date.slice(0, 10),
+        amount: event.amount,
+        direction: event.direction,
+        cash_account_id: cashAccount.id,
+        linked_account_id: linkedAccount?.id ?? null,
+        linked_transaction_id: event.linkedTransactionId ?? null,
+        linked_credit_card_payment_id: event.linkedCreditCardPaymentId ?? null,
+        name: event.name,
+        category: event.category,
+        status: event.status,
+        created_at: event.createdAt ?? now,
+        updated_at: now,
+      },
+      { onConflict: "id" },
+    )
+    .select("id, user_id, date, amount, direction, cash_account_id, linked_account_id, linked_transaction_id, linked_credit_card_payment_id, name, category, status, created_at, updated_at")
+    .single<CashFlowEventRow>();
+
+  if (error) throw error;
+  return fromCashFlowEventRowWithAccountKeys(data, accountKeysById);
+}
+
+async function deleteCashFlowEvent(eventId: string) {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+  if (!isUuid(eventId)) return;
+
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("cash_flow_events")
+    .delete()
+    .eq("user_id", user.id)
+    .eq("id", eventId);
+
+  if (error) throw error;
+}
+
 async function saveSettings(settings: AppSettings): Promise<AppSettings> {
   const user = await getUser();
   if (!user) throw new Error("Not authenticated");
@@ -311,19 +857,28 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
     if (settingsError) throw settingsError;
   }
 
+  const creditCardsToSave = settings.creditCards.length > 0
+    ? settings.creditCards
+    : [{ id: "primary-credit-card" as PaymentMethod, label: "Primary Credit Card" }];
+
   const desiredAccounts = [
     {
       user_id: user.id,
       account_key: "checking",
       kind: "checking",
+      type: "checking",
       label: "Checking",
+      current_balance: settings.checkingBalance,
       sort_order: 0,
     },
-    ...settings.creditCards.map((card, index) => ({
+    ...creditCardsToSave.map((card, index) => ({
       user_id: user.id,
       account_key: card.id,
       kind: "credit",
+      type: "credit_card",
       label: card.label,
+      current_balance: 0,
+      statement_close_day: card.statementClosingDay ?? null,
       statement_closing_day: card.statementClosingDay ?? null,
       sort_order: index + 1,
     })),
@@ -355,7 +910,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
   const [accountsResult, categoriesResult, existingLineItemsResult] = await Promise.all([
     supabase
       .from("payment_accounts")
-      .select("id, account_key, kind, label, statement_closing_day")
+      .select("id, account_key, kind, type, label, current_balance, statement_close_day, statement_closing_day, payment_due_day, active")
       .eq("user_id", user.id)
       .returns<PaymentAccountRow[]>(),
     supabase
@@ -449,7 +1004,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
 
   const desiredAccountKeys = new Set(desiredAccounts.map((account) => account.account_key));
   const removedCreditAccountIds = (accountsResult.data ?? [])
-    .filter((account) => account.kind === "credit" && !desiredAccountKeys.has(account.account_key))
+    .filter((account) => getPaymentAccountType(account) === "credit_card" && !desiredAccountKeys.has(account.account_key))
     .map((account) => account.id);
 
   if (removedCreditAccountIds.length > 0) {
@@ -708,7 +1263,7 @@ async function getPaymentAccounts(userId: string): Promise<PaymentAccountRow[]> 
   const supabase = createClient();
   const { data, error } = await supabase
       .from("payment_accounts")
-      .select("id, account_key, kind, label, statement_closing_day")
+      .select("id, account_key, kind, type, label, current_balance, statement_close_day, statement_closing_day, payment_due_day, active")
     .eq("user_id", userId)
     .returns<PaymentAccountRow[]>();
 
@@ -1059,6 +1614,18 @@ export const supabaseBudgetRepo = {
   getUser,
   loadSettings,
   saveSettings,
+  getBudgetItems,
+  saveBudgetItem,
+  deleteBudgetItem,
+  getActualTransactions,
+  saveActualTransaction,
+  deleteActualTransaction,
+  getCreditCardPayments,
+  saveCreditCardPayment,
+  deleteCreditCardPayment,
+  getCashFlowEvents,
+  saveCashFlowEvent,
+  deleteCashFlowEvent,
   getMonthlyAmounts,
   saveMonthlyAmounts,
   clearMonthlyAmounts,

@@ -14,9 +14,14 @@ export type MonthForecast = {
   projectedForwardBalance: number;
   displayedForwardBalance: number;
   endingBalance: number;
-  balanceLabel: "Projected Balance" | "Final Balance";
+  balanceLabel: "Projected Checking Cash" | "Final Checking Cash";
   isWeekWrapped: (weekIndex: number) => boolean;
 };
+
+function lineItemMovesCash(item: AppSettings["lineItems"][number]) {
+  if (item.isIncome) return true;
+  return item.paymentMethod === "checking";
+}
 
 export function buildMonthForecast({
   settings,
@@ -52,12 +57,19 @@ export function buildMonthForecast({
     || settings.creditCards.some((card) => closedWeeks.has(`${monthKey}-${card.id}-${weekIndex}`))
   );
 
+  // Compatibility adapter for the current Dock UI.
+  // Phase 3 can replace the table rows, but projected checking cash must already
+  // follow the new model: credit-card purchases are budget activity, not cash
+  // movement. Only checking/cash-style legacy rows move projected cash here.
   const weekTotals = weeks.map((week, weekIndex) => {
     if (isWeekWrapped(weekIndex)) return 0;
 
     let net = 0;
     for (const item of settings.lineItems) {
       if (!lineItemAppliesToWeek(item, weekIndex, week.start, week.end, month)) {
+        continue;
+      }
+      if (!lineItemMovesCash(item)) {
         continue;
       }
 
@@ -84,7 +96,7 @@ export function buildMonthForecast({
     projectedForwardBalance,
     displayedForwardBalance,
     endingBalance: projectedForwardBalance,
-    balanceLabel: isMonthClosed ? "Final Balance" : "Projected Balance",
+    balanceLabel: isMonthClosed ? "Final Checking Cash" : "Projected Checking Cash",
     isWeekWrapped,
   };
 }
