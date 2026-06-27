@@ -380,7 +380,7 @@ export function buildCashFlowForecast({
       const date = plannedDateForBudgetItem(item, startDate, endDate);
       if (!date) return [];
       const hasActualCashTransaction = transactions.some((transaction) => (
-        transaction.plannedItemId === item.id
+        (transaction.plannedItemId === item.id || transaction.plannedItemId === item.legacyLineItemId)
         && isWithinDateRange(transaction.date, startDate, endDate)
         && (transaction.paymentMethod === "checking" || transaction.paymentMethod === "cash")
       ));
@@ -412,9 +412,12 @@ export function buildCashFlowForecast({
       && isWithinDateRange(transaction.date, startDate, endDate)
     ))
     .reduce((sum, transaction) => sum + transaction.amount, 0);
-  const projectedCreditCardLiability = creditCardPurchases - creditCardPayments
-    .filter((payment) => payment.status === "paid" && isWithinDateRange(payment.scheduledDate, startDate, endDate))
-    .reduce((sum, payment) => sum + payment.amount, 0);
+  const startingCreditCardLiability = accounts
+    .filter((account) => getPaymentAccountType(account) === "credit_card")
+    .reduce((sum, account) => sum + (account.currentBalance ?? 0), 0);
+  const projectedCreditCardLiability = Math.max(0, startingCreditCardLiability + creditCardPurchases - creditCardPayments
+    .filter((payment) => payment.status !== "skipped" && isWithinDateRange(payment.scheduledDate, startDate, endDate))
+    .reduce((sum, payment) => sum + payment.amount, 0));
   const weekly = bucketEntries(entries, buildWeekPeriods(startDate, endDate), startingBalance);
   const monthly = bucketEntries(entries, buildMonthPeriods(startDate, endDate), startingBalance);
 
