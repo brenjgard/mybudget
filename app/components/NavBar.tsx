@@ -7,27 +7,6 @@ import { useState, useEffect, useRef } from "react";
 
 const NAV_LINKS = [
   {
-    href: "/dashboard",
-    label: "My Harbor",
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
-        <polyline points="9 22 9 12 15 12 15 22"/>
-      </svg>
-    ),
-  },
-  {
-    href: "/buoys",
-    label: "Buoys",
-    icon: (
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <circle cx="12" cy="12" r="10"/>
-        <circle cx="12" cy="12" r="6"/>
-        <circle cx="12" cy="12" r="2"/>
-      </svg>
-    ),
-  },
-  {
     href: "/",
     label: "Dock",
     icon: (
@@ -76,7 +55,7 @@ export default function NavBar() {
 
       {/* ── Row 1: Brand bar ── */}
       <div className="bg-harbor-navy h-20 flex items-center justify-between px-4 md:px-8">
-        <Link href={isAuthPage ? "/beta" : "/dashboard"} className="flex items-center gap-3 min-w-0">
+        <Link href={isAuthPage ? "/beta" : "/"} className="flex items-center gap-3 min-w-0">
           <Image
             src="/harbor-logo.svg"
             alt="Harbor"
