@@ -3,7 +3,7 @@
 import { createClient } from "../supabase/client";
 import type { CCCharge } from "../local-repo";
 import type { Buoy } from "../local-repo";
-import type { AppSettings, DockItemKind, DockItemState, DockItemStatus, FrequencyType, ItemBehavior, LineItem, PaymentMethod, Recurrence, RippleType, SpendLogEntry } from "../types";
+import type { AppSettings, DockItemKind, DockItemState, DockItemStatus, FrequencyType, ItemBehavior, LineItem, PaymentMethod, PreferredPaymentTiming, Recurrence, RippleType, SpendLogEntry } from "../types";
 
 type User = {
   id: string;
@@ -19,7 +19,13 @@ type PaymentAccountRow = {
   kind: "checking" | "credit";
   label: string;
   statement_closing_day?: number | null;
+  payment_due_day?: number | null;
+  preferred_payment_timing?: PreferredPaymentTiming | null;
+  preferred_payment_days_before_due?: number | null;
+  preferred_payment_day?: number | null;
 };
+
+const PAYMENT_ACCOUNT_COLUMNS = "id, account_key, kind, label, statement_closing_day, payment_due_day, preferred_payment_timing, preferred_payment_days_before_due, preferred_payment_day";
 
 type CategoryRow = {
   id: string;
@@ -40,6 +46,8 @@ type LineItemRow = {
   one_time_date?: string | null;
   recurrence?: Recurrence | null;
   ripple_type?: RippleType | null;
+  preferred_payment_date?: string | null;
+  payment_due_date?: string | null;
 };
 
 type MonthlyAmountRow = {
@@ -179,6 +187,10 @@ function buildSettingsFromSupabase({
         id: account.account_key as PaymentMethod,
         label: account.label,
         statementClosingDay: account.statement_closing_day ?? undefined,
+        paymentDueDay: account.payment_due_day ?? undefined,
+        preferredPaymentTiming: account.preferred_payment_timing ?? undefined,
+        preferredPaymentDaysBeforeDue: account.preferred_payment_days_before_due ?? undefined,
+        preferredPaymentDay: account.preferred_payment_day ?? undefined,
       })),
     categories: categories.map((category) => category.name),
     lineItems: lineItems.map<LineItem>((item) => ({
@@ -195,6 +207,8 @@ function buildSettingsFromSupabase({
       oneTimeDate: item.one_time_date ?? undefined,
       recurrence: item.recurrence ?? undefined,
       rippleType: item.ripple_type ?? undefined,
+      preferredPaymentDate: item.preferred_payment_date ?? undefined,
+      paymentDueDate: item.payment_due_date ?? undefined,
     })),
   };
 }
@@ -246,7 +260,7 @@ async function loadSettingsForUser(userId: string): Promise<AppSettings | null> 
       .maybeSingle<BudgetSettingsRow>(),
     supabase
       .from("payment_accounts")
-      .select("id, account_key, kind, label, statement_closing_day")
+      .select(PAYMENT_ACCOUNT_COLUMNS)
       .eq("user_id", userId)
       .order("sort_order", { ascending: true })
       .returns<PaymentAccountRow[]>(),
@@ -258,7 +272,7 @@ async function loadSettingsForUser(userId: string): Promise<AppSettings | null> 
       .returns<CategoryRow[]>(),
     supabase
       .from("line_items")
-      .select("id, category_id, payment_account_id, name, default_amount, is_income, frequency, anchor_date, anchor_month, wave_type, one_time_date, recurrence, ripple_type")
+      .select("id, category_id, payment_account_id, name, default_amount, is_income, frequency, anchor_date, anchor_month, wave_type, one_time_date, recurrence, ripple_type, preferred_payment_date, payment_due_date")
       .eq("user_id", userId)
       .order("sort_order", { ascending: true })
       .returns<LineItemRow[]>(),
@@ -325,6 +339,10 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       kind: "credit",
       label: card.label,
       statement_closing_day: card.statementClosingDay ?? null,
+      payment_due_day: card.paymentDueDay ?? null,
+      preferred_payment_timing: card.preferredPaymentTiming ?? null,
+      preferred_payment_days_before_due: card.preferredPaymentDaysBeforeDue ?? null,
+      preferred_payment_day: card.preferredPaymentDay ?? null,
       sort_order: index + 1,
     })),
   ];
@@ -355,7 +373,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
   const [accountsResult, categoriesResult, existingLineItemsResult] = await Promise.all([
     supabase
       .from("payment_accounts")
-      .select("id, account_key, kind, label, statement_closing_day")
+      .select(PAYMENT_ACCOUNT_COLUMNS)
       .eq("user_id", user.id)
       .returns<PaymentAccountRow[]>(),
     supabase
@@ -420,6 +438,8 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       one_time_date: item.waveType === "oneTime" ? item.oneTimeDate ?? null : null,
       recurrence: item.waveType === "oneTime" ? null : item.recurrence ?? null,
       ripple_type: item.isIncome ? null : item.rippleType ?? null,
+      preferred_payment_date: item.preferredPaymentDate?.slice(0, 10) ?? null,
+      payment_due_date: item.paymentDueDate?.slice(0, 10) ?? null,
       sort_order: index,
       updated_at: new Date().toISOString(),
     };
@@ -708,7 +728,7 @@ async function getPaymentAccounts(userId: string): Promise<PaymentAccountRow[]> 
   const supabase = createClient();
   const { data, error } = await supabase
       .from("payment_accounts")
-      .select("id, account_key, kind, label, statement_closing_day")
+      .select(PAYMENT_ACCOUNT_COLUMNS)
     .eq("user_id", userId)
     .returns<PaymentAccountRow[]>();
 

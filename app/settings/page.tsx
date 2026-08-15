@@ -9,7 +9,7 @@ import { budgetRepo } from "../lib/repositories/budget-repo";
 import { defaultRippleTypeForCategory, getRippleType } from "../lib/ripple-type";
 import { getDefaultRecurrence, recurrenceFromLegacyFrequency, recurrenceLabel } from "../lib/schedule";
 import { SEED_DATA } from "../data/seedData";
-import { AppSettings, DayOfMonth, FrequencyType, LineItem, PaymentMethod, Recurrence, RecurrenceType, RecurrenceUnit, RippleType } from "../lib/types";
+import { AppSettings, CreditCardAccount, DayOfMonth, FrequencyType, LineItem, PaymentMethod, PreferredPaymentTiming, Recurrence, RecurrenceType, RecurrenceUnit, RippleType } from "../lib/types";
 
 const SHOW_DEV_TOOLS = process.env.NEXT_PUBLIC_SHOW_DEV_TOOLS === "true";
 
@@ -104,6 +104,20 @@ const DAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Fri
 const MONTH_DAY_OPTIONS: DayOfMonth[] = [...Array.from({ length: 31 }, (_, index) => index + 1), "last"];
 
 const CREDIT_CARDS_CATEGORY = "Credit Cards";
+const PREFERRED_PAYMENT_OPTIONS: { value: PreferredPaymentTiming | ""; label: string }[] = [
+  { value: "", label: "No default" },
+  { value: "on_due_date", label: "On due date" },
+  { value: "days_before_due", label: "Days before due" },
+  { value: "specific_day", label: "Specific day" },
+];
+
+function clampDay(value: string, fallback: number) {
+  return Math.min(31, Math.max(1, Number(value) || fallback));
+}
+
+function clampDaysBeforeDue(value: string, fallback: number) {
+  return Math.min(31, Math.max(0, Number(value) || fallback));
+}
 
 function cardPaymentName(cardLabel: string) {
   return `${cardLabel.trim()} Payment`;
@@ -470,6 +484,7 @@ export default function Settings() {
   const [newCat, setNewCat] = useState("");
   const [newCardLabel, setNewCardLabel] = useState("");
   const [newCardStatementDay, setNewCardStatementDay] = useState("31");
+  const [newCardDueDay, setNewCardDueDay] = useState("");
 
   // Section refs for deep-link scrolling
   const wavesRef = useRef<HTMLDivElement>(null);
@@ -599,7 +614,8 @@ export default function Settings() {
     const card = {
       id: `credit-${crypto.randomUUID()}` as PaymentMethod,
       label: newCardLabel.trim(),
-      statementClosingDay: Math.min(31, Math.max(1, Number(newCardStatementDay) || 31)),
+      statementClosingDay: clampDay(newCardStatementDay, 31),
+      paymentDueDay: newCardDueDay.trim() ? clampDay(newCardDueDay, 1) : undefined,
     };
     const updatedSettings = ensureCardPaymentLine(
       { ...settings, creditCards: [...settings.creditCards, card] },
@@ -608,17 +624,42 @@ export default function Settings() {
     persist(updatedSettings);
     setNewCardLabel("");
     setNewCardStatementDay("31");
+    setNewCardDueDay("");
   }
 
-  function updateCardStatementDay(id: PaymentMethod, value: string) {
+  function updateCard(id: PaymentMethod, updater: (card: CreditCardAccount) => CreditCardAccount) {
     if (!settings) return;
-    const statementClosingDay = Math.min(31, Math.max(1, Number(value) || 31));
     persist({
       ...settings,
       creditCards: settings.creditCards.map((card) => (
-        card.id === id ? { ...card, statementClosingDay } : card
+        card.id === id ? updater(card) : card
       )),
     });
+  }
+
+  function updateCardStatementDay(id: PaymentMethod, value: string) {
+    updateCard(id, (card) => ({ ...card, statementClosingDay: clampDay(value, 31) }));
+  }
+
+  function updateCardDueDay(id: PaymentMethod, value: string) {
+    updateCard(id, (card) => ({ ...card, paymentDueDay: value.trim() ? clampDay(value, 1) : undefined }));
+  }
+
+  function updateCardPreferredTiming(id: PaymentMethod, value: string) {
+    updateCard(id, (card) => ({
+      ...card,
+      preferredPaymentTiming: value ? value as PreferredPaymentTiming : undefined,
+      preferredPaymentDaysBeforeDue: value === "days_before_due" ? card.preferredPaymentDaysBeforeDue ?? 5 : undefined,
+      preferredPaymentDay: value === "specific_day" ? card.preferredPaymentDay ?? card.paymentDueDay ?? 1 : undefined,
+    }));
+  }
+
+  function updateCardDaysBeforeDue(id: PaymentMethod, value: string) {
+    updateCard(id, (card) => ({ ...card, preferredPaymentDaysBeforeDue: clampDaysBeforeDue(value, 5) }));
+  }
+
+  function updateCardPreferredPaymentDay(id: PaymentMethod, value: string) {
+    updateCard(id, (card) => ({ ...card, preferredPaymentDay: clampDay(value, 1) }));
   }
 
   function removeCard(id: PaymentMethod) {
@@ -1048,7 +1089,7 @@ export default function Settings() {
               </EmptyState>
             )}
             {settings.creditCards.map((card) => (
-              <div key={card.id} className="flex flex-col gap-3 bg-harbor-offwhite rounded-xl px-4 py-3 border border-slate-100 sm:flex-row sm:items-center sm:justify-between">
+              <div key={card.id} className="flex flex-col gap-3 bg-harbor-offwhite rounded-xl px-4 py-3 border border-slate-100">
                 <div className="flex items-center gap-3">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
@@ -1056,20 +1097,74 @@ export default function Settings() {
                   </svg>
                   <div>
                     <span className="font-medium text-sm text-harbor-navy">{card.label}</span>
-                    <p className="text-xs text-slate-400">Statement closes day {card.statementClosingDay ?? 31}</p>
+                    <p className="text-xs text-slate-400">
+                      Statement closes day {card.statementClosingDay ?? 31}
+                      {card.paymentDueDay ? `, due day ${card.paymentDueDay}` : ""}
+                    </p>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-slate-500" htmlFor={`statement-day-${card.id}`}>Closes</label>
-                  <input
-                    id={`statement-day-${card.id}`}
-                    type="number"
-                    min="1"
-                    max="31"
-                    value={card.statementClosingDay ?? 31}
-                    onChange={(e) => updateCardStatementDay(card.id, e.target.value)}
-                    className="w-16 rounded-lg border border-slate-200 px-2 py-1.5 text-sm text-harbor-navy focus:border-harbor-teal focus:outline-none"
-                  />
+                <div className="flex flex-wrap items-end gap-2">
+                  <label className="grid gap-1">
+                    <span className="text-xs text-slate-500">Close Day</span>
+                    <input
+                      id={`statement-day-${card.id}`}
+                      type="number"
+                      min="1"
+                      max="31"
+                      value={card.statementClosingDay ?? 31}
+                      onChange={(e) => updateCardStatementDay(card.id, e.target.value)}
+                      className="w-20 rounded-lg border border-slate-200 px-2 py-1.5 text-sm text-harbor-navy focus:border-harbor-teal focus:outline-none"
+                    />
+                  </label>
+                  <label className="grid gap-1">
+                    <span className="text-xs text-slate-500">Due Day</span>
+                    <input
+                      type="number"
+                      min="1"
+                      max="31"
+                      value={card.paymentDueDay ?? ""}
+                      onChange={(e) => updateCardDueDay(card.id, e.target.value)}
+                      className="w-20 rounded-lg border border-slate-200 px-2 py-1.5 text-sm text-harbor-navy focus:border-harbor-teal focus:outline-none"
+                    />
+                  </label>
+                  <label className="grid gap-1">
+                    <span className="text-xs text-slate-500">Preferred Payment</span>
+                    <select
+                      value={card.preferredPaymentTiming ?? ""}
+                      onChange={(e) => updateCardPreferredTiming(card.id, e.target.value)}
+                      className="w-44 rounded-lg border border-slate-200 px-2 py-1.5 text-sm text-harbor-navy focus:border-harbor-teal focus:outline-none"
+                    >
+                      {PREFERRED_PAYMENT_OPTIONS.map((option) => (
+                        <option key={option.value || "none"} value={option.value}>{option.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  {card.preferredPaymentTiming === "days_before_due" && (
+                    <label className="grid gap-1">
+                      <span className="text-xs text-slate-500">Days Before</span>
+                      <input
+                        type="number"
+                        min="0"
+                        max="31"
+                        value={card.preferredPaymentDaysBeforeDue ?? 5}
+                        onChange={(e) => updateCardDaysBeforeDue(card.id, e.target.value)}
+                        className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-sm text-harbor-navy focus:border-harbor-teal focus:outline-none"
+                      />
+                    </label>
+                  )}
+                  {card.preferredPaymentTiming === "specific_day" && (
+                    <label className="grid gap-1">
+                      <span className="text-xs text-slate-500">Payment Day</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="31"
+                        value={card.preferredPaymentDay ?? card.paymentDueDay ?? 1}
+                        onChange={(e) => updateCardPreferredPaymentDay(card.id, e.target.value)}
+                        className="w-24 rounded-lg border border-slate-200 px-2 py-1.5 text-sm text-harbor-navy focus:border-harbor-teal focus:outline-none"
+                      />
+                    </label>
+                  )}
                   <button
                     onClick={() => removeCard(card.id)}
                     className="px-3 py-1.5 text-xs bg-harbor-red/10 text-harbor-red rounded-lg hover:bg-harbor-red/20 font-medium"
@@ -1098,6 +1193,18 @@ export default function Settings() {
               title="Statement closing day"
               value={newCardStatementDay}
               onChange={(e) => setNewCardStatementDay(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && addCard()}
+            />
+            <input
+              className="w-full border-2 border-slate-100 rounded-xl px-4 py-2 focus:outline-none focus:border-harbor-teal text-sm sm:w-32"
+              type="number"
+              min="1"
+              max="31"
+              aria-label="Payment due day"
+              title="Payment due day"
+              placeholder="Due day"
+              value={newCardDueDay}
+              onChange={(e) => setNewCardDueDay(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && addCard()}
             />
             <button onClick={addCard} className="px-4 py-2 bg-harbor-navy text-white rounded-xl hover:bg-harbor-navy/90 transition-colors text-sm font-medium">

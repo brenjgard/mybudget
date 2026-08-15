@@ -38,6 +38,18 @@ export type Recurrence = {
   startDate?: string;
 };
 
+export type PreferredPaymentTiming = "on_due_date" | "days_before_due" | "specific_day";
+
+export type CreditCardAccount = {
+  id: PaymentMethod;
+  label: string;
+  statementClosingDay?: number;
+  paymentDueDay?: number;
+  preferredPaymentTiming?: PreferredPaymentTiming;
+  preferredPaymentDaysBeforeDue?: number;
+  preferredPaymentDay?: number;
+};
+
 export type LineItem = {
   id: string;
   category: string;
@@ -52,6 +64,8 @@ export type LineItem = {
   oneTimeDate?: string; // YYYY-MM-DD for one-time waves/ripples
   recurrence?: Recurrence;
   rippleType?: RippleType; // missing means fixed unless inferred for older saved ripples
+  preferredPaymentDate?: string; // YYYY-MM-DD cash date override for checking obligations
+  paymentDueDate?: string; // YYYY-MM-DD cash date fallback for checking obligations
 };
 
 export type SpendLogEntry = {
@@ -89,7 +103,7 @@ export type DockItemState = {
 
 export type AppSettings = {
   checkingBalance: number;
-  creditCards: { id: PaymentMethod; label: string; statementClosingDay?: number }[];
+  creditCards: CreditCardAccount[];
   categories: string[];
   lineItems: LineItem[];
 };
