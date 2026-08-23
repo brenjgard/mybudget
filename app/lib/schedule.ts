@@ -180,16 +180,26 @@ function recurrenceHasOccurrenceOnDate(recurrence: Recurrence, date: Date) {
   }
 }
 
-function recurrenceAppliesToWeek(
+function recurrenceOccurrenceDatesInRange(
   recurrence: Recurrence,
-  weekStart: Date,
-  weekEnd: Date
+  start: Date,
+  end: Date
 ) {
-  for (let date = new Date(weekStart); date <= weekEnd; date = addDays(date, 1)) {
-    if (recurrenceHasOccurrenceOnDate(recurrence, date)) return true;
+  const dates: Date[] = [];
+
+  for (let date = new Date(start); date <= end; date = addDays(date, 1)) {
+    if (recurrenceHasOccurrenceOnDate(recurrence, date)) dates.push(new Date(date));
   }
 
-  return false;
+  return dates;
+}
+
+function firstDateInMonth(start: Date, end: Date, month: number) {
+  for (let date = new Date(start); date <= end; date = addDays(date, 1)) {
+    if (date.getMonth() === month) return date;
+  }
+
+  return null;
 }
 
 export function recurrenceFromLegacyFrequency(item: LineItem): Recurrence {
@@ -267,16 +277,24 @@ export function lineItemAppliesToWeek(
   weekIdx: number,
   weekStart: Date,
   weekEnd: Date,
-  month: number
+  month: number,
+  _totalWeeks?: number
 ): boolean {
+  void _totalWeeks;
+
   if (item.waveType === "oneTime") {
     const oneTimeDate = parseISODateOnly(item.oneTimeDate);
     if (!oneTimeDate) return false;
     return oneTimeDate >= weekStart && oneTimeDate <= weekEnd;
   }
 
+  const dueDate = parseISODateOnly(item.paymentDueDate);
+  if (dueDate) {
+    return dueDate >= weekStart && dueDate <= weekEnd;
+  }
+
   if (item.recurrence) {
-    return recurrenceAppliesToWeek(item.recurrence, weekStart, weekEnd);
+    return recurrenceOccurrenceDatesInRange(item.recurrence, weekStart, weekEnd).length > 0;
   }
 
   return itemAppliesToWeek(
@@ -288,6 +306,41 @@ export function lineItemAppliesToWeek(
     item.anchorMonth,
     month
   );
+}
+
+export function lineItemOccurrenceDatesForWeek(
+  item: LineItem,
+  weekIdx: number,
+  weekStart: Date,
+  weekEnd: Date,
+  month: number,
+  _totalWeeks?: number
+) {
+  void _totalWeeks;
+
+  if (item.waveType === "oneTime") {
+    const oneTimeDate = parseISODateOnly(item.oneTimeDate);
+    return oneTimeDate && oneTimeDate >= weekStart && oneTimeDate <= weekEnd ? [oneTimeDate] : [];
+  }
+
+  const dueDate = parseISODateOnly(item.paymentDueDate);
+  if (dueDate) {
+    return dueDate >= weekStart && dueDate <= weekEnd ? [dueDate] : [];
+  }
+
+  if (item.recurrence) {
+    return recurrenceOccurrenceDatesInRange(item.recurrence, weekStart, weekEnd);
+  }
+
+  return itemAppliesToWeek(
+    item.frequency,
+    weekIdx,
+    weekStart,
+    weekEnd,
+    item.anchorDate,
+    item.anchorMonth,
+    month
+  ) ? [firstDateInMonth(weekStart, weekEnd, month) ?? new Date(weekStart)] : [];
 }
 
 export function buildProjectedAmounts(
@@ -304,7 +357,7 @@ export function buildProjectedAmounts(
 
     weeks.forEach((week, weekIndex) => {
       const savedVal = savedAmounts[item.id]?.[weekIndex];
-      const applies = lineItemAppliesToWeek(item, weekIndex, week.start, week.end, month);
+      const applies = lineItemAppliesToWeek(item, weekIndex, week.start, week.end, month, weeks.length);
 
       if (applies) {
         if (savedVal !== undefined) {

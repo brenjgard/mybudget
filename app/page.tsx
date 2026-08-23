@@ -1,18 +1,5 @@
-"use client";
-
-import { HarborSpreadsheetDock } from "./components/HarborSpreadsheetDock";
-import { useHarborMonth } from "./lib/use-harbor-month";
+import { redirect } from "next/navigation";
 
 export default function Home() {
-  const harbor = useHarborMonth();
-
-  if (!harbor.loaded || !harbor.settings) {
-    return (
-      <main className="flex-1 bg-harbor-offwhite p-4 text-sm text-harbor-navy/60">
-        Loading Harbor...
-      </main>
-    );
-  }
-
-  return <HarborSpreadsheetDock harbor={harbor} />;
+  redirect("/budget");
 }

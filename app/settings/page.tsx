@@ -1,51 +1,26 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { EmptyState } from "../components/EmptyState";
 import { loadSettingsWithSupabaseFallback, saveSettings } from "../lib/budget-settings";
 import { localRepo } from "../lib/local-repo";
-import { budgetRepo } from "../lib/repositories/budget-repo";
-import { defaultRippleTypeForCategory, getRippleType } from "../lib/ripple-type";
+import { getRipplePlanType } from "../lib/ripple-type";
 import { getDefaultRecurrence, recurrenceFromLegacyFrequency, recurrenceLabel } from "../lib/schedule";
+import { cardCycleForDate, formatMoney, formatShortDate } from "../lib/harbor-domain";
 import { SEED_DATA } from "../data/seedData";
-import { AppSettings, DayOfMonth, FrequencyType, LineItem, PaymentMethod, Recurrence, RecurrenceType, RecurrenceUnit, RippleType } from "../lib/types";
+import type { AppSettings, CreditCardAccount, DayOfMonth, FrequencyType, LineItem, PaymentMethod, Recurrence, RecurrenceType, RecurrenceUnit, RipplePlanType, RippleType } from "../lib/types";
 
 const SHOW_DEV_TOOLS = process.env.NEXT_PUBLIC_SHOW_DEV_TOOLS === "true";
+const DEFAULT_CHARTS = ["Home", "Food & Household", "Transportation", "Kids & Family", "Fun", "Subscriptions", "Savings", "Gifts", "Other"];
+const DAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTH_DAY_OPTIONS: DayOfMonth[] = [...Array.from({ length: 31 }, (_, index) => index + 1), "last"];
+
+type SettingsSection = "ripples" | "waves" | "fleet" | "charts";
+type EditingItem = Omit<LineItem, "id"> & { id?: string };
 
 function uid() {
   return Math.random().toString(16).slice(2) + Date.now().toString(16);
-}
-
-const DEFAULT_CATEGORIES = [
-  "Pay", "Standard Bills", "Food", "Pets", "Car Stuff",
-  "Subscriptions", "Savings", "Credit Cards", "Home Maintenance",
-  "Personal Care", "Donations", "Taxes", "Other",
-];
-
-type EditingItem = Omit<LineItem, "id"> & { id?: string };
-
-function blankItem(isIncome: boolean, category: string): EditingItem {
-  return {
-    category,
-    name: "",
-    defaultAmount: 0,
-    paymentMethod: "checking",
-    isIncome,
-    frequency: "every-week",
-    waveType: "recurring",
-    recurrence: getDefaultRecurrence(),
-    rippleType: isIncome ? undefined : defaultRippleTypeForCategory(category),
-  };
-}
-
-function monthKeyFromDate(value?: string) {
-  return value && value.length >= 7 ? value.slice(0, 7) : null;
-}
-
-function currentMonthKey() {
-  const today = new Date();
-  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function todayISODate() {
@@ -57,26 +32,16 @@ function todayISODate() {
   ].join("-");
 }
 
-function parseISODateOnly(value?: string) {
-  if (!value) return null;
-  const [year, month, day] = value.split("-").map(Number);
-  if (!year || !month || !day) return null;
-  return new Date(year, month - 1, day);
+function currentMonthValue() {
+  return todayISODate().slice(0, 7);
 }
 
-function isPastOneTimeItem(item: LineItem) {
-  if (item.waveType !== "oneTime") return false;
-  const date = parseISODateOnly(item.oneTimeDate);
-  if (!date) return false;
-
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return date < today;
+function monthDateFromValue(value: string) {
+  return value ? `${value}-01` : undefined;
 }
 
-function defaultRippleCategory(categories: string[], selectedCategory: string) {
-  if (selectedCategory !== "all") return selectedCategory;
-  return categories.find((category) => category !== "Pay") ?? categories[0] ?? "";
+function monthValueFromDate(value?: string) {
+  return value?.slice(0, 7) ?? currentMonthValue();
 }
 
 function dayOfMonthValue(day: DayOfMonth | undefined) {
@@ -100,415 +65,163 @@ function frequencyForRecurrence(recurrence?: Recurrence): FrequencyType {
   }
 }
 
-const DAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const MONTH_DAY_OPTIONS: DayOfMonth[] = [...Array.from({ length: 31 }, (_, index) => index + 1), "last"];
-
-const CREDIT_CARDS_CATEGORY = "Credit Cards";
-
-function cardPaymentName(cardLabel: string) {
-  return `${cardLabel.trim()} Payment`;
+function clampDay(value: string, fallback: number) {
+  return Math.min(31, Math.max(1, Number(value) || fallback));
 }
 
-function isLikelyCardPaymentLine(item: LineItem, cardLabel: string) {
-  const normalizedName = item.name.trim().toLowerCase();
-  const normalizedCardLabel = cardLabel.trim().toLowerCase();
-  const expectedName = cardPaymentName(cardLabel).toLowerCase();
-
-  return (
-    item.category === CREDIT_CARDS_CATEGORY &&
-    item.paymentMethod === "checking" &&
-    item.isIncome === false &&
-    (
-      normalizedName === expectedName ||
-      (normalizedName.includes(normalizedCardLabel) && normalizedName.includes("payment"))
-    )
-  );
+function defaultRippleChart(charts: string[]) {
+  return charts.find((chart) => chart.toLowerCase() !== "pay") ?? charts[0] ?? "Other";
 }
 
-function ensureCardPaymentLine(settings: AppSettings, card: { id: PaymentMethod; label: string }): AppSettings {
-  const categories = settings.categories.includes(CREDIT_CARDS_CATEGORY)
-    ? settings.categories
-    : [...settings.categories, CREDIT_CARDS_CATEGORY];
+function blankRipple(charts: string[], paymentMethod: PaymentMethod): EditingItem {
+  return {
+    category: defaultRippleChart(charts),
+    name: "",
+    defaultAmount: 0,
+    paymentMethod,
+    isIncome: false,
+    frequency: "every-week",
+    waveType: "recurring",
+    planType: "weekly_allowance",
+    rippleType: "flexible",
+  };
+}
 
-  const hasPaymentLine = settings.lineItems.some((item) => isLikelyCardPaymentLine(item, card.label));
-  if (hasPaymentLine) {
-    return { ...settings, categories };
-  }
-
-  const paymentLine: LineItem = {
-    id: uid(),
-    category: CREDIT_CARDS_CATEGORY,
-    name: cardPaymentName(card.label),
+function blankWave(charts: string[]): EditingItem {
+  return {
+    category: charts[0] ?? "Pay",
+    name: "",
     defaultAmount: 0,
     paymentMethod: "checking",
-    isIncome: false,
-    frequency: "once-a-month-3",
+    isIncome: true,
+    frequency: "every-week",
+    waveType: "recurring",
+    recurrence: getDefaultRecurrence(),
   };
+}
+
+function normalizeRipple(form: EditingItem): LineItem {
+  const planType = form.planType ?? getRipplePlanType(form as LineItem);
+  const base = {
+    ...(form as LineItem),
+    isIncome: false,
+    planType,
+    rippleType: planType === "scheduled_expense" ? "fixed" as RippleType : "flexible" as RippleType,
+  };
+
+  if (planType === "weekly_allowance") {
+    return {
+      ...base,
+      waveType: "recurring",
+      oneTimeDate: undefined,
+      frequency: "every-week",
+      recurrence: undefined,
+      anchorDate: undefined,
+      anchorMonth: undefined,
+    };
+  }
+
+  if (planType === "monthly_allowance") {
+    const recurring = form.waveType !== "oneTime";
+    return {
+      ...base,
+      waveType: recurring ? "recurring" : "oneTime",
+      oneTimeDate: recurring ? undefined : form.oneTimeDate ?? monthDateFromValue(currentMonthValue()),
+      frequency: "once-a-month-1",
+      recurrence: recurring ? { type: "monthly", daysOfMonth: [1] } : undefined,
+      anchorDate: undefined,
+      anchorMonth: undefined,
+    };
+  }
+
+  const recurrence = form.waveType === "oneTime"
+    ? undefined
+    : form.recurrence ?? recurrenceFromLegacyFrequency({ ...(form as LineItem), id: form.id ?? "" });
 
   return {
-    ...settings,
-    categories,
-    lineItems: [...settings.lineItems, paymentLine],
+    ...base,
+    waveType: form.waveType ?? "recurring",
+    oneTimeDate: form.waveType === "oneTime" ? form.oneTimeDate : undefined,
+    recurrence,
+    frequency: form.waveType === "oneTime" ? "once-a-month-1" : frequencyForRecurrence(recurrence),
+    anchorDate: recurrence?.startDate,
   };
 }
 
-// ── Inline item form ──────────────────────────────────────────────────────────
-function ItemForm({
-  item, categories, cardOptions, onSave, onCancel, isIncome,
-}: {
-  item: EditingItem;
-  categories: string[];
-  cardOptions: { value: PaymentMethod; label: string }[];
-  onSave: (item: EditingItem) => void;
-  onCancel: () => void;
-  isIncome: boolean;
-}) {
-  const [form, setForm] = useState<EditingItem>(item);
-  const waveType = form.waveType ?? "recurring";
-  const recurrence = form.recurrence ?? recurrenceFromLegacyFrequency({ ...(form as LineItem), id: form.id ?? "" });
-  const rippleType = form.rippleType ?? getRippleType(form);
-
-  function setWaveType(nextWaveType: "recurring" | "oneTime") {
-    setForm((previous) => {
-      const nextRecurrence = previous.recurrence ?? getDefaultRecurrence();
-      return {
-        ...previous,
-        waveType: nextWaveType,
-        recurrence: nextWaveType === "oneTime" ? undefined : nextRecurrence,
-        frequency: nextWaveType === "oneTime" ? "once-a-month-1" : frequencyForRecurrence(nextRecurrence),
-      };
-    });
-  }
-
-  function setRecurrence(nextRecurrence: Recurrence) {
-    setForm((previous) => ({
-      ...previous,
-      recurrence: nextRecurrence,
-      frequency: frequencyForRecurrence(nextRecurrence),
-      anchorDate: nextRecurrence.startDate,
-    }));
-  }
-
-  function setRecurrenceType(nextType: RecurrenceType) {
-    const startDate = recurrence.startDate ?? todayISODate();
-    const defaults: Record<RecurrenceType, Recurrence> = {
-      weekly: { type: "weekly", daysOfWeek: recurrence.daysOfWeek ?? [5] },
-      biweekly: { type: "biweekly", daysOfWeek: recurrence.daysOfWeek ?? [5], startDate },
-      twiceMonthly: { type: "twiceMonthly", daysOfMonth: recurrence.daysOfMonth?.slice(0, 2) ?? [15, "last"] },
-      monthly: { type: "monthly", daysOfMonth: [recurrence.daysOfMonth?.[0] ?? 1] },
-      custom: { type: "custom", interval: recurrence.interval ?? 1, unit: recurrence.unit ?? "weeks", startDate },
-    };
-    setRecurrence(defaults[nextType]);
-  }
-
-  return (
-    <div className={`border-2 rounded-2xl p-4 space-y-3 ${isIncome ? "border-harbor-green/20 bg-harbor-green/5" : "border-harbor-red/20 bg-harbor-red/5"}`}>
-      <h3 className="font-semibold text-harbor-navy text-sm">
-        {form.id ? `Edit ${isIncome ? "Wave" : "Ripple"}` : `New ${isIncome ? "Wave" : "Ripple"}`}
-      </h3>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="sm:sm:col-span-2">
-          <label className="text-xs text-slate-500 block mb-1">Name</label>
-          <input
-            autoFocus
-            className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-            value={form.name}
-            onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
-            placeholder={isIncome ? "e.g. Paycheck A" : "e.g. Rent"}
-          />
-        </div>
-        <div>
-          <label className="text-xs text-slate-500 block mb-1">Default Amount</label>
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
-            <input
-              type="number"
-              inputMode="decimal"
-              className="w-full border-2 border-white rounded-xl pl-7 pr-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-              value={form.defaultAmount}
-              onChange={(e) => setForm((p) => ({ ...p, defaultAmount: Number(e.target.value) }))}
-            />
-          </div>
-        </div>
-        <div>
-          <label className="text-xs text-slate-500 block mb-1">{isIncome ? "Wave" : "Ripple"} Type</label>
-          <select
-            className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-            value={waveType}
-            onChange={(e) => setWaveType(e.target.value as "recurring" | "oneTime")}
-          >
-            <option value="recurring">Recurring</option>
-            <option value="oneTime">One-time</option>
-          </select>
-        </div>
-        <div>
-          <label className="text-xs text-slate-500 block mb-1">Category</label>
-          <select
-            className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-            value={form.category}
-            onChange={(e) => {
-              const category = e.target.value;
-              setForm((p) => ({
-                ...p,
-                category,
-                rippleType: !isIncome && !p.id ? defaultRippleTypeForCategory(category) : p.rippleType,
-              }));
-            }}
-          >
-            {categories.map((c) => <option key={c} value={c}>{c}</option>)}
-          </select>
-        </div>
-        {!isIncome && (
-          <div>
-            <label className="text-xs text-slate-500 block mb-1">Spend Style</label>
-            <select
-              className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-              value={rippleType}
-              onChange={(e) => setForm((p) => ({ ...p, rippleType: e.target.value as RippleType }))}
-            >
-              <option value="fixed">Fixed obligation</option>
-              <option value="flexible">Flexible spending</option>
-            </select>
-          </div>
-        )}
-        {!isIncome && (
-          <div>
-            <label className="text-xs text-slate-500 block mb-1">Payment Method</label>
-            <select
-              className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-              value={form.paymentMethod}
-              onChange={(e) => setForm((p) => ({ ...p, paymentMethod: e.target.value as PaymentMethod }))}
-            >
-              {cardOptions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </select>
-          </div>
-        )}
-        {waveType === "oneTime" && (
-          <div className="sm:col-span-2">
-            <label className="text-xs text-slate-500 block mb-1">Date</label>
-            <input
-              type="date"
-              className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-              value={form.oneTimeDate ?? ""}
-              onChange={(e) => setForm((p) => ({ ...p, oneTimeDate: e.target.value || undefined }))}
-            />
-          </div>
-        )}
-        {waveType === "recurring" && (
-        <div className={isIncome ? "sm:col-span-2" : ""}>
-          <label className="text-xs text-slate-500 block mb-1">Repeats</label>
-          <select
-            className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-            value={recurrence.type}
-            onChange={(e) => setRecurrenceType(e.target.value as RecurrenceType)}
-          >
-            <option value="weekly">Weekly</option>
-            <option value="biweekly">Every other week</option>
-            <option value="twiceMonthly">Twice a month</option>
-            <option value="monthly">Monthly</option>
-            <option value="custom">Custom</option>
-          </select>
-        </div>
-        )}
-        {waveType === "recurring" && (recurrence.type === "weekly" || recurrence.type === "biweekly") && (
-          <div>
-            <label className="text-xs text-slate-500 block mb-1">Day of Week</label>
-            <select
-              className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-              value={recurrence.daysOfWeek?.[0] ?? 5}
-              onChange={(e) => setRecurrence({ ...recurrence, daysOfWeek: [Number(e.target.value)] })}
-            >
-              {DAY_LABELS.map((label, index) => <option key={label} value={index}>{label}</option>)}
-            </select>
-          </div>
-        )}
-        {waveType === "recurring" && recurrence.type === "biweekly" && (
-          <div className="sm:col-span-2">
-            <label className="text-xs text-slate-500 block mb-1">Starting Date</label>
-            <input
-              type="date"
-              className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-              value={recurrence.startDate ?? ""}
-              onChange={(e) => setRecurrence({ ...recurrence, startDate: e.target.value || undefined })}
-            />
-          </div>
-        )}
-        {waveType === "recurring" && recurrence.type === "twiceMonthly" && (
-          <>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">First Date</label>
-              <select
-                className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-                value={dayOfMonthValue(recurrence.daysOfMonth?.[0])}
-                onChange={(e) => setRecurrence({ ...recurrence, daysOfMonth: [parseDayOfMonth(e.target.value), recurrence.daysOfMonth?.[1] ?? "last"] })}
-              >
-                {MONTH_DAY_OPTIONS.map((day) => <option key={day} value={day}>{day === "last" ? "Last day" : day}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">Second Date</label>
-              <select
-                className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-                value={dayOfMonthValue(recurrence.daysOfMonth?.[1] ?? "last")}
-                onChange={(e) => setRecurrence({ ...recurrence, daysOfMonth: [recurrence.daysOfMonth?.[0] ?? 15, parseDayOfMonth(e.target.value)] })}
-              >
-                {MONTH_DAY_OPTIONS.map((day) => <option key={day} value={day}>{day === "last" ? "Last day" : day}</option>)}
-              </select>
-            </div>
-          </>
-        )}
-        {waveType === "recurring" && recurrence.type === "monthly" && (
-          <div className="sm:col-span-2">
-            <label className="text-xs text-slate-500 block mb-1">Date of Month</label>
-            <select
-              className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-              value={dayOfMonthValue(recurrence.daysOfMonth?.[0])}
-              onChange={(e) => setRecurrence({ ...recurrence, daysOfMonth: [parseDayOfMonth(e.target.value)] })}
-            >
-              {MONTH_DAY_OPTIONS.map((day) => <option key={day} value={day}>{day === "last" ? "Last day" : day}</option>)}
-            </select>
-          </div>
-        )}
-        {waveType === "recurring" && recurrence.type === "custom" && (
-          <>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">Every</label>
-              <input
-                type="number"
-                min="1"
-                className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-                value={recurrence.interval ?? 1}
-                onChange={(e) => setRecurrence({ ...recurrence, interval: Math.max(1, Number(e.target.value) || 1) })}
-              />
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">Unit</label>
-              <select
-                className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-                value={recurrence.unit ?? "weeks"}
-                onChange={(e) => setRecurrence({ ...recurrence, unit: e.target.value as RecurrenceUnit })}
-              >
-                <option value="days">Days</option>
-                <option value="weeks">Weeks</option>
-                <option value="months">Months</option>
-              </select>
-            </div>
-            <div className="sm:col-span-2">
-              <label className="text-xs text-slate-500 block mb-1">Starting Date</label>
-              <input
-                type="date"
-                className="w-full border-2 border-white rounded-xl px-3 py-2 focus:outline-none focus:border-harbor-teal bg-white text-sm"
-                value={recurrence.startDate ?? ""}
-                onChange={(e) => setRecurrence({ ...recurrence, startDate: e.target.value || undefined })}
-              />
-            </div>
-          </>
-        )}
-      </div>
-      <div className="flex gap-2 pt-1">
-        <button
-          onClick={() => onSave(form)}
-          className={`px-5 py-2 text-white rounded-xl font-medium text-sm transition-colors ${isIncome ? "bg-harbor-green hover:bg-harbor-green/90" : "bg-harbor-red hover:bg-harbor-red/90"}`}
-        >
-          {form.id ? "Save Changes" : `Add ${isIncome ? "Wave" : "Ripple"}`}
-        </button>
-        <button
-          onClick={onCancel}
-          className="px-5 py-2 bg-white border-2 border-slate-200 rounded-xl text-slate-600 hover:border-harbor-teal text-sm transition-colors"
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
+function normalizeWave(form: EditingItem): LineItem {
+  const recurrence = form.waveType === "oneTime"
+    ? undefined
+    : form.recurrence ?? recurrenceFromLegacyFrequency({ ...(form as LineItem), id: form.id ?? "" });
+  return {
+    ...(form as LineItem),
+    isIncome: true,
+    paymentMethod: "checking",
+    planType: undefined,
+    rippleType: undefined,
+    waveType: form.waveType ?? "recurring",
+    oneTimeDate: form.waveType === "oneTime" ? form.oneTimeDate : undefined,
+    recurrence,
+    frequency: form.waveType === "oneTime" ? "once-a-month-1" : frequencyForRecurrence(recurrence),
+    anchorDate: recurrence?.startDate,
+  };
 }
 
-// ── Section header component ──────────────────────────────────────────────────
-function SectionHeader({ icon, title, subtitle, count, action }: {
-  icon: React.ReactNode;
-  title: string;
-  subtitle: string;
-  count?: number;
-  action?: React.ReactNode;
-}) {
-  return (
-    <div className="flex items-center justify-between mb-4">
-      <div className="flex items-center gap-3">
-        <div className="w-9 h-9 rounded-xl bg-harbor-teal-light flex items-center justify-center flex-shrink-0">
-          {icon}
-        </div>
-        <div>
-          <div className="flex items-center gap-2">
-            <h2 className="font-bold text-harbor-navy text-base">{title}</h2>
-            {count !== undefined && (
-              <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-medium">{count}</span>
-            )}
-          </div>
-          <p className="text-harbor-navy/50 text-xs mt-0.5">{subtitle}</p>
-        </div>
-      </div>
-      {action}
-    </div>
-  );
+function planLabel(item: LineItem) {
+  const planType = getRipplePlanType(item);
+  if (planType === "weekly_allowance") return "Weekly Allowance";
+  if (planType === "monthly_allowance") return "Monthly Allowance";
+  return "Scheduled Expense";
 }
 
-// ── Main Settings Page ────────────────────────────────────────────────────────
+function rippleImpact(item: LineItem, cardLabel?: string) {
+  const planType = getRipplePlanType(item);
+  if (planType !== "scheduled_expense") {
+    return item.paymentMethod === "checking" ? "Budget; cash moves only when spending is logged" : `Budget + future ${cardLabel ?? "card"} payment`;
+  }
+  return item.paymentMethod === "checking" ? "Budget + Cash Flow" : `Budget + future ${cardLabel ?? "card"} payment`;
+}
+
+function rippleSummary(item: LineItem, cards: CreditCardAccount[]) {
+  const card = cards.find((candidate) => candidate.id === item.paymentMethod);
+  const planType = getRipplePlanType(item);
+  if (planType === "weekly_allowance") return `$${item.defaultAmount.toLocaleString()} / week · ${item.category} · ${card?.label ?? "Checking"}`;
+  if (planType === "monthly_allowance") {
+    const timing = item.waveType === "oneTime" ? monthValueFromDate(item.oneTimeDate) : "monthly";
+    return `$${item.defaultAmount.toLocaleString()} · ${timing} · ${item.category} · ${card?.label ?? "Checking"}`;
+  }
+  return `$${item.defaultAmount.toLocaleString()} · ${item.waveType === "oneTime" ? item.oneTimeDate ?? "one-time" : recurrenceLabel(item.recurrence ?? recurrenceFromLegacyFrequency(item))} · ${card?.label ?? "Checking"}`;
+}
+
 export default function Settings() {
   const router = useRouter();
   const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [activeSection, setActiveSection] = useState<SettingsSection>("ripples");
   const [saved, setSaved] = useState(false);
-
-  // Separate editing state per section
-  const [wavesForm, setWavesForm] = useState<EditingItem | null>(null);
-  const [ripplesForm, setRipplesForm] = useState<EditingItem | null>(null);
-
-  // Category filters per section
-  const [wavesCat, setWavesCat] = useState<string>("all");
-  const [ripplesCat, setRipplesCat] = useState<string>("all");
-
-  // New category / card
-  const [newCat, setNewCat] = useState("");
-  const [newCardLabel, setNewCardLabel] = useState("");
-  const [newCardStatementDay, setNewCardStatementDay] = useState("31");
-
-  // Section refs for deep-link scrolling
-  const wavesRef = useRef<HTMLDivElement>(null);
-  const ripplesRef = useRef<HTMLDivElement>(null);
-  const fleetRef = useRef<HTMLDivElement>(null);
-  const categoriesRef = useRef<HTMLDivElement>(null);
+  const [rippleForm, setRippleForm] = useState<EditingItem | null>(null);
+  const [waveForm, setWaveForm] = useState<EditingItem | null>(null);
+  const [cardBalanceDrafts, setCardBalanceDrafts] = useState<Record<string, string>>({});
+  const [newChart, setNewChart] = useState("");
+  const [newCard, setNewCard] = useState({ label: "", closeDay: "21", dueDay: "15" });
 
   useEffect(() => {
     let cancelled = false;
-
     async function loadInitialData() {
-      const s = await loadSettingsWithSupabaseFallback();
+      const loadedSettings = await loadSettingsWithSupabaseFallback();
       if (cancelled) return;
-      if (!s) { router.push("/setup"); return; }
-      setSettings(s);
-
-      // Deep-link: scroll to section and auto-open form
-      const hash = window.location.hash;
-      if (hash === "#waves") {
-        setTimeout(() => {
-          wavesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-          setWavesForm(blankItem(true, s.categories[0] ?? ""));
-        }, 150);
-      } else if (hash === "#ripples") {
-        setTimeout(() => {
-          ripplesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-          setRipplesForm(blankItem(false, defaultRippleCategory(s.categories, "all")));
-        }, 150);
-      } else if (hash === "#fleet") {
-        setTimeout(() => fleetRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+      if (!loadedSettings) {
+        router.push("/setup");
+        return;
       }
+      setSettings(loadedSettings);
+      setCardBalanceDrafts(Object.fromEntries(loadedSettings.creditCards.map((card) => [card.id, String(card.currentBalance ?? 0)])));
+      const hash = window.location.hash.replace("#", "");
+      if (["ripples", "waves", "fleet", "charts"].includes(hash)) setActiveSection(hash as SettingsSection);
     }
-
-    loadInitialData();
-
+    void loadInitialData();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [router]);
 
   async function persist(updated: AppSettings) {
     setSettings(updated);
@@ -525,588 +238,554 @@ export default function Settings() {
     await persist(SEED_DATA);
   }
 
-  async function saveToCloud() {
-    if (!settings) return;
-    try {
-      const savedSettings = await saveSettings(settings);
-      setSettings(savedSettings);
-      alert(`Saved to cloud. Synced ${savedSettings.creditCards.length + 1} payment accounts, ${savedSettings.categories.length} categories, and ${savedSettings.lineItems.length} line items.`);
-    } catch (error) {
-      alert(error instanceof Error ? error.message : "Could not save to cloud.");
-    }
+  async function saveRipple(form: EditingItem) {
+    if (!settings || !form.name.trim() || form.defaultAmount <= 0) return;
+    const savedItem = normalizeRipple(form);
+    const nextItems = form.id
+      ? settings.lineItems.map((item) => item.id === form.id ? savedItem : item)
+      : [...settings.lineItems, { ...savedItem, id: uid() }];
+    await persist({ ...settings, lineItems: nextItems });
+    setRippleForm(null);
   }
 
-  // ── Item CRUD ────────────────────────────────────────────────────────────────
-  async function saveItem(form: EditingItem) {
-    if (!settings || !form.name.trim()) return;
+  async function saveWave(form: EditingItem) {
+    if (!settings || !form.name.trim() || form.defaultAmount <= 0) return;
     if (form.waveType === "oneTime" && !form.oneTimeDate) return;
-
-    const itemToSave: LineItem = {
-      ...(form as LineItem),
-      waveType: form.waveType ?? "recurring",
-      oneTimeDate: form.waveType === "oneTime" ? form.oneTimeDate : undefined,
-      anchorDate: form.waveType === "oneTime" ? undefined : form.anchorDate || undefined,
-      anchorMonth: form.waveType === "oneTime" ? undefined : form.anchorMonth,
-      recurrence: form.waveType === "oneTime" ? undefined : form.recurrence ?? recurrenceFromLegacyFrequency({ ...(form as LineItem), id: form.id ?? "" }),
-      rippleType: form.isIncome ? undefined : form.rippleType ?? getRippleType(form),
-    };
-
-    let updatedItems: LineItem[];
-    if (form.id) {
-      updatedItems = settings.lineItems.map((i) => i.id === form.id ? itemToSave : i);
-    } else {
-      updatedItems = [...settings.lineItems, { ...itemToSave, id: uid() }];
-    }
-    await persist({ ...settings, lineItems: updatedItems });
-
-    if (form.id) {
-      const affectedMonthKeys = new Set<string>([currentMonthKey()]);
-      const datedMonth = monthKeyFromDate(itemToSave.oneTimeDate ?? itemToSave.anchorDate);
-      if (datedMonth) affectedMonthKeys.add(datedMonth);
-      await Promise.all([...affectedMonthKeys].map((key) => budgetRepo.clearMonthlyAmountsForItem(key, form.id!)));
-    }
-
-    setWavesForm(null);
-    setRipplesForm(null);
+    const savedItem = normalizeWave(form);
+    const nextItems = form.id
+      ? settings.lineItems.map((item) => item.id === form.id ? savedItem : item)
+      : [...settings.lineItems, { ...savedItem, id: uid() }];
+    await persist({ ...settings, lineItems: nextItems });
+    setWaveForm(null);
   }
 
   function deleteItem(id: string) {
     if (!settings || !confirm("Delete this item?")) return;
-    persist({ ...settings, lineItems: settings.lineItems.filter((i) => i.id !== id) });
+    void persist({ ...settings, lineItems: settings.lineItems.filter((item) => item.id !== id) });
   }
 
-  // ── Categories ────────────────────────────────────────────────────────────────
-  function addCategory() {
-    if (!settings || !newCat.trim() || settings.categories.includes(newCat.trim())) return;
-    persist({ ...settings, categories: [...settings.categories, newCat.trim()] });
-    setNewCat("");
+  function addChart() {
+    const name = newChart.trim();
+    if (!settings || !name || settings.categories.includes(name)) return;
+    void persist({ ...settings, categories: [...settings.categories, name] });
+    setNewChart("");
   }
 
-  function removeCategory(cat: string) {
+  function removeChart(chart: string) {
     if (!settings) return;
-    const hasItems = settings.lineItems.some((i) => i.category === cat);
-    if (hasItems && !confirm(`"${cat}" has items. Delete category and all its items?`)) return;
-    persist({
+    const hasItems = settings.lineItems.some((item) => item.category === chart);
+    if (hasItems && !confirm(`"${chart}" contains Ripples or Waves. Delete the Chart and those definitions?`)) return;
+    void persist({
       ...settings,
-      categories: settings.categories.filter((c) => c !== cat),
-      lineItems: settings.lineItems.filter((i) => i.category !== cat),
+      categories: settings.categories.filter((item) => item !== chart),
+      lineItems: settings.lineItems.filter((item) => item.category !== chart),
     });
   }
 
-  // ── Fleet (Credit Cards) ──────────────────────────────────────────────────────
+  function moveChart(chart: string, delta: number) {
+    if (!settings) return;
+    const index = settings.categories.indexOf(chart);
+    const nextIndex = index + delta;
+    if (index < 0 || nextIndex < 0 || nextIndex >= settings.categories.length) return;
+    const next = [...settings.categories];
+    [next[index], next[nextIndex]] = [next[nextIndex], next[index]];
+    void persist({ ...settings, categories: next });
+  }
+
   function addCard() {
-    if (!settings || !newCardLabel.trim()) return;
+    if (!settings || !newCard.label.trim()) return;
     const card = {
       id: `credit-${crypto.randomUUID()}` as PaymentMethod,
-      label: newCardLabel.trim(),
-      statementClosingDay: Math.min(31, Math.max(1, Number(newCardStatementDay) || 31)),
+      label: newCard.label.trim(),
+      currentBalance: 0,
+      currentBalanceUpdatedAt: new Date().toISOString(),
+      statementClosingDay: clampDay(newCard.closeDay, 21),
+      paymentDueDay: clampDay(newCard.dueDay, 15),
     };
-    const updatedSettings = ensureCardPaymentLine(
-      { ...settings, creditCards: [...settings.creditCards, card] },
-      card,
-    );
-    persist(updatedSettings);
-    setNewCardLabel("");
-    setNewCardStatementDay("31");
+    void persist({ ...settings, creditCards: [...settings.creditCards, card] });
+    setCardBalanceDrafts((current) => ({ ...current, [card.id]: "0" }));
+    setNewCard({ label: "", closeDay: "21", dueDay: "15" });
   }
 
-  function updateCardStatementDay(id: PaymentMethod, value: string) {
+  function updateCard(id: PaymentMethod, updater: (card: CreditCardAccount) => CreditCardAccount) {
     if (!settings) return;
-    const statementClosingDay = Math.min(31, Math.max(1, Number(value) || 31));
-    persist({
-      ...settings,
-      creditCards: settings.creditCards.map((card) => (
-        card.id === id ? { ...card, statementClosingDay } : card
-      )),
-    });
+    void persist({ ...settings, creditCards: settings.creditCards.map((card) => card.id === id ? updater(card) : card) });
   }
 
   function removeCard(id: PaymentMethod) {
     if (!settings) return;
-    const card = settings.creditCards.find((currentCard) => currentCard.id === id);
+    const card = settings.creditCards.find((candidate) => candidate.id === id);
     if (!card) return;
-    if (!confirm(`Remove ${card.label}? Items assigned to it will switch to checking, and its matching payment ripple will be deleted.`)) return;
-    const updatedItems = settings.lineItems.map((i) =>
-      i.paymentMethod === id ? { ...i, paymentMethod: "checking" as PaymentMethod } : i
-    ).filter((item) => !isLikelyCardPaymentLine(item, card.label));
-    persist({ ...settings, creditCards: settings.creditCards.filter((c) => c.id !== id), lineItems: updatedItems });
+    if (!confirm(`Remove ${card.label}? Ripples using it will switch to Checking.`)) return;
+    void persist({
+      ...settings,
+      creditCards: settings.creditCards.filter((candidate) => candidate.id !== id),
+      lineItems: settings.lineItems.map((item) => item.paymentMethod === id ? { ...item, paymentMethod: "checking" as PaymentMethod } : item),
+    });
   }
 
-  if (!settings) return (
-    <main className="flex-1 bg-harbor-offwhite flex items-center justify-center">
-      <p className="text-harbor-navy/50">Loading...</p>
-    </main>
-  );
+  function updateCardBalance(id: PaymentMethod) {
+    if (!settings) return;
+    const value = cardBalanceDrafts[id] ?? "";
+    const amount = value.trim() === "" ? 0 : Number(value);
+    if (!Number.isFinite(amount) || amount < 0) return;
+    void persist({
+      ...settings,
+      creditCards: settings.creditCards.map((card) => card.id === id ? {
+        ...card,
+        currentBalance: amount,
+        currentBalanceUpdatedAt: new Date().toISOString(),
+      } : card),
+    });
+  }
 
-  const cardOptions: { value: PaymentMethod; label: string }[] = [
-    { value: "checking", label: "Checking" },
-    ...settings.creditCards.map((c) => ({ value: c.id, label: c.label })),
+  if (!settings) {
+    return (
+      <main className="flex flex-1 items-center justify-center bg-harbor-offwhite">
+        <p className="text-harbor-navy/50">Loading...</p>
+      </main>
+    );
+  }
+
+  const ripples = settings.lineItems.filter((item) => !item.isIncome);
+  const waves = settings.lineItems.filter((item) => item.isIncome);
+  const paymentOptions = [
+    { value: "checking" as PaymentMethod, label: "Checking" },
+    ...settings.creditCards.map((card) => ({ value: card.id, label: card.label })),
   ];
-
-  const unusedDefaults = DEFAULT_CATEGORIES.filter((c) => !settings.categories.includes(c));
-
-  const waves = settings.lineItems.filter((i) => i.isIncome);
-  const activeWaves = waves.filter((i) => !isPastOneTimeItem(i));
-  const pastWaves = waves.filter(isPastOneTimeItem);
-  const ripples = settings.lineItems.filter((i) => !i.isIncome);
-
-  const waveCategories = ["all", ...Array.from(new Set(activeWaves.map((i) => i.category)))];
-  const rippleCategories = ["all", ...Array.from(new Set(ripples.map((i) => i.category)))];
-
-  const visibleWaves = wavesCat === "all" ? activeWaves : activeWaves.filter((i) => i.category === wavesCat);
-  const visibleRipples = ripplesCat === "all" ? ripples : ripples.filter((i) => i.category === ripplesCat);
+  const unusedDefaults = DEFAULT_CHARTS.filter((chart) => !settings.categories.includes(chart));
 
   return (
-    <main className="flex-1 bg-harbor-offwhite">
-      <div className="max-w-[1280px] mx-auto px-4 md:px-8 py-6 space-y-5">
-
-        {/* ── Page header ── */}
-        <div className="flex items-center justify-between">
+    <main className="flex-1 bg-harbor-offwhite p-4 text-harbor-navy">
+      <div className="mx-auto max-w-[1280px] space-y-5">
+        <section className="flex flex-col gap-4 border-b border-harbor-teal-light py-3 lg:flex-row lg:items-end lg:justify-between">
           <div>
-            <h1 className="text-2xl font-bold text-harbor-navy">Chart Room</h1>
-            <p className="text-harbor-navy/50 text-sm mt-0.5">Configure your Harbor setup</p>
+            <p className="text-xs font-semibold uppercase tracking-wide text-harbor-teal">Settings</p>
+            <h1 className="mt-1 text-3xl font-bold">Chart Room</h1>
+            <p className="mt-1 text-sm text-harbor-navy/55">Tell Harbor how your money behaves.</p>
           </div>
-          <div className="flex items-center gap-3">
-            {saved && (
-              <span className="flex items-center gap-1.5 text-harbor-green text-sm font-medium">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="20 6 9 17 4 12"/>
-                </svg>
-                Saved
-              </span>
-            )}
+          <div className="flex items-center gap-2">
+            {saved && <span className="rounded-full bg-harbor-green/10 px-3 py-1 text-xs font-semibold text-harbor-green">Saved</span>}
             {SHOW_DEV_TOOLS && (
-              <>
-                <button
-                  onClick={loadDemoData}
-                  className="px-3 py-1.5 text-xs border-2 border-dashed border-slate-200 text-slate-500 rounded-lg hover:border-harbor-teal hover:text-harbor-teal transition-colors"
-                >
-                  Load Demo Data
-                </button>
-                <button
-                  onClick={saveToCloud}
-                  className="px-3 py-1.5 text-xs border-2 border-dashed border-slate-200 text-slate-500 rounded-lg hover:border-harbor-teal hover:text-harbor-teal transition-colors"
-                >
-                  Save to Cloud
-                </button>
-              </>
+              <button type="button" onClick={() => void loadDemoData()} className="rounded-lg border border-dashed border-slate-300 px-3 py-2 text-xs font-semibold text-slate-500 hover:border-harbor-teal hover:text-harbor-teal">Load Demo</button>
             )}
           </div>
-        </div>
+        </section>
 
-        {/* ── Waves ── */}
-        <div ref={wavesRef} id="waves" className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 scroll-mt-32">
-          <SectionHeader
-            icon={
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2A9D8F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/>
-                <polyline points="17 6 23 6 23 12"/>
-              </svg>
-            }
-            title="Waves (Income)"
-            subtitle="Paychecks, freelance income, or other money coming in"
-            count={activeWaves.length}
-            action={
-              !wavesForm && (
-                <button
-                  onClick={() => setWavesForm(blankItem(true, settings.categories[0] ?? ""))}
-                  className="flex items-center gap-1 px-3 py-2 rounded-lg border border-harbor-green/30 bg-harbor-green/5 text-harbor-green text-xs font-medium hover:bg-harbor-green/10 transition-colors"
-                >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                  </svg>
-                  Add Wave
-                </button>
-              )
-            }
-          />
+        <nav className="flex flex-wrap gap-2">
+          {([
+            ["ripples", "Ripples", ripples.length],
+            ["waves", "Waves", waves.length],
+            ["fleet", "Fleet", settings.creditCards.length],
+            ["charts", "Charts", settings.categories.length],
+          ] as const).map(([id, label, count]) => (
+            <button
+              key={id}
+              type="button"
+              onClick={() => setActiveSection(id)}
+              className={`rounded-lg border px-4 py-2 text-sm font-semibold ${activeSection === id ? "border-harbor-teal bg-harbor-teal text-white" : "border-slate-200 bg-white text-harbor-navy/65 hover:border-harbor-teal-light"}`}
+            >
+              {label} <span className="ml-1 opacity-70">{count}</span>
+            </button>
+          ))}
+        </nav>
 
-          {/* Category filter */}
-          {waveCategories.length > 2 && (
-            <div className="flex flex-wrap gap-1.5 mb-3">
-              {waveCategories.map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setWavesCat(cat)}
-                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-all capitalize ${
-                    wavesCat === cat
-                      ? "bg-harbor-green text-white border-harbor-green"
-                      : "bg-white text-slate-500 border-slate-200 hover:border-harbor-green hover:text-harbor-green"
-                  }`}
-                >
-                  {cat}
-                </button>
-              ))}
-            </div>
-          )}
-
-          <div className="space-y-2 mb-3">
-            {visibleWaves.length === 0 && !wavesForm && (
-              <EmptyState
-                title={pastWaves.length > 0 ? "No active income" : "No income yet"}
-                action={
-                  <button
-                    type="button"
-                    onClick={() => setWavesForm(blankItem(true, settings.categories[0] ?? ""))}
-                    className="rounded-lg border border-harbor-green/30 bg-harbor-green/5 px-3 py-2 text-xs font-medium text-harbor-green hover:bg-harbor-green/10"
-                  >
-                    Add Wave
-                  </button>
-                }
-              >
-                Add Income (Waves) so Harbor can see money coming in.
-              </EmptyState>
-            )}
-            {visibleWaves.map((item) => (
-              <div key={item.id} className="flex items-start justify-between gap-3 bg-harbor-offwhite rounded-xl px-4 py-3 border border-slate-100">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium text-sm text-harbor-navy">{item.name}</span>
-                    <span className="text-xs bg-harbor-green/10 text-harbor-green px-2 py-0.5 rounded-full font-medium">Wave</span>
-                    <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{item.category}</span>
-                  </div>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    ${item.defaultAmount.toLocaleString()} · {item.waveType === "oneTime" ? `One-time · ${item.oneTimeDate ?? "No date"}` : recurrenceLabel(item.recurrence ?? recurrenceFromLegacyFrequency(item))}
-                  </p>
-                </div>
-                <div className="flex gap-2 flex-shrink-0">
-                  <button
-                    onClick={() => { setWavesForm({ ...item }); setRipplesForm(null); }}
-                    className="px-3 py-2 text-xs bg-harbor-teal/10 text-harbor-teal rounded-lg hover:bg-harbor-teal/20 font-medium"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => deleteItem(item.id)}
-                    className="px-3 py-2 text-xs bg-harbor-red/10 text-harbor-red rounded-lg hover:bg-harbor-red/20 font-medium"
-                  >
-                    Delete
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          {wavesForm && (
-            <ItemForm
-              item={wavesForm}
-              categories={settings.categories}
-              cardOptions={cardOptions}
-              isIncome={true}
-              onSave={saveItem}
-              onCancel={() => setWavesForm(null)}
-            />
-          )}
-        </div>
-
-        {pastWaves.length > 0 && (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5">
-            <SectionHeader
-              icon={
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="12" r="10"/>
-                  <polyline points="12 6 12 12 16 14"/>
-                </svg>
-              }
-              title="Past Waves"
-              subtitle="One-time income that has already happened"
-              count={pastWaves.length}
-            />
-
+        {activeSection === "ripples" && (
+          <Section
+            title="Ripples"
+            subtitle="Spending plans: allowances and scheduled expenses."
+            action={!rippleForm && <button type="button" onClick={() => setRippleForm(blankRipple(settings.categories, settings.creditCards[0]?.id ?? "checking"))} className="rounded-lg bg-harbor-red px-4 py-2 text-sm font-semibold text-white">Add Ripple</button>}
+          >
             <div className="space-y-2">
-              {pastWaves.map((item) => (
-                <div key={item.id} className="flex items-start justify-between gap-3 bg-harbor-offwhite rounded-xl px-4 py-3 border border-slate-100">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium text-sm text-harbor-navy">{item.name}</span>
-                      <span className="text-xs bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full font-medium">Past Wave</span>
-                      <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{item.category}</span>
-                    </div>
-                    <p className="text-xs text-slate-400 mt-0.5">
-                      ${item.defaultAmount.toLocaleString()} &middot; One-time &middot; {item.oneTimeDate ?? "No date"}
-                    </p>
-                  </div>
-                  <div className="flex gap-2 flex-shrink-0">
-                    <button
-                      onClick={() => { setWavesForm({ ...item }); setRipplesForm(null); }}
-                      className="px-3 py-2 text-xs bg-harbor-teal/10 text-harbor-teal rounded-lg hover:bg-harbor-teal/20 font-medium"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => deleteItem(item.id)}
-                      className="px-3 py-2 text-xs bg-harbor-red/10 text-harbor-red rounded-lg hover:bg-harbor-red/20 font-medium"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              ))}
+              {ripples.length === 0 && !rippleForm && <EmptyState title="No Ripples yet">Add spending plans for allowances, bills, subscriptions, and one-time budgets.</EmptyState>}
+              {ripples.map((item) => {
+                const card = settings.creditCards.find((candidate) => candidate.id === item.paymentMethod);
+                return (
+                  <DefinitionRow
+                    key={item.id}
+                    title={item.name}
+                    badge={planLabel(item)}
+                    summary={rippleSummary(item, settings.creditCards)}
+                    impact={rippleImpact(item, card?.label)}
+                    onEdit={() => setRippleForm({ ...item, planType: getRipplePlanType(item) })}
+                    onDelete={() => deleteItem(item.id)}
+                  />
+                );
+              })}
             </div>
-          </div>
+            {rippleForm && (
+              <RippleForm
+                item={rippleForm}
+                charts={settings.categories}
+                paymentOptions={paymentOptions}
+                onSave={saveRipple}
+                onCancel={() => setRippleForm(null)}
+              />
+            )}
+          </Section>
         )}
 
-        {/* ── Ripples ── */}
-        <div ref={ripplesRef} id="ripples" className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 scroll-mt-32">
-          <SectionHeader
-            icon={
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#E63946" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="23 18 13.5 8.5 8.5 13.5 1 6"/>
-                <polyline points="17 18 23 18 23 12"/>
-              </svg>
-            }
-            title="Ripples (Spending)"
-            subtitle="Bills, subscriptions, groceries, and planned spending"
-            count={ripples.length}
-            action={
-              !ripplesForm && (
-                <button
-                  onClick={() => setRipplesForm(blankItem(false, defaultRippleCategory(settings.categories, ripplesCat)))}
-                  className="flex items-center gap-1 px-3 py-2 rounded-lg border border-harbor-red/30 bg-harbor-red/5 text-harbor-red text-xs font-medium hover:bg-harbor-red/10 transition-colors"
-                >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                  </svg>
-                  Add Ripple
-                </button>
-              )
-            }
-          />
-
-          {/* Category filter */}
-          {rippleCategories.length > 2 && (
-            <div className="flex flex-wrap gap-1.5 mb-3">
-              {rippleCategories.map((cat) => (
-                <button
-                  key={cat}
-                  onClick={() => setRipplesCat(cat)}
-                  className={`px-2.5 py-1 rounded-full text-xs font-medium border transition-all capitalize ${
-                    ripplesCat === cat
-                      ? "bg-harbor-red text-white border-harbor-red"
-                      : "bg-white text-slate-500 border-slate-200 hover:border-harbor-red hover:text-harbor-red"
-                  }`}
-                >
-                  {cat}
-                </button>
+        {activeSection === "waves" && (
+          <Section
+            title="Waves"
+            subtitle="Income expected to arrive in checking."
+            action={!waveForm && <button type="button" onClick={() => setWaveForm(blankWave(settings.categories))} className="rounded-lg bg-harbor-green px-4 py-2 text-sm font-semibold text-white">Add Wave</button>}
+          >
+            <div className="space-y-2">
+              {waves.length === 0 && !waveForm && <EmptyState title="No Waves yet">Add recurring income or one-time deposits so Dock can forecast cash in.</EmptyState>}
+              {waves.map((item) => (
+                <DefinitionRow
+                  key={item.id}
+                  title={item.name}
+                  badge={item.waveType === "oneTime" ? "One-Time Income" : "Recurring Income"}
+                  summary={`$${item.defaultAmount.toLocaleString()} · ${item.waveType === "oneTime" ? item.oneTimeDate ?? "No date" : recurrenceLabel(item.recurrence ?? recurrenceFromLegacyFrequency(item))} · Checking`}
+                  impact="Dock cash-in"
+                  onEdit={() => setWaveForm({ ...item })}
+                  onDelete={() => deleteItem(item.id)}
+                />
               ))}
             </div>
-          )}
-
-          <div className="space-y-2 mb-3">
-            {visibleRipples.length === 0 && !ripplesForm && (
-              <EmptyState
-                title="No bills or spending yet"
-                action={
-                  <button
-                    type="button"
-                    onClick={() => setRipplesForm(blankItem(false, defaultRippleCategory(settings.categories, ripplesCat)))}
-                    className="rounded-lg border border-harbor-red/30 bg-harbor-red/5 px-3 py-2 text-xs font-medium text-harbor-red hover:bg-harbor-red/10"
-                  >
-                    Add Ripple
-                  </button>
-                }
-              >
-                Add Bills &amp; Spending (Ripples) to plan around what is going out.
-              </EmptyState>
+            {waveForm && (
+              <WaveForm
+                item={waveForm}
+                onSave={saveWave}
+                onCancel={() => setWaveForm(null)}
+              />
             )}
-            {visibleRipples.map((item) => (
-              <div key={item.id} className="flex items-start justify-between gap-3 bg-harbor-offwhite rounded-xl px-4 py-3 border border-slate-100">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium text-sm text-harbor-navy">{item.name}</span>
-                    <span className="text-xs bg-harbor-red/10 text-harbor-red px-2 py-0.5 rounded-full font-medium">Ripple</span>
-                    <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">{item.category}</span>
-                    {item.paymentMethod !== "checking" && (
-                      <span className="text-xs text-harbor-navy/60 bg-harbor-navy/10 px-2 py-0.5 rounded-full">
-                        {settings.creditCards.find((c) => c.id === item.paymentMethod)?.label ?? item.paymentMethod}
-                      </span>
-                    )}
+          </Section>
+        )}
+
+        {activeSection === "fleet" && (
+          <Section title="Fleet" subtitle="Credit cards that turn card spending into future checking obligations.">
+            <div className="space-y-2">
+              {settings.creditCards.length === 0 && <EmptyState title="No Fleet cards yet">Add cards used for spending so Harbor can route future payments.</EmptyState>}
+              {settings.creditCards.map((card) => (
+                <div key={card.id} className="rounded-lg border border-slate-100 bg-harbor-offwhite px-4 py-3">
+                  <div className="flex flex-col gap-4">
+                    <div>
+                      <div className="font-bold">{card.label}</div>
+                      <div className="text-xs text-harbor-navy/50">Closes day {card.statementClosingDay ?? 31} · Due day {card.paymentDueDay ?? 15} · Paid from Checking</div>
+                    </div>
+                    <FleetBalanceSummary card={card} />
+                    <div className="flex flex-wrap items-end gap-2">
+                      <label className="grid gap-1">
+                        <span className="text-xs text-harbor-navy/45">Current Balance</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={cardBalanceDrafts[card.id] ?? String(card.currentBalance ?? 0)}
+                          onChange={(event) => setCardBalanceDrafts((current) => ({ ...current, [card.id]: event.target.value }))}
+                          className="w-36 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
+                        />
+                      </label>
+                      <button type="button" onClick={() => updateCardBalance(card.id)} className="rounded-lg bg-harbor-teal px-3 py-2 text-xs font-semibold text-white">Update Balance</button>
+                      <label className="grid gap-1">
+                        <span className="text-xs text-harbor-navy/45">Close Day</span>
+                        <input type="number" min="1" max="31" value={card.statementClosingDay ?? 31} onChange={(event) => updateCard(card.id, (current) => ({ ...current, statementClosingDay: clampDay(event.target.value, 31) }))} className="w-24 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
+                      </label>
+                      <label className="grid gap-1">
+                        <span className="text-xs text-harbor-navy/45">Due Day</span>
+                        <input type="number" min="1" max="31" value={card.paymentDueDay ?? 15} onChange={(event) => updateCard(card.id, (current) => ({ ...current, paymentDueDay: clampDay(event.target.value, 15) }))} className="w-24 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" />
+                      </label>
+                      <button type="button" onClick={() => removeCard(card.id)} className="rounded-lg border border-harbor-red/20 px-3 py-2 text-xs font-semibold text-harbor-red">Remove</button>
+                    </div>
                   </div>
-                  <p className="text-xs text-slate-400 mt-0.5">
-                    ${item.defaultAmount.toLocaleString()} · {item.waveType === "oneTime" ? `One-time · ${item.oneTimeDate ?? "No date"}` : recurrenceLabel(item.recurrence ?? recurrenceFromLegacyFrequency(item))}
-                    {" · "}{getRippleType(item) === "flexible" ? "Flexible spending" : "Fixed obligation"}
-                    {item.paymentMethod === "checking" && " · Checking"}
-                  </p>
                 </div>
-                <div className="flex gap-2 flex-shrink-0">
-                  <button
-                    onClick={() => { setRipplesForm({ ...item }); setWavesForm(null); }}
-                    className="px-3 py-2 text-xs bg-harbor-teal/10 text-harbor-teal rounded-lg hover:bg-harbor-teal/20 font-medium"
-                  >
-                    Edit
-                  </button>
-                  <button
-                    onClick={() => deleteItem(item.id)}
-                    className="px-3 py-2 text-xs bg-harbor-red/10 text-harbor-red rounded-lg hover:bg-harbor-red/20 font-medium"
-                  >
-                    Delete
-                  </button>
+              ))}
+            </div>
+            <div className="mt-4 grid gap-2 md:grid-cols-[1fr_120px_120px_auto]">
+              <input className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="Card name" value={newCard.label} onChange={(event) => setNewCard((current) => ({ ...current, label: event.target.value }))} />
+              <input className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" type="number" min="1" max="31" aria-label="Statement close day" value={newCard.closeDay} onChange={(event) => setNewCard((current) => ({ ...current, closeDay: event.target.value }))} />
+              <input className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" type="number" min="1" max="31" aria-label="Due day" value={newCard.dueDay} onChange={(event) => setNewCard((current) => ({ ...current, dueDay: event.target.value }))} />
+              <button type="button" onClick={addCard} className="rounded-lg bg-harbor-navy px-4 py-2 text-sm font-semibold text-white">Add Card</button>
+            </div>
+          </Section>
+        )}
+
+        {activeSection === "charts" && (
+          <Section title="Charts" subtitle="Budget organization. Charts do not control cash timing.">
+            <div className="space-y-2">
+              {settings.categories.map((chart, index) => (
+                <div key={chart} className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-slate-100 bg-harbor-offwhite px-4 py-3">
+                  <div>
+                    <div className="font-bold">{chart}</div>
+                    <div className="text-xs text-harbor-navy/50">{settings.lineItems.filter((item) => item.category === chart).length} definitions</div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => moveChart(chart, -1)} disabled={index === 0} className="rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-harbor-navy/55 disabled:opacity-35">Up</button>
+                    <button type="button" onClick={() => moveChart(chart, 1)} disabled={index === settings.categories.length - 1} className="rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-harbor-navy/55 disabled:opacity-35">Down</button>
+                    <button type="button" onClick={() => removeChart(chart)} className="rounded-md border border-harbor-red/20 px-2 py-1 text-xs font-semibold text-harbor-red">Remove</button>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
-
-          {ripplesForm && (
-            <ItemForm
-              item={ripplesForm}
-              categories={settings.categories}
-              cardOptions={cardOptions}
-              isIncome={false}
-              onSave={saveItem}
-              onCancel={() => setRipplesForm(null)}
-            />
-          )}
-        </div>
-
-        {/* ── Chart Positions (Categories) ── */}
-        <div ref={categoriesRef} id="categories" className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 scroll-mt-32">
-          <SectionHeader
-            icon={
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2A9D8F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10"/>
-                <line x1="12" y1="8" x2="12" y2="12"/>
-                <line x1="12" y1="16" x2="12.01" y2="16"/>
-              </svg>
-            }
-            title="Chart Positions"
-            subtitle="Organize your budget into categories"
-            count={settings.categories.length}
-          />
-
-          <div className="space-y-2 mb-4">
-            {settings.categories.map((cat) => (
-              <div key={cat} className="flex items-center justify-between bg-harbor-offwhite rounded-xl px-4 py-3 border border-slate-100">
-                <div>
-                  <span className="font-medium text-sm text-harbor-navy">{cat}</span>
-                  <span className="ml-2 text-xs text-slate-400">
-                    {settings.lineItems.filter((i) => i.category === cat).length} items
-                  </span>
-                </div>
-                <button
-                  onClick={() => removeCategory(cat)}
-                  className="px-3 py-1.5 text-xs bg-harbor-red/10 text-harbor-red rounded-lg hover:bg-harbor-red/20 font-medium"
-                >
-                  Remove
-                </button>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex gap-2 mb-4">
-            <input
-              className="flex-1 border-2 border-slate-100 rounded-xl px-4 py-2 focus:outline-none focus:border-harbor-teal text-sm"
-              placeholder="New category name..."
-              value={newCat}
-              onChange={(e) => setNewCat(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addCategory()}
-            />
-            <button onClick={addCategory} className="px-4 py-2 bg-harbor-teal text-white rounded-xl hover:bg-harbor-teal/90 transition-colors text-sm font-medium">
-              Add
-            </button>
-          </div>
-
-          {unusedDefaults.length > 0 && (
-            <div>
-              <p className="text-xs text-slate-400 mb-2">Quick-add defaults:</p>
-              <div className="flex flex-wrap gap-2">
-                {unusedDefaults.map((cat) => (
-                  <button
-                    key={cat}
-                    onClick={() => {
-                      if (!settings.categories.includes(cat)) persist({ ...settings, categories: [...settings.categories, cat] });
-                    }}
-                    className="px-3 py-1.5 rounded-full text-xs border-2 border-dashed border-slate-200 text-slate-500 hover:border-harbor-teal hover:text-harbor-teal transition-colors"
-                  >
-                    + {cat}
-                  </button>
+              ))}
+            </div>
+            <div className="mt-4 flex gap-2">
+              <input className="flex-1 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="New Chart name" value={newChart} onChange={(event) => setNewChart(event.target.value)} onKeyDown={(event) => event.key === "Enter" && addChart()} />
+              <button type="button" onClick={addChart} className="rounded-lg bg-harbor-teal px-4 py-2 text-sm font-semibold text-white">Add Chart</button>
+            </div>
+            {unusedDefaults.length > 0 && (
+              <div className="mt-4 flex flex-wrap gap-2">
+                {unusedDefaults.map((chart) => (
+                  <button key={chart} type="button" onClick={() => void persist({ ...settings, categories: [...settings.categories, chart] })} className="rounded-full border border-dashed border-slate-300 px-3 py-1.5 text-xs font-semibold text-harbor-navy/55 hover:border-harbor-teal hover:text-harbor-teal">+ {chart}</button>
                 ))}
               </div>
-            </div>
-          )}
-        </div>
-
-        {/* ── Your Fleet (Credit Cards) ── */}
-        <div ref={fleetRef} id="fleet" className="bg-white rounded-2xl shadow-sm border border-slate-100 p-5 scroll-mt-32">
-          <SectionHeader
-            icon={
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#2A9D8F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="5" r="3"/>
-                <line x1="12" y1="8" x2="12" y2="21"/>
-                <path d="M5 15l7 6 7-6"/>
-                <line x1="5" y1="12" x2="19" y2="12"/>
-              </svg>
-            }
-            title="Your Fleet"
-            subtitle="Credit cards assigned to spending. Harbor creates the matching payment ripple automatically."
-            count={settings.creditCards.length}
-          />
-
-          <div className="space-y-2 mb-4">
-            {settings.creditCards.length === 0 && (
-              <EmptyState title="No credit cards yet">
-                Add a credit card only if you want Harbor to move wrapped spending into a future card payment.
-              </EmptyState>
             )}
-            {settings.creditCards.map((card) => (
-              <div key={card.id} className="flex flex-col gap-3 bg-harbor-offwhite rounded-xl px-4 py-3 border border-slate-100 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex items-center gap-3">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
-                    <line x1="1" y1="10" x2="23" y2="10"/>
-                  </svg>
-                  <div>
-                    <span className="font-medium text-sm text-harbor-navy">{card.label}</span>
-                    <p className="text-xs text-slate-400">Statement closes day {card.statementClosingDay ?? 31}</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <label className="text-xs text-slate-500" htmlFor={`statement-day-${card.id}`}>Closes</label>
-                  <input
-                    id={`statement-day-${card.id}`}
-                    type="number"
-                    min="1"
-                    max="31"
-                    value={card.statementClosingDay ?? 31}
-                    onChange={(e) => updateCardStatementDay(card.id, e.target.value)}
-                    className="w-16 rounded-lg border border-slate-200 px-2 py-1.5 text-sm text-harbor-navy focus:border-harbor-teal focus:outline-none"
-                  />
-                  <button
-                    onClick={() => removeCard(card.id)}
-                    className="px-3 py-1.5 text-xs bg-harbor-red/10 text-harbor-red rounded-lg hover:bg-harbor-red/20 font-medium"
-                  >
-                    Remove
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <input
-              className="flex-1 border-2 border-slate-100 rounded-xl px-4 py-2 focus:outline-none focus:border-harbor-teal text-sm"
-              placeholder="Vessel name (e.g. Capital One)"
-              value={newCardLabel}
-              onChange={(e) => setNewCardLabel(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addCard()}
-            />
-            <input
-              className="w-full border-2 border-slate-100 rounded-xl px-4 py-2 focus:outline-none focus:border-harbor-teal text-sm sm:w-36"
-              type="number"
-              min="1"
-              max="31"
-              aria-label="Statement closing day"
-              title="Statement closing day"
-              value={newCardStatementDay}
-              onChange={(e) => setNewCardStatementDay(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && addCard()}
-            />
-            <button onClick={addCard} className="px-4 py-2 bg-harbor-navy text-white rounded-xl hover:bg-harbor-navy/90 transition-colors text-sm font-medium">
-              Add Vessel
-            </button>
-          </div>
-        </div>
-
+          </Section>
+        )}
       </div>
     </main>
+  );
+}
+
+function Section({ title, subtitle, action, children }: { title: string; subtitle: string; action?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <section className="rounded-lg border border-harbor-teal-light bg-white p-5 shadow-sm">
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-bold">{title}</h2>
+          <p className="mt-1 text-sm text-harbor-navy/55">{subtitle}</p>
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function DefinitionRow({ title, badge, summary, impact, onEdit, onDelete }: { title: string; badge: string; summary: string; impact: string; onEdit: () => void; onDelete: () => void }) {
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-slate-100 bg-harbor-offwhite px-4 py-3 lg:flex-row lg:items-center lg:justify-between">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="font-bold">{title}</div>
+          <span className="rounded-full bg-white px-2 py-0.5 text-xs font-semibold text-harbor-teal">{badge}</span>
+        </div>
+        <div className="mt-1 text-sm text-harbor-navy/55">{summary}</div>
+        <div className="mt-1 text-xs font-semibold text-harbor-navy/45">{impact}</div>
+      </div>
+      <div className="flex gap-2">
+        <button type="button" onClick={onEdit} className="rounded-lg bg-harbor-teal/10 px-3 py-2 text-xs font-semibold text-harbor-teal">Edit</button>
+        <button type="button" onClick={onDelete} className="rounded-lg bg-harbor-red/10 px-3 py-2 text-xs font-semibold text-harbor-red">Delete</button>
+      </div>
+    </div>
+  );
+}
+
+function FleetBalanceSummary({ card }: { card: CreditCardAccount }) {
+  const updatedAt = card.currentBalanceUpdatedAt ? new Date(card.currentBalanceUpdatedAt) : null;
+  const anchorDate = updatedAt && !Number.isNaN(updatedAt.getTime()) ? updatedAt : new Date();
+  const cycle = cardCycleForDate(card, anchorDate);
+
+  return (
+    <div className="grid gap-3 rounded-lg border border-white bg-white/70 p-3 md:grid-cols-2">
+      <div>
+        <div className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">Current Balance</div>
+        <div className="mt-1 text-xl font-bold text-harbor-navy">{formatMoney(card.currentBalance ?? 0)}</div>
+        <div className="text-xs text-harbor-navy/50">{updatedAt ? `Updated ${formatShortDate(updatedAt)}` : "Not updated yet"}</div>
+      </div>
+      <div>
+        <div className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">Current Cycle</div>
+        <div className="mt-1 text-sm font-bold text-harbor-navy">{formatShortDate(cycle.cycleStart)} - {formatShortDate(cycle.cycleEnd)}</div>
+        <div className="text-xs text-harbor-navy/50">Projected due {formatShortDate(cycle.dueDate)}</div>
+      </div>
+    </div>
+  );
+}
+
+function RippleForm({ item, charts, paymentOptions, onSave, onCancel }: { item: EditingItem; charts: string[]; paymentOptions: { value: PaymentMethod; label: string }[]; onSave: (item: EditingItem) => void | Promise<void>; onCancel: () => void }) {
+  const [form, setForm] = useState<EditingItem>({ ...item, planType: item.planType ?? getRipplePlanType(item as LineItem) });
+  const planType = form.planType ?? "weekly_allowance";
+  const recurrence = form.recurrence ?? getDefaultRecurrence();
+
+  function setPlanType(nextPlanType: RipplePlanType) {
+    setForm((current) => ({
+      ...current,
+      planType: nextPlanType,
+      rippleType: nextPlanType === "scheduled_expense" ? "fixed" : "flexible",
+      waveType: nextPlanType === "monthly_allowance" ? current.waveType ?? "recurring" : "recurring",
+      recurrence: nextPlanType === "scheduled_expense" ? current.recurrence ?? getDefaultRecurrence() : undefined,
+      oneTimeDate: nextPlanType === "monthly_allowance" && current.waveType === "oneTime" ? current.oneTimeDate ?? monthDateFromValue(currentMonthValue()) : undefined,
+    }));
+  }
+
+  return (
+    <div className="mt-4 rounded-lg border border-harbor-teal-light bg-harbor-offwhite p-4">
+      <h3 className="font-bold">{form.id ? "Edit Ripple" : "New Ripple"}</h3>
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <Field label="Name"><input autoFocus className="field" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="Groceries" /></Field>
+        <Field label="Amount"><MoneyInput value={form.defaultAmount} onChange={(value) => setForm((current) => ({ ...current, defaultAmount: value }))} /></Field>
+        <Field label="Plan Type">
+          <select className="field" value={planType} onChange={(event) => setPlanType(event.target.value as RipplePlanType)}>
+            <option value="weekly_allowance">Weekly Allowance</option>
+            <option value="monthly_allowance">Monthly Allowance</option>
+            <option value="scheduled_expense">Scheduled Expense</option>
+          </select>
+        </Field>
+        <Field label="Chart">
+          <select className="field" value={form.category} onChange={(event) => setForm((current) => ({ ...current, category: event.target.value }))}>
+            {charts.map((chart) => <option key={chart} value={chart}>{chart}</option>)}
+          </select>
+        </Field>
+        <Field label={planType === "scheduled_expense" ? "Payment Method" : "Default Payment"}>
+          <select className="field" value={form.paymentMethod} onChange={(event) => setForm((current) => ({ ...current, paymentMethod: event.target.value as PaymentMethod }))}>
+            {paymentOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+        </Field>
+        {planType === "monthly_allowance" && (
+          <>
+            <Field label="Month Behavior">
+              <select className="field" value={form.waveType === "oneTime" ? "oneTime" : "recurring"} onChange={(event) => setForm((current) => ({ ...current, waveType: event.target.value as "recurring" | "oneTime", oneTimeDate: event.target.value === "oneTime" ? current.oneTimeDate ?? monthDateFromValue(currentMonthValue()) : undefined }))}>
+                <option value="recurring">Every month</option>
+                <option value="oneTime">One selected month</option>
+              </select>
+            </Field>
+            {form.waveType === "oneTime" && <Field label="Budget Month"><input className="field" type="month" value={monthValueFromDate(form.oneTimeDate)} onChange={(event) => setForm((current) => ({ ...current, oneTimeDate: monthDateFromValue(event.target.value) }))} /></Field>}
+          </>
+        )}
+        {planType === "scheduled_expense" && (
+          <ScheduleFields form={form} recurrence={recurrence} onChange={setForm} />
+        )}
+      </div>
+      <PlanHint planType={planType} paymentMethod={form.paymentMethod} />
+      <FormActions onSave={() => void onSave(form)} onCancel={onCancel} />
+    </div>
+  );
+}
+
+function WaveForm({ item, onSave, onCancel }: { item: EditingItem; onSave: (item: EditingItem) => void | Promise<void>; onCancel: () => void }) {
+  const [form, setForm] = useState<EditingItem>(item);
+  const recurrence = form.recurrence ?? getDefaultRecurrence();
+  return (
+    <div className="mt-4 rounded-lg border border-harbor-teal-light bg-harbor-offwhite p-4">
+      <h3 className="font-bold">{form.id ? "Edit Wave" : "New Wave"}</h3>
+      <div className="mt-3 grid gap-3 md:grid-cols-2">
+        <Field label="Name"><input autoFocus className="field" value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} placeholder="Main Pay" /></Field>
+        <Field label="Amount"><MoneyInput value={form.defaultAmount} onChange={(value) => setForm((current) => ({ ...current, defaultAmount: value }))} /></Field>
+        <Field label="Wave Type">
+          <select className="field" value={form.waveType ?? "recurring"} onChange={(event) => setForm((current) => ({ ...current, waveType: event.target.value as "recurring" | "oneTime", oneTimeDate: event.target.value === "oneTime" ? current.oneTimeDate ?? todayISODate() : undefined, recurrence: event.target.value === "recurring" ? current.recurrence ?? getDefaultRecurrence() : undefined }))}>
+            <option value="recurring">Recurring Income</option>
+            <option value="oneTime">One-Time Income</option>
+          </select>
+        </Field>
+        <Field label="Destination"><input className="field" value="Checking" disabled /></Field>
+        {form.waveType === "oneTime" ? (
+          <Field label="Date"><input className="field" type="date" value={form.oneTimeDate ?? todayISODate()} onChange={(event) => setForm((current) => ({ ...current, oneTimeDate: event.target.value }))} /></Field>
+        ) : (
+          <ScheduleFields form={form} recurrence={recurrence} onChange={setForm} income />
+        )}
+      </div>
+      <p className="mt-3 text-xs text-harbor-navy/55">Dock cash-in. Waves define expected deposits, not Budget spending.</p>
+      <FormActions onSave={() => void onSave(form)} onCancel={onCancel} />
+    </div>
+  );
+}
+
+function ScheduleFields({ form, recurrence, onChange, income }: { form: EditingItem; recurrence: Recurrence; onChange: React.Dispatch<React.SetStateAction<EditingItem>>; income?: boolean }) {
+  function setRecurrence(next: Recurrence) {
+    onChange((current) => ({ ...current, recurrence: next, frequency: frequencyForRecurrence(next), anchorDate: next.startDate }));
+  }
+
+  function setRecurrenceType(nextType: RecurrenceType) {
+    const startDate = recurrence.startDate ?? todayISODate();
+    const defaults: Record<RecurrenceType, Recurrence> = {
+      weekly: { type: "weekly", daysOfWeek: recurrence.daysOfWeek ?? [5] },
+      biweekly: { type: "biweekly", daysOfWeek: recurrence.daysOfWeek ?? [5], startDate },
+      twiceMonthly: { type: "twiceMonthly", daysOfMonth: recurrence.daysOfMonth?.slice(0, 2) ?? [1, 15] },
+      monthly: { type: "monthly", daysOfMonth: [recurrence.daysOfMonth?.[0] ?? 1] },
+      custom: { type: "custom", interval: recurrence.interval ?? 1, unit: recurrence.unit ?? "weeks", startDate },
+    };
+    setRecurrence(defaults[nextType]);
+  }
+
+  if (form.waveType === "oneTime") {
+    return <Field label="Date"><input className="field" type="date" value={form.oneTimeDate ?? todayISODate()} onChange={(event) => onChange((current) => ({ ...current, oneTimeDate: event.target.value }))} /></Field>;
+  }
+
+  return (
+    <>
+      <Field label={income ? "Income Schedule" : "Schedule"}>
+        <select className="field" value={recurrence.type} onChange={(event) => setRecurrenceType(event.target.value as RecurrenceType)}>
+          <option value="weekly">Weekly</option>
+          <option value="biweekly">Every two weeks</option>
+          <option value="twiceMonthly">Twice monthly</option>
+          <option value="monthly">Monthly</option>
+          <option value="custom">Custom</option>
+        </select>
+      </Field>
+      {(recurrence.type === "weekly" || recurrence.type === "biweekly") && (
+        <Field label="Day of Week">
+          <select className="field" value={recurrence.daysOfWeek?.[0] ?? 5} onChange={(event) => setRecurrence({ ...recurrence, daysOfWeek: [Number(event.target.value)] })}>
+            {DAY_LABELS.map((label, index) => <option key={label} value={index}>{label}</option>)}
+          </select>
+        </Field>
+      )}
+      {recurrence.type === "biweekly" && <Field label="Starting Date"><input className="field" type="date" value={recurrence.startDate ?? todayISODate()} onChange={(event) => setRecurrence({ ...recurrence, startDate: event.target.value })} /></Field>}
+      {recurrence.type === "twiceMonthly" && (
+        <>
+          <Field label="First Date"><MonthDaySelect value={recurrence.daysOfMonth?.[0]} onChange={(day) => setRecurrence({ ...recurrence, daysOfMonth: [day, recurrence.daysOfMonth?.[1] ?? 15] })} /></Field>
+          <Field label="Second Date"><MonthDaySelect value={recurrence.daysOfMonth?.[1] ?? 15} onChange={(day) => setRecurrence({ ...recurrence, daysOfMonth: [recurrence.daysOfMonth?.[0] ?? 1, day] })} /></Field>
+        </>
+      )}
+      {recurrence.type === "monthly" && <Field label="Date of Month"><MonthDaySelect value={recurrence.daysOfMonth?.[0]} onChange={(day) => setRecurrence({ ...recurrence, daysOfMonth: [day] })} /></Field>}
+      {recurrence.type === "custom" && (
+        <>
+          <Field label="Every"><input className="field" type="number" min="1" value={recurrence.interval ?? 1} onChange={(event) => setRecurrence({ ...recurrence, interval: Math.max(1, Number(event.target.value) || 1) })} /></Field>
+          <Field label="Unit">
+            <select className="field" value={recurrence.unit ?? "weeks"} onChange={(event) => setRecurrence({ ...recurrence, unit: event.target.value as RecurrenceUnit })}>
+              <option value="days">Days</option>
+              <option value="weeks">Weeks</option>
+              <option value="months">Months</option>
+            </select>
+          </Field>
+        </>
+      )}
+    </>
+  );
+}
+
+function MonthDaySelect({ value, onChange }: { value: DayOfMonth | undefined; onChange: (day: DayOfMonth) => void }) {
+  return (
+    <select className="field" value={dayOfMonthValue(value)} onChange={(event) => onChange(parseDayOfMonth(event.target.value))}>
+      {MONTH_DAY_OPTIONS.map((day) => <option key={day} value={day}>{day === "last" ? "Last day" : day}</option>)}
+    </select>
+  );
+}
+
+function MoneyInput({ value, onChange }: { value: number; onChange: (value: number) => void }) {
+  return (
+    <div className="relative">
+      <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-harbor-navy/35">$</span>
+      <input className="field pl-7" type="number" min="0" step="0.01" value={value || ""} onChange={(event) => onChange(Number(event.target.value))} />
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="grid gap-1">
+      <span className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function PlanHint({ planType, paymentMethod }: { planType: RipplePlanType; paymentMethod: PaymentMethod }) {
+  const text = planType === "weekly_allowance"
+    ? "An amount available throughout each calendar week. No automatic Dock event is created."
+    : planType === "monthly_allowance"
+      ? "An amount available throughout the month. Purchases consume it as they happen."
+      : paymentMethod === "checking"
+        ? "Planned in Budget and included in Dock when scheduled."
+        : "Planned in Budget and routed into a future Fleet payment.";
+  return <p className="mt-3 text-xs text-harbor-navy/55">{text}</p>;
+}
+
+function FormActions({ onSave, onCancel }: { onSave: () => void; onCancel: () => void }) {
+  return (
+    <div className="mt-4 flex gap-2">
+      <button type="button" onClick={onSave} className="rounded-lg bg-harbor-teal px-4 py-2 text-sm font-semibold text-white">Save</button>
+      <button type="button" onClick={onCancel} className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-harbor-navy/60">Cancel</button>
+    </div>
   );
 }

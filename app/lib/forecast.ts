@@ -66,7 +66,7 @@ export function buildMonthForecast({
 
     let net = 0;
     for (const item of settings.lineItems) {
-      if (!lineItemAppliesToWeek(item, weekIndex, week.start, week.end, month)) {
+      if (!lineItemAppliesToWeek(item, weekIndex, week.start, week.end, month, weeks.length)) {
         continue;
       }
       if (!lineItemMovesCash(item)) {
