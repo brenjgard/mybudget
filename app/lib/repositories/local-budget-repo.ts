@@ -8,6 +8,7 @@ import type { AppSettings, DockItemState, SpendLogEntry } from "../types";
 
 const CLOSED_WEEKS_KEY = "harbor_closed_weeks";
 const CLOSED_MONTHS_KEY = "harbor_closed_months";
+const CHECKING_ANCHOR_KEY = "harbor_checking_anchor";
 
 function closedWeekKey(monthKey: string, cardId: string, weekIndex: number) {
   return `${monthKey}-${cardId}-${weekIndex}`;
@@ -99,6 +100,18 @@ export const localBudgetRepo = {
     return checkingBalance === undefined || checkingBalance === 0 ? null : checkingBalance;
   },
 
+  getCheckingAnchor(): { balance: number | null; updatedAt?: string } {
+    const balance = this.getAnchorOverride();
+    try {
+      warnIfLegacyStorageExists(CHECKING_ANCHOR_KEY, "checking anchor");
+      const raw = localStorage.getItem(scopedStorageKey(CHECKING_ANCHOR_KEY));
+      const parsed = raw ? JSON.parse(raw) as { updatedAt?: string } : {};
+      return { balance, updatedAt: parsed.updatedAt };
+    } catch {
+      return { balance };
+    }
+  },
+
   saveAnchorOverride(override: number | null): number | null {
     const settings = localRepo.loadSettings();
     if (!settings) return override;
@@ -109,6 +122,13 @@ export const localBudgetRepo = {
     });
 
     return override;
+  },
+
+  saveCheckingAnchor(override: number | null): { balance: number | null; updatedAt: string } {
+    const balance = this.saveAnchorOverride(override);
+    const updatedAt = new Date().toISOString();
+    localStorage.setItem(scopedStorageKey(CHECKING_ANCHOR_KEY), JSON.stringify({ updatedAt }));
+    return { balance, updatedAt };
   },
 
   getClosedWeeks(monthKey: string): Set<string> {

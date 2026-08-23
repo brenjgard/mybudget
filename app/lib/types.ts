@@ -22,6 +22,7 @@ export type FrequencyType =
 
 export type WaveType = "recurring" | "oneTime";
 export type RippleType = "fixed" | "flexible";
+export type RipplePlanType = "weekly_allowance" | "monthly_allowance" | "scheduled_expense";
 export type ItemBehavior = "fixed_bill" | "flexible_spend" | "credit_card_payment" | "income";
 export type DockItemKind = "ripple" | "wave" | "credit_card_payment";
 export type DockItemStatus = "upcoming" | "pending" | "cleared" | "skipped" | "adjusted";
@@ -43,6 +44,8 @@ export type PreferredPaymentTiming = "on_due_date" | "days_before_due" | "specif
 export type CreditCardAccount = {
   id: PaymentMethod;
   label: string;
+  currentBalance?: number;
+  currentBalanceUpdatedAt?: string;
   statementClosingDay?: number;
   paymentDueDay?: number;
   preferredPaymentTiming?: PreferredPaymentTiming;
@@ -64,6 +67,7 @@ export type LineItem = {
   oneTimeDate?: string; // YYYY-MM-DD for one-time waves/ripples
   recurrence?: Recurrence;
   rippleType?: RippleType; // missing means fixed unless inferred for older saved ripples
+  planType?: RipplePlanType; // spending behavior: allowance capacity or scheduled expense
   preferredPaymentDate?: string; // YYYY-MM-DD cash date override for checking obligations
   paymentDueDate?: string; // YYYY-MM-DD cash date fallback for checking obligations
 };

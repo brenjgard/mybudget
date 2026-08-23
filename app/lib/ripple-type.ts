@@ -1,4 +1,4 @@
-import type { DockItemKind, ItemBehavior, LineItem, RippleType } from "./types";
+import type { DockItemKind, ItemBehavior, LineItem, RipplePlanType, RippleType } from "./types";
 
 const FLEXIBLE_CATEGORY_NAMES = new Set([
   "food",
@@ -38,6 +38,20 @@ export function getRippleType(item: Pick<LineItem, "isIncome" | "category" | "na
 
 export function isFlexibleRipple(item: Pick<LineItem, "isIncome" | "category" | "name" | "rippleType">) {
   return !item.isIncome && getRippleType(item) === "flexible";
+}
+
+export function getRipplePlanType(item: Pick<LineItem, "isIncome" | "frequency" | "waveType" | "recurrence" | "rippleType" | "category" | "name" | "planType">): RipplePlanType {
+  if (item.isIncome) return "scheduled_expense";
+  if (item.planType) return item.planType;
+
+  if (getRippleType(item) === "flexible") {
+    if (item.waveType === "oneTime" || item.recurrence?.type === "monthly" || item.recurrence?.unit === "months") {
+      return "monthly_allowance";
+    }
+    return "weekly_allowance";
+  }
+
+  return "scheduled_expense";
 }
 
 export function getItemBehavior(item: Pick<LineItem, "isIncome" | "category" | "name" | "paymentMethod" | "rippleType">): ItemBehavior {

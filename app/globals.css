@@ -35,3 +35,23 @@ input[type="number"]::-webkit-outer-spin-button {
 input[type="number"] {
   -moz-appearance: textfield;
 }
+
+.field {
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid #e2e8f0;
+  background: #ffffff;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  color: #1B3A5C;
+  outline: none;
+}
+
+.field:focus {
+  border-color: #2A9D8F;
+}
+
+.field:disabled {
+  background: #f8fafc;
+  color: rgba(27, 58, 92, 0.5);
+}

@@ -3,7 +3,7 @@
 import { createClient } from "../supabase/client";
 import type { CCCharge } from "../local-repo";
 import type { Buoy } from "../local-repo";
-import type { AppSettings, DockItemKind, DockItemState, DockItemStatus, FrequencyType, ItemBehavior, LineItem, PaymentMethod, PreferredPaymentTiming, Recurrence, RippleType, SpendLogEntry } from "../types";
+import type { AppSettings, DockItemKind, DockItemState, DockItemStatus, FrequencyType, ItemBehavior, LineItem, PaymentMethod, PreferredPaymentTiming, Recurrence, RipplePlanType, RippleType, SpendLogEntry } from "../types";
 
 type User = {
   id: string;
@@ -11,6 +11,7 @@ type User = {
 
 type BudgetSettingsRow = {
   checking_balance: number | string | null;
+  updated_at?: string | null;
 };
 
 type PaymentAccountRow = {
@@ -18,6 +19,8 @@ type PaymentAccountRow = {
   account_key: string;
   kind: "checking" | "credit";
   label: string;
+  current_balance?: number | string | null;
+  current_balance_updated_at?: string | null;
   statement_closing_day?: number | null;
   payment_due_day?: number | null;
   preferred_payment_timing?: PreferredPaymentTiming | null;
@@ -25,7 +28,7 @@ type PaymentAccountRow = {
   preferred_payment_day?: number | null;
 };
 
-const PAYMENT_ACCOUNT_COLUMNS = "id, account_key, kind, label, statement_closing_day, payment_due_day, preferred_payment_timing, preferred_payment_days_before_due, preferred_payment_day";
+const PAYMENT_ACCOUNT_COLUMNS = "id, account_key, kind, label, current_balance, current_balance_updated_at, statement_closing_day, payment_due_day, preferred_payment_timing, preferred_payment_days_before_due, preferred_payment_day";
 
 type CategoryRow = {
   id: string;
@@ -46,6 +49,7 @@ type LineItemRow = {
   one_time_date?: string | null;
   recurrence?: Recurrence | null;
   ripple_type?: RippleType | null;
+  plan_type?: RipplePlanType | null;
   preferred_payment_date?: string | null;
   payment_due_date?: string | null;
 };
@@ -123,10 +127,47 @@ type BuoyRow = {
   last_auto_save: string | null;
 };
 
+type SupabaseLikeError = {
+  message?: string;
+  details?: string;
+  hint?: string;
+  code?: string;
+};
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function isUuid(value: string) {
   return UUID_RE.test(value);
+}
+
+function readableSupabaseError(error: unknown, context: string): Error {
+  if (error instanceof Error) return error;
+
+  if (error && typeof error === "object") {
+    const supabaseError = error as SupabaseLikeError;
+    const parts = [
+      supabaseError.message,
+      supabaseError.details,
+      supabaseError.hint,
+      supabaseError.code ? `Code: ${supabaseError.code}` : undefined,
+    ].filter(Boolean);
+
+    if (parts.length > 0) {
+      return new Error(`${context}: ${parts.join(" ")}`);
+    }
+
+    try {
+      return new Error(`${context}: ${JSON.stringify(error)}`);
+    } catch {
+      return new Error(`${context}: Unknown Supabase error`);
+    }
+  }
+
+  return new Error(`${context}: ${String(error)}`);
+}
+
+function throwSupabaseError(error: unknown, context: string): never {
+  throw readableSupabaseError(error, context);
 }
 
 function closedWeekKey(monthKey: string, cardId: string, weekIndex: number) {
@@ -186,6 +227,8 @@ function buildSettingsFromSupabase({
       .map((account) => ({
         id: account.account_key as PaymentMethod,
         label: account.label,
+        currentBalance: account.current_balance === null || account.current_balance === undefined ? undefined : Number(account.current_balance),
+        currentBalanceUpdatedAt: account.current_balance_updated_at ?? undefined,
         statementClosingDay: account.statement_closing_day ?? undefined,
         paymentDueDay: account.payment_due_day ?? undefined,
         preferredPaymentTiming: account.preferred_payment_timing ?? undefined,
@@ -207,6 +250,7 @@ function buildSettingsFromSupabase({
       oneTimeDate: item.one_time_date ?? undefined,
       recurrence: item.recurrence ?? undefined,
       rippleType: item.ripple_type ?? undefined,
+      planType: item.plan_type ?? undefined,
       preferredPaymentDate: item.preferred_payment_date ?? undefined,
       paymentDueDate: item.payment_due_date ?? undefined,
     })),
@@ -272,7 +316,7 @@ async function loadSettingsForUser(userId: string): Promise<AppSettings | null> 
       .returns<CategoryRow[]>(),
     supabase
       .from("line_items")
-      .select("id, category_id, payment_account_id, name, default_amount, is_income, frequency, anchor_date, anchor_month, wave_type, one_time_date, recurrence, ripple_type, preferred_payment_date, payment_due_date")
+      .select("id, category_id, payment_account_id, name, default_amount, is_income, frequency, anchor_date, anchor_month, wave_type, one_time_date, recurrence, ripple_type, plan_type, preferred_payment_date, payment_due_date")
       .eq("user_id", userId)
       .order("sort_order", { ascending: true })
       .returns<LineItemRow[]>(),
@@ -308,7 +352,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
     .eq("user_id", user.id)
     .maybeSingle<BudgetSettingsRow>();
 
-  if (existingSettingsError) throw existingSettingsError;
+  if (existingSettingsError) throwSupabaseError(existingSettingsError, "Could not inspect Budget settings");
 
   if (existingBudgetSettings?.checking_balance === null || existingBudgetSettings?.checking_balance === undefined) {
     const { error: settingsError } = await supabase
@@ -322,7 +366,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
         { onConflict: "user_id" },
       );
 
-    if (settingsError) throw settingsError;
+    if (settingsError) throwSupabaseError(settingsError, "Could not save Budget settings");
   }
 
   const desiredAccounts = [
@@ -331,6 +375,8 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       account_key: "checking",
       kind: "checking",
       label: "Checking",
+      current_balance: settings.checkingBalance,
+      current_balance_updated_at: null,
       sort_order: 0,
     },
     ...settings.creditCards.map((card, index) => ({
@@ -338,6 +384,8 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       account_key: card.id,
       kind: "credit",
       label: card.label,
+      current_balance: card.currentBalance ?? 0,
+      current_balance_updated_at: card.currentBalanceUpdatedAt ?? null,
       statement_closing_day: card.statementClosingDay ?? null,
       payment_due_day: card.paymentDueDay ?? null,
       preferred_payment_timing: card.preferredPaymentTiming ?? null,
@@ -351,7 +399,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
     .from("payment_accounts")
     .upsert(desiredAccounts, { onConflict: "user_id,account_key" });
 
-  if (accountsError) throw accountsError;
+  if (accountsError) throwSupabaseError(accountsError, "Could not save Fleet accounts. Apply db/0014_fleet_card_balance_anchor.sql if this mentions current_balance_updated_at");
 
   const desiredCategoryNames = Array.from(
     new Set([...settings.categories, ...settings.lineItems.map((item) => item.category)].filter(Boolean)),
@@ -367,7 +415,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       .from("categories")
       .upsert(desiredCategories, { onConflict: "user_id,name" });
 
-    if (categoriesError) throw categoriesError;
+    if (categoriesError) throwSupabaseError(categoriesError, "Could not save Charts");
   }
 
   const [accountsResult, categoriesResult, existingLineItemsResult] = await Promise.all([
@@ -388,9 +436,9 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       .returns<Pick<LineItemRow, "id">[]>(),
   ]);
 
-  if (accountsResult.error) throw accountsResult.error;
-  if (categoriesResult.error) throw categoriesResult.error;
-  if (existingLineItemsResult.error) throw existingLineItemsResult.error;
+  if (accountsResult.error) throwSupabaseError(accountsResult.error, "Could not reload Fleet accounts. Apply db/0014_fleet_card_balance_anchor.sql if this mentions current_balance_updated_at");
+  if (categoriesResult.error) throwSupabaseError(categoriesResult.error, "Could not reload Charts");
+  if (existingLineItemsResult.error) throwSupabaseError(existingLineItemsResult.error, "Could not inspect Ripples and Waves");
 
   const accountsByKey = new Map((accountsResult.data ?? []).map((account) => [account.account_key, account]));
   const categoriesByName = new Map((categoriesResult.data ?? []).map((category) => [category.name, category]));
@@ -412,7 +460,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       .eq("user_id", user.id)
       .in("id", lineItemIdsToDelete);
 
-    if (deleteLineItemsError) throw deleteLineItemsError;
+    if (deleteLineItemsError) throwSupabaseError(deleteLineItemsError, "Could not remove deleted Ripples or Waves");
   }
 
   const existingRows = [];
@@ -438,6 +486,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       one_time_date: item.waveType === "oneTime" ? item.oneTimeDate ?? null : null,
       recurrence: item.waveType === "oneTime" ? null : item.recurrence ?? null,
       ripple_type: item.isIncome ? null : item.rippleType ?? null,
+      plan_type: item.isIncome ? null : item.planType ?? null,
       preferred_payment_date: item.preferredPaymentDate?.slice(0, 10) ?? null,
       payment_due_date: item.paymentDueDate?.slice(0, 10) ?? null,
       sort_order: index,
@@ -456,7 +505,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       .from("line_items")
       .upsert(existingRows, { onConflict: "id" });
 
-    if (upsertLineItemsError) throw upsertLineItemsError;
+    if (upsertLineItemsError) throwSupabaseError(upsertLineItemsError, "Could not save Ripples or Waves. Apply db/0013_ripple_plan_type.sql if this mentions plan_type");
   }
 
   if (newRows.length > 0) {
@@ -464,7 +513,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       .from("line_items")
       .insert(newRows);
 
-    if (insertLineItemsError) throw insertLineItemsError;
+    if (insertLineItemsError) throwSupabaseError(insertLineItemsError, "Could not add Ripple or Wave. Apply db/0013_ripple_plan_type.sql if this mentions plan_type");
   }
 
   const desiredAccountKeys = new Set(desiredAccounts.map((account) => account.account_key));
@@ -479,7 +528,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       .eq("user_id", user.id)
       .in("id", removedCreditAccountIds);
 
-    if (deleteAccountsError) throw deleteAccountsError;
+    if (deleteAccountsError) throwSupabaseError(deleteAccountsError, "Could not remove deleted Fleet card");
   }
 
   const desiredCategoryNameSet = new Set(desiredCategoryNames);
@@ -494,7 +543,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       .eq("user_id", user.id)
       .in("id", removedCategoryIds);
 
-    if (deleteCategoriesError) throw deleteCategoriesError;
+    if (deleteCategoriesError) throwSupabaseError(deleteCategoriesError, "Could not remove deleted Chart");
   }
 
   const savedSettings = await loadSettingsForUser(user.id);
@@ -623,6 +672,25 @@ async function getAnchorOverride(): Promise<number | null> {
   return checkingBalance === 0 ? null : checkingBalance;
 }
 
+async function getCheckingAnchor(): Promise<{ balance: number | null; updatedAt?: string }> {
+  const user = await getUser();
+  if (!user) return { balance: null };
+
+  const supabase = createClient();
+  const { data, error } = await supabase
+    .from("budget_settings")
+    .select("checking_balance, updated_at")
+    .eq("user_id", user.id)
+    .maybeSingle<BudgetSettingsRow>();
+
+  if (error) throw error;
+
+  const balance = data?.checking_balance === null || data?.checking_balance === undefined
+    ? null
+    : Number(data.checking_balance);
+  return { balance: balance === 0 ? null : balance, updatedAt: data?.updated_at ?? undefined };
+}
+
 async function saveAnchorOverride(override: number | null): Promise<number | null> {
   const user = await getUser();
   if (!user) throw new Error("Not authenticated");
@@ -642,6 +710,28 @@ async function saveAnchorOverride(override: number | null): Promise<number | nul
   if (error) throw error;
 
   return override;
+}
+
+async function saveCheckingAnchor(override: number | null): Promise<{ balance: number | null; updatedAt: string }> {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+
+  const updatedAt = new Date().toISOString();
+  const supabase = createClient();
+  const { error } = await supabase
+    .from("budget_settings")
+    .upsert(
+      {
+        user_id: user.id,
+        checking_balance: override ?? 0,
+        updated_at: updatedAt,
+      },
+      { onConflict: "user_id" },
+    );
+
+  if (error) throw error;
+
+  return { balance: override, updatedAt };
 }
 
 async function saveMonthBalance(monthKey: string, balance: number): Promise<Record<string, number>> {
@@ -1089,7 +1179,9 @@ export const supabaseBudgetRepo = {
   closeMonth,
   reopenMonth,
   getAnchorOverride,
+  getCheckingAnchor,
   saveAnchorOverride,
+  saveCheckingAnchor,
   getClosedWeeks,
   closeWeek,
   getCCCharges,

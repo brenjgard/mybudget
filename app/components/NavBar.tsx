@@ -7,12 +7,25 @@ import { useState, useEffect, useRef } from "react";
 
 const NAV_LINKS = [
   {
-    href: "/",
+    href: "/budget",
+    label: "Budget",
+    icon: (
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M4 19.5V4.5A2.5 2.5 0 016.5 2H20v20H6.5A2.5 2.5 0 014 19.5z"/>
+        <path d="M8 7h8"/>
+        <path d="M8 11h8"/>
+        <path d="M8 15h5"/>
+      </svg>
+    ),
+  },
+  {
+    href: "/dock",
     label: "Dock",
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/>
-        <path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/>
+        <path d="M3 20h18"/>
+        <path d="M6 20V8l6-4 6 4v12"/>
+        <path d="M9 20v-6h6v6"/>
       </svg>
     ),
   },
@@ -55,7 +68,7 @@ export default function NavBar() {
 
       {/* ── Row 1: Brand bar ── */}
       <div className="bg-harbor-navy h-20 flex items-center justify-between px-4 md:px-8">
-        <Link href={isAuthPage ? "/beta" : "/"} className="flex items-center gap-3 min-w-0">
+        <Link href={isAuthPage ? "/beta" : "/budget"} className="flex items-center gap-3 min-w-0">
           <Image
             src="/harbor-logo.svg"
             alt="Harbor"
@@ -97,7 +110,7 @@ export default function NavBar() {
       <div className="hidden md:block bg-white border-b border-slate-200 overflow-x-auto">
         <div className="px-4 md:px-8 flex items-end gap-0 min-w-max">
           {NAV_LINKS.map(({ href, label, icon }) => {
-            const isActive = href === "/" ? pathname === "/" : pathname.startsWith(href);
+            const isActive = pathname.startsWith(href);
             return (
               <Link
                 key={href}
@@ -144,7 +157,7 @@ export default function NavBar() {
       {menuOpen && !isAuthPage && (
         <div className="md:hidden absolute top-full right-4 w-56 bg-white border border-slate-200 rounded-b-xl shadow-lg overflow-hidden">
           {NAV_LINKS.map(({ href, label, icon }) => {
-            const isActive = href === "/" ? pathname === "/" : pathname.startsWith(href);
+            const isActive = pathname.startsWith(href);
             return (
               <Link
                 key={href}

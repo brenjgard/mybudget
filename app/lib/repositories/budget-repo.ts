@@ -6,6 +6,18 @@ import type { CCCharge } from "../local-repo";
 import type { Buoy } from "../local-repo";
 import type { AppSettings, DockItemState, SpendLogEntry } from "../types";
 
+function readableError(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === "object") {
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
+}
+
 async function loadSettings(): Promise<AppSettings | null> {
   try {
     const user = await supabaseBudgetRepo.getUser();
@@ -17,7 +29,7 @@ async function loadSettings(): Promise<AppSettings | null> {
       return supabaseSettings;
     }
   } catch (error) {
-    console.error("[BudgetRepo] Supabase settings load failed", { error });
+    console.error("[BudgetRepo] Supabase settings load failed", readableError(error));
     throw error;
   }
 
@@ -33,7 +45,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       return savedSettings;
     }
   } catch (error) {
-    console.error("[BudgetRepo] Supabase settings save failed", { error });
+    console.error("[BudgetRepo] Supabase settings save failed", readableError(error));
     throw error;
   }
 
@@ -186,6 +198,21 @@ async function getAnchorOverride(): Promise<number | null> {
   return localBudgetRepo.getAnchorOverride();
 }
 
+async function getCheckingAnchor(): Promise<{ balance: number | null; updatedAt?: string }> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      const savedAnchor = await supabaseBudgetRepo.getCheckingAnchor();
+      localBudgetRepo.saveAnchorOverride(savedAnchor.balance);
+      return savedAnchor;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.getCheckingAnchor();
+}
+
 async function saveAnchorOverride(override: number | null): Promise<number | null> {
   try {
     const user = await supabaseBudgetRepo.getUser();
@@ -200,6 +227,21 @@ async function saveAnchorOverride(override: number | null): Promise<number | nul
   }
 
   return localBudgetRepo.saveAnchorOverride(override);
+}
+
+async function saveCheckingAnchor(override: number | null): Promise<{ balance: number | null; updatedAt: string }> {
+  try {
+    const user = await supabaseBudgetRepo.getUser();
+    if (user) {
+      const savedAnchor = await supabaseBudgetRepo.saveCheckingAnchor(override);
+      localBudgetRepo.saveCheckingAnchor(savedAnchor.balance);
+      return savedAnchor;
+    }
+  } catch {
+    // Fall through to local persistence if auth/Supabase is unavailable.
+  }
+
+  return localBudgetRepo.saveCheckingAnchor(override);
 }
 
 async function getClosedWeeks(monthKey: string): Promise<Set<string>> {
@@ -415,7 +457,9 @@ export const budgetRepo = {
   closeMonth,
   reopenMonth,
   getAnchorOverride,
+  getCheckingAnchor,
   saveAnchorOverride,
+  saveCheckingAnchor,
   getClosedWeeks,
   closeWeek,
   getCCCharges,
