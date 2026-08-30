@@ -138,6 +138,9 @@ function dayMatchesDayOfMonth(date: Date, day: DayOfMonth) {
 function recurrenceHasOccurrenceOnDate(recurrence: Recurrence, date: Date) {
   const startDate = parseISODateOnly(recurrence.startDate);
   const dayOfWeek = date.getDay();
+  if (recurrence.activeMonths?.length && !recurrence.activeMonths.includes(date.getMonth() + 1)) {
+    return false;
+  }
 
   switch (recurrence.type) {
     case "weekly":
@@ -154,6 +157,17 @@ function recurrenceHasOccurrenceOnDate(recurrence: Recurrence, date: Date) {
     case "twiceMonthly":
     case "monthly": {
       const days = recurrence.daysOfMonth?.length ? recurrence.daysOfMonth : [1];
+      return days.some((day) => dayMatchesDayOfMonth(date, day));
+    }
+
+    case "quarterly":
+    case "semiannual":
+    case "annual": {
+      if (!startDate || date < startDate) return false;
+      const intervalMonths = recurrence.type === "quarterly" ? 3 : recurrence.type === "semiannual" ? 6 : 12;
+      const diffMonths = monthsBetween(startDate, date);
+      if (diffMonths < 0 || diffMonths % intervalMonths !== 0) return false;
+      const days = recurrence.daysOfMonth?.length ? recurrence.daysOfMonth : [startDate.getDate()];
       return days.some((day) => dayMatchesDayOfMonth(date, day));
     }
 
@@ -183,11 +197,13 @@ function recurrenceHasOccurrenceOnDate(recurrence: Recurrence, date: Date) {
 function recurrenceOccurrenceDatesInRange(
   recurrence: Recurrence,
   start: Date,
-  end: Date
+  end: Date,
+  month?: number
 ) {
   const dates: Date[] = [];
 
   for (let date = new Date(start); date <= end; date = addDays(date, 1)) {
+    if (month !== undefined && date.getMonth() !== month) continue;
     if (recurrenceHasOccurrenceOnDate(recurrence, date)) dates.push(new Date(date));
   }
 
@@ -267,6 +283,12 @@ export function recurrenceLabel(recurrence?: Recurrence) {
       return "Twice a month";
     case "monthly":
       return "Monthly";
+    case "quarterly":
+      return "Quarterly";
+    case "semiannual":
+      return "Every 6 months";
+    case "annual":
+      return "Yearly";
     case "custom":
       return `Every ${recurrence.interval ?? 1} ${recurrence.unit ?? "weeks"}`;
   }
@@ -288,13 +310,8 @@ export function lineItemAppliesToWeek(
     return oneTimeDate >= weekStart && oneTimeDate <= weekEnd;
   }
 
-  const dueDate = parseISODateOnly(item.paymentDueDate);
-  if (dueDate) {
-    return dueDate >= weekStart && dueDate <= weekEnd;
-  }
-
   if (item.recurrence) {
-    return recurrenceOccurrenceDatesInRange(item.recurrence, weekStart, weekEnd).length > 0;
+    return recurrenceOccurrenceDatesInRange(item.recurrence, weekStart, weekEnd, month).length > 0;
   }
 
   return itemAppliesToWeek(
@@ -323,13 +340,8 @@ export function lineItemOccurrenceDatesForWeek(
     return oneTimeDate && oneTimeDate >= weekStart && oneTimeDate <= weekEnd ? [oneTimeDate] : [];
   }
 
-  const dueDate = parseISODateOnly(item.paymentDueDate);
-  if (dueDate) {
-    return dueDate >= weekStart && dueDate <= weekEnd ? [dueDate] : [];
-  }
-
   if (item.recurrence) {
-    return recurrenceOccurrenceDatesInRange(item.recurrence, weekStart, weekEnd);
+    return recurrenceOccurrenceDatesInRange(item.recurrence, weekStart, weekEnd, month);
   }
 
   return itemAppliesToWeek(

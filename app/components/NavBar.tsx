@@ -67,17 +67,17 @@ export default function NavBar() {
     <header className="sticky top-0 flex-shrink-0 z-40" ref={menuRef}>
 
       {/* ── Row 1: Brand bar ── */}
-      <div className="bg-harbor-navy h-20 flex items-center justify-between px-4 md:px-8">
+      <div className="bg-harbor-navy flex h-16 items-center justify-between px-3 sm:px-4 md:h-20 md:px-8">
         <Link href={isAuthPage ? "/beta" : "/budget"} className="flex items-center gap-3 min-w-0">
           <Image
             src="/harbor-logo.svg"
             alt="Harbor"
-            width={52}
-            height={52}
+            width={44}
+            height={44}
             className="block flex-shrink-0 object-contain brightness-0 invert"
             priority
           />
-          <span className="font-bold text-white text-xl tracking-wide">Harbor</span>
+          <span className="font-bold text-white text-lg tracking-wide md:text-xl">Harbor</span>
           <span className="text-harbor-teal text-sm font-medium ml-1 hidden sm:inline">Plan ahead. Stay ahead.</span>
         </Link>
 
@@ -85,7 +85,7 @@ export default function NavBar() {
         {!isAuthPage && (
         <button
           onClick={() => setMenuOpen((v) => !v)}
-          className="md:hidden text-white/80 hover:text-white p-2 rounded-md hover:bg-white/10 transition-colors flex-shrink-0"
+          className="min-h-11 min-w-11 rounded-md p-2 text-white/80 transition-colors hover:bg-white/10 hover:text-white md:hidden"
           aria-label="Toggle menu"
           aria-expanded={menuOpen}
         >
@@ -155,7 +155,7 @@ export default function NavBar() {
 
       {/* ── Hamburger dropdown menu ── */}
       {menuOpen && !isAuthPage && (
-        <div className="md:hidden absolute top-full right-4 w-56 bg-white border border-slate-200 rounded-b-xl shadow-lg overflow-hidden">
+        <div className="absolute right-3 top-full w-[min(18rem,calc(100vw-1.5rem))] overflow-hidden rounded-b-xl border border-slate-200 bg-white shadow-lg md:hidden">
           {NAV_LINKS.map(({ href, label, icon }) => {
             const isActive = pathname.startsWith(href);
             return (

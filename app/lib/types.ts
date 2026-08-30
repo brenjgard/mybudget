@@ -49,14 +49,16 @@ export type DockItemKind = "ripple" | "wave" | "credit_card_payment";
 export type DockItemStatus = "upcoming" | "pending" | "cleared" | "skipped" | "adjusted";
 export type RecurrenceType = "weekly" | "biweekly" | "twiceMonthly" | "monthly" | "custom";
 export type RecurrenceUnit = "days" | "weeks" | "months";
+export type CalendarRecurrenceType = "quarterly" | "semiannual" | "annual";
 export type DayOfMonth = number | "last";
 
 export type Recurrence = {
-  type: RecurrenceType;
+  type: RecurrenceType | CalendarRecurrenceType;
   interval?: number;
   unit?: RecurrenceUnit;
   daysOfWeek?: number[];
   daysOfMonth?: DayOfMonth[];
+  activeMonths?: number[]; // 1-12; missing or empty means all months
   startDate?: string;
 };
 
@@ -89,6 +91,7 @@ export type LineItem = {
   recurrence?: Recurrence;
   rippleType?: RippleType; // missing means fixed unless inferred for older saved ripples
   planType?: RipplePlanType; // spending behavior: allowance capacity or scheduled expense
+  includeInCashForecast?: boolean; // for variable allowances that are known checking events
   preferredPaymentDate?: string; // YYYY-MM-DD cash date override for checking obligations
   paymentDueDate?: string; // YYYY-MM-DD cash date fallback for checking obligations
 };
@@ -177,9 +180,12 @@ export type CreditCardPayment = {
   amount: number;
   scheduledDate: string;
   status: "planned" | "paid" | "skipped";
+  sourceType?: "generated" | "manual" | "opening_statement";
   statementPeriodStart?: string;
   statementPeriodEnd?: string;
+  statementCloseDate?: string;
   dueDate?: string;
+  paidDate?: string;
   notes?: string;
   createdAt?: string;
   updatedAt?: string;

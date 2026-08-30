@@ -9,6 +9,7 @@ import { buildProjectedAmounts } from "../lib/schedule";
 import type { AppSettings, DockItemState, LineItem, PaymentMethod, SpendLogEntry } from "../lib/types";
 import {
   addMonths,
+  buildCurrentForwardBudgetSummary,
   budgetedForItemWeek,
   formatMoney,
   formatShortDate,
@@ -61,6 +62,7 @@ export default function BudgetPage() {
   const [monthLoading, setMonthLoading] = useState(false);
   const [activeSpend, setActiveSpend] = useState<SpendTarget | null>(null);
   const [expandedWeeks, setExpandedWeeks] = useState<Record<number, boolean>>({});
+  const [showEarlierWeeks, setShowEarlierWeeks] = useState(false);
   const [wrappingWeek, setWrappingWeek] = useState<number | null>(null);
   const [wrappedWeeks, setWrappedWeeks] = useState<Record<number, WeekStatus>>({});
   const [spendDraft, setSpendDraft] = useState<SpendDraft>({
@@ -95,11 +97,15 @@ export default function BudgetPage() {
   const futureWeekIndices = currentWeekIndex >= 0
     ? weekIndices.filter((index) => index > currentWeekIndex)
     : monthStart > today ? weekIndices : [];
+  const laterThisMonthWeekIndices = futureWeekIndices.filter((weekIndex) => weekRows(weekIndex).length > 0);
 
   const monthlyPlanRows = useMemo(() => monthlyRows.map((item) => {
     const spent = spendLogs.filter((entry) => entry.rippleId === item.id).reduce((sum, entry) => sum + entry.amount, 0);
-    return { item, budgeted: item.defaultAmount, spent, remaining: item.defaultAmount - spent };
-  }).filter((row) => row.budgeted > 0 || row.spent > 0), [monthlyRows, spendLogs]);
+    const budgeted = weeks.reduce((sum, week, weekIndex) => (
+      sum + budgetedForItemWeek(amounts, item, week, weekIndex, month, weeks.length, year)
+    ), 0);
+    return { item, budgeted, spent, remaining: budgeted - spent };
+  }).filter((row) => row.budgeted > 0 || row.spent > 0), [amounts, month, monthlyRows, spendLogs, weeks, year]);
   const recentSpendLogs = useMemo(() => [...spendLogs].sort((a, b) => (
     b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt)
   )), [spendLogs]);
@@ -115,6 +121,16 @@ export default function BudgetPage() {
     const budgeted = weeklyBudgeted + monthlyBudgeted;
     return { budgeted, spent, remaining: budgeted - spent };
   }, [amounts, month, monthlyPlanRows, spendLogs, weeklyRows, weeks, year]);
+  const currentForward = useMemo(() => settings ? buildCurrentForwardBudgetSummary({
+    settings,
+    weeks,
+    month,
+    year,
+    amounts,
+    spendLogs,
+    today,
+  }) : null, [amounts, month, settings, spendLogs, today, weeks, year]);
+  const shouldUseForwardSummary = Boolean(currentForward && monthEnd >= today);
 
   useEffect(() => {
     let cancelled = false;
@@ -163,6 +179,15 @@ export default function BudgetPage() {
     };
   }, [month, monthKey, settings, weeks]);
 
+  useEffect(() => {
+    if (!activeSpend) return;
+    window.requestAnimationFrame(() => {
+      const form = document.getElementById("budget-spend-form");
+      form?.scrollIntoView({ behavior: "smooth", block: "center" });
+      form?.querySelector<HTMLInputElement>("[data-spend-amount]")?.focus();
+    });
+  }, [activeSpend]);
+
   function changeMonth(value: string) {
     const [nextYear, nextMonth] = value.split("-").map(Number);
     if (!nextYear || !nextMonth) return;
@@ -181,6 +206,7 @@ export default function BudgetPage() {
   function resetTransientUi() {
     setActiveSpend(null);
     setExpandedWeeks({});
+    setShowEarlierWeeks(false);
     setWrappingWeek(null);
     setWrappedWeeks({});
   }
@@ -309,28 +335,37 @@ export default function BudgetPage() {
   }
 
   return (
-    <main className="flex-1 bg-harbor-offwhite p-4 text-harbor-navy">
-      <div className="mx-auto max-w-[1180px] space-y-6">
-        <header className="border-b border-harbor-teal-light py-3">
+    <main className="harbor-page flex-1 p-3 text-harbor-navy sm:p-4">
+      <div className="mx-auto max-w-[1120px] space-y-4 sm:space-y-6">
+        <header className="harbor-hero rounded-xl px-4 py-4 sm:px-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-harbor-teal">Budget</p>
-              <h1 className="mt-1 text-3xl font-bold">{monthName}</h1>
+              <p className="text-xs font-semibold uppercase tracking-wide text-white/70">Budget</p>
+              <h1 className="mt-1 text-2xl font-bold sm:text-3xl">{monthName}</h1>
+              <p className="mt-1 text-sm text-white/70">Planned spending, real spend, and what is left.</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" disabled={monthLoading} onClick={() => nudgeMonth(-1)} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold disabled:opacity-45">Previous</button>
-              <input type="month" disabled={monthLoading} value={monthKey} onChange={(event) => changeMonth(event.target.value)} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold disabled:opacity-45" />
-              <button type="button" disabled={monthLoading} onClick={() => nudgeMonth(1)} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm font-semibold disabled:opacity-45">Next</button>
-              <button type="button" onClick={openGlobalSpend} className="rounded-md bg-harbor-teal px-4 py-2 text-sm font-semibold text-white">+ Log Spending</button>
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+              <button type="button" disabled={monthLoading} onClick={() => nudgeMonth(-1)} className="rounded-md border border-white/20 bg-white/10 px-3 py-2 text-sm font-semibold text-white disabled:opacity-45">Previous</button>
+              <input type="month" disabled={monthLoading} value={monthKey} onChange={(event) => changeMonth(event.target.value)} className="rounded-md border border-white/20 bg-white px-3 py-2 text-sm font-semibold text-harbor-navy disabled:opacity-45" />
+              <button type="button" disabled={monthLoading} onClick={() => nudgeMonth(1)} className="rounded-md border border-white/20 bg-white/10 px-3 py-2 text-sm font-semibold text-white disabled:opacity-45">Next</button>
+              <button type="button" onClick={openGlobalSpend} className="harbor-action px-4 py-2 text-sm">+ Log Spending</button>
             </div>
           </div>
         </header>
 
-        <section className="grid gap-3 md:grid-cols-3">
-          <Metric label="Budgeted" value={totals.budgeted} />
-          <Metric label="Spent" value={totals.spent} tone="red" />
-          <Metric label="Remaining" value={totals.remaining} tone={totals.remaining >= 0 ? "green" : "red"} />
-        </section>
+        {shouldUseForwardSummary && currentForward ? (
+          <section className="grid gap-2 sm:gap-3 md:grid-cols-[1.4fr_1fr_1fr]">
+            <Metric label="Remaining Budget" value={currentForward.restOfMonth.remainingPlannedSpending} detail="Known plan from today through month end" />
+            <Metric label="Used Forward" value={currentForward.restOfMonth.spent} tone="red" detail="Recorded in the current actionable period" />
+            <Metric label="Forward Room" value={currentForward.restOfMonth.availablePosition} tone={currentForward.restOfMonth.availablePosition >= 0 ? "green" : "red"} detail="Remaining plan minus forward spending" />
+          </section>
+        ) : (
+          <section className="grid gap-2 sm:gap-3 md:grid-cols-3">
+            <Metric label="Budgeted" value={totals.budgeted} />
+            <Metric label="Spent" value={totals.spent} tone="red" />
+            <Metric label="Remaining" value={totals.remaining} tone={totals.remaining >= 0 ? "green" : "red"} />
+          </section>
+        )}
 
         {activeSpend === "global" && (
           <SpendForm
@@ -374,7 +409,51 @@ export default function BudgetPage() {
           />
         )}
 
-        {earlierWeekIndices.length > 0 && (
+        {laterThisMonthWeekIndices.length > 0 && (
+          <section className="space-y-2">
+            <h2 className="text-sm font-bold uppercase tracking-wide text-harbor-navy/50">Later This Month</h2>
+            {laterThisMonthWeekIndices.map((weekIndex) => (
+              <WeekSection
+                key={weeks[weekIndex]?.label}
+                title={weeks[weekIndex]?.label ?? ""}
+                weekIndex={weekIndex}
+                weekLabel={weeks[weekIndex]?.label ?? ""}
+                rows={weekRows(weekIndex)}
+                performance={weekPerformance(weekIndex)}
+                status={savedStatusForWeek(weekIndex)}
+                isExpanded={Boolean(expandedWeeks[weekIndex])}
+                isFeatured={false}
+                isPast={false}
+                isWrapping={false}
+                activeSpend={activeSpend}
+                settings={settings}
+                spendDraft={spendDraft}
+                rowsById={rowsById}
+                onOpenSpend={openSpendForm}
+                onChangeSpend={setSpendDraft}
+                onSaveSpend={logSpend}
+                onCancelSpend={() => setActiveSpend(null)}
+                onToggle={() => setExpandedWeeks((current) => ({ ...current, [weekIndex]: !current[weekIndex] }))}
+                onStartWrap={() => undefined}
+                onCancelWrap={() => undefined}
+                onSaveWrap={() => undefined}
+                onLeaveWrap={() => undefined}
+                onOverWrap={() => undefined}
+              />
+            ))}
+          </section>
+        )}
+
+        {currentForward && (
+          <MonthOverview
+            monthName={monthName}
+            summary={currentForward}
+            showEarlierWeeks={showEarlierWeeks}
+            onToggleEarlierWeeks={() => setShowEarlierWeeks((current) => !current)}
+          />
+        )}
+
+        {showEarlierWeeks && earlierWeekIndices.length > 0 && (
           <section className="space-y-2">
             <h2 className="text-sm font-bold uppercase tracking-wide text-harbor-navy/50">Earlier Weeks</h2>
             {earlierWeekIndices.map((weekIndex) => (
@@ -412,41 +491,6 @@ export default function BudgetPage() {
           </section>
         )}
 
-        {futureWeekIndices.length > 0 && (
-          <section className="space-y-2">
-            <h2 className="text-sm font-bold uppercase tracking-wide text-harbor-navy/50">Future</h2>
-            {futureWeekIndices.map((weekIndex) => (
-              <WeekSection
-                key={weeks[weekIndex]?.label}
-                title={weeks[weekIndex]?.label ?? ""}
-                weekIndex={weekIndex}
-                weekLabel={weeks[weekIndex]?.label ?? ""}
-                rows={weekRows(weekIndex)}
-                performance={weekPerformance(weekIndex)}
-                status={savedStatusForWeek(weekIndex)}
-                isExpanded={Boolean(expandedWeeks[weekIndex])}
-                isFeatured={false}
-                isPast={false}
-                isWrapping={false}
-                activeSpend={activeSpend}
-                settings={settings}
-                spendDraft={spendDraft}
-                rowsById={rowsById}
-                onOpenSpend={openSpendForm}
-                onChangeSpend={setSpendDraft}
-                onSaveSpend={logSpend}
-                onCancelSpend={() => setActiveSpend(null)}
-                onToggle={() => setExpandedWeeks((current) => ({ ...current, [weekIndex]: !current[weekIndex] }))}
-                onStartWrap={() => undefined}
-                onCancelWrap={() => undefined}
-                onSaveWrap={() => undefined}
-                onLeaveWrap={() => undefined}
-                onOverWrap={() => undefined}
-              />
-            ))}
-          </section>
-        )}
-
         {monthlyPlanRows.length > 0 && (
           <MonthlyPlans
             rows={monthlyPlanRows}
@@ -474,12 +518,44 @@ export default function BudgetPage() {
   );
 }
 
-function Metric({ label, value, tone = "navy" }: { label: string; value: number; tone?: "navy" | "green" | "red" }) {
-  const toneClass = tone === "green" ? "text-harbor-green" : tone === "red" ? "text-harbor-red" : "text-harbor-navy";
+function MonthOverview({
+  monthName,
+  summary,
+  showEarlierWeeks,
+  onToggleEarlierWeeks,
+}: {
+  monthName: string;
+  summary: ReturnType<typeof buildCurrentForwardBudgetSummary>;
+  showEarlierWeeks: boolean;
+  onToggleEarlierWeeks: () => void;
+}) {
   return (
-    <div className="border-b-2 border-harbor-teal-light bg-white px-4 py-3 shadow-sm">
-      <div className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">{label}</div>
-      <div className={`mt-1 text-2xl font-bold ${toneClass}`}>{formatMoney(value)}</div>
+    <section className="border-t border-slate-200 pt-4">
+      <div className="rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50 to-white px-4 py-3 shadow-sm md:flex md:items-center md:justify-between">
+        <div>
+          <div className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">{monthName} Overview</div>
+          <p className="mt-1 text-sm text-harbor-navy/55">
+            Planned {formatMoney(summary.monthPosition.plannedSpending)} | Recorded spending {formatMoney(summary.monthPosition.spentSoFar)} | Earlier weeks {summary.earlierWeekCount}
+          </p>
+        </div>
+        {summary.earlierWeekCount > 0 && (
+          <button type="button" onClick={onToggleEarlierWeeks} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-harbor-teal">
+            {showEarlierWeeks ? "Hide Earlier Weeks" : `Show ${summary.earlierWeekCount} Earlier Weeks`}
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function Metric({ label, value, tone = "navy", detail }: { label: string; value: number; tone?: "navy" | "green" | "red"; detail?: string }) {
+  const toneClass = tone === "red" ? "text-harbor-red" : tone === "green" ? "text-harbor-teal" : "text-harbor-navy";
+  const accentClass = tone === "red" ? "from-red-50 to-white border-red-100" : tone === "green" ? "from-emerald-50 to-white border-emerald-100" : "from-cyan-50 to-white border-cyan-100";
+  return (
+    <div className={`rounded-lg border bg-gradient-to-br px-3 py-2.5 shadow-sm sm:px-4 sm:py-3 ${accentClass}`}>
+      <div className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/50">{label}</div>
+      <div className={`mt-1 text-xl font-bold tabular-nums sm:text-2xl ${toneClass}`}>{formatMoney(value)}</div>
+      {detail && <div className="mt-1 text-xs text-harbor-navy/50 sm:block">{detail}</div>}
     </div>
   );
 }
@@ -538,12 +614,12 @@ function WeekSection({
   const grouped = groupRowsByChart(rows);
   const underOverLabel = performance.remaining >= 0 ? `${formatMoney(performance.remaining)} under` : `${formatMoney(Math.abs(performance.remaining))} over`;
   const activeInlineSpend = activeSpend !== null && activeSpend !== "global" && activeSpend.weekIndex === weekIndex ? activeSpend : null;
-  const quietClass = isPast || status ? "border-slate-200 bg-white/70" : "border-harbor-teal-light bg-white";
+  const quietClass = isPast || status ? "border-slate-200 bg-white/70" : "border-white bg-white/85";
 
   return (
-    <section className={`${isFeatured ? "border-harbor-teal bg-white shadow-sm" : quietClass} border ${isFeatured ? "rounded-lg p-4" : "rounded-md px-4 py-3"}`}>
+    <section className={`${isFeatured ? "border-harbor-teal bg-gradient-to-br from-white to-teal-50 shadow-sm" : quietClass} border ${isFeatured ? "rounded-xl p-3 sm:p-4" : "rounded-xl px-3 py-3 shadow-sm sm:px-4"}`}>
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div>
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className={`${isFeatured ? "text-2xl" : "text-base"} font-bold`}>{title}</h2>
             {isFeatured && <span className="rounded-full bg-harbor-teal/10 px-2 py-0.5 text-xs font-semibold text-harbor-teal">{weekLabel}</span>}
@@ -556,7 +632,7 @@ function WeekSection({
           {status && <p className="mt-1 text-xs font-semibold text-harbor-navy/50">Outcome: {wrapOutcomeLabel(status, performance.remaining)}</p>}
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
           {!isFeatured && (
             <button type="button" onClick={onToggle} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/65">
               {isExpanded ? "Collapse" : "Inspect"}
@@ -579,7 +655,7 @@ function WeekSection({
       )}
 
       {isExpanded && (
-        <div className={`${isFeatured ? "mt-5" : "mt-3"} space-y-5`}>
+        <div className={`${isFeatured ? "mt-4" : "mt-3"} space-y-4`}>
           {rows.length === 0 ? (
             <p className="text-sm text-harbor-navy/45">No budget activity in this week.</p>
           ) : (
@@ -615,41 +691,57 @@ function ChartRows({ chart, rows, weekIndex, onOpenSpend }: {
     spent: sum.spent + row.spent,
     remaining: sum.remaining + row.remaining,
   }), { budgeted: 0, spent: 0, remaining: 0 });
+  const accent = chartAccent(chart);
 
   return (
-    <div>
-      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2 border-b border-slate-100 pb-1">
-        <h3 className="text-xs font-bold uppercase tracking-wide text-harbor-navy/55">{chart}</h3>
-        <p className="text-xs text-harbor-navy/45">Budgeted {formatMoney(subtotal.budgeted)} | Spent {formatMoney(subtotal.spent)} | Remaining {formatMoney(subtotal.remaining)}</p>
+    <section className={`overflow-hidden rounded-xl border bg-white shadow-sm ${accent.border}`}>
+      <div className={`border-b px-4 py-3 ${accent.header}`}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="truncate text-sm font-bold uppercase tracking-wide text-harbor-navy">{chart}</h3>
+            <p className="mt-0.5 text-xs font-medium text-harbor-navy/55">
+              {formatMoney(subtotal.budgeted)} planned | {formatMoney(subtotal.spent)} spent
+            </p>
+          </div>
+          <div className={`shrink-0 text-right text-lg font-bold tabular-nums ${subtotal.remaining < 0 ? "text-harbor-red" : accent.amount}`}>
+            {formatMoney(subtotal.remaining)}
+            <div className="text-xs font-semibold text-harbor-navy/45">left</div>
+          </div>
+        </div>
       </div>
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[680px] text-sm">
-          <thead>
-            <tr className="text-left text-xs font-semibold uppercase tracking-wide text-harbor-navy/40">
-              <th className="py-2 pr-3">Plan</th>
-              <th className="px-3 py-2 text-right">Budgeted</th>
-              <th className="px-3 py-2 text-right">Spent</th>
-              <th className="px-3 py-2 text-right">Remaining</th>
-              <th className="py-2 pl-3 text-right">Action</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((row) => (
-              <tr key={row.item.id} className="border-t border-slate-100">
-                <td className="py-2 pr-3 font-semibold">{row.item.name}</td>
-                <td className="px-3 py-2 text-right">{formatMoney(row.budgeted)}</td>
-                <td className="px-3 py-2 text-right text-harbor-navy/70">{formatMoney(row.spent)}</td>
-                <td className={`px-3 py-2 text-right font-bold ${row.remaining >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>{formatMoney(row.remaining)}</td>
-                <td className="py-2 pl-3 text-right">
-                  <button type="button" onClick={() => onOpenSpend(row.item, weekIndex)} className="rounded-md border border-harbor-teal-light px-2 py-1 text-xs font-semibold text-harbor-teal">+ Spend</button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      <div className="divide-y divide-slate-100 px-4">
+        {rows.map((row) => (
+          <div key={row.item.id} className="grid gap-2 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+            <div className="min-w-0 sm:pr-4">
+              <div className="truncate text-base font-semibold text-harbor-navy sm:text-sm">{row.item.name}</div>
+              <div className="mt-0.5 text-xs font-medium text-harbor-navy/50">
+                {formatMoney(row.budgeted)} planned | {formatMoney(row.spent)} spent
+              </div>
+            </div>
+            <div className="flex items-center justify-between gap-3 sm:justify-end">
+              <div className={`text-right text-base font-bold tabular-nums ${row.remaining < 0 ? "text-harbor-red" : "text-harbor-navy"}`}>
+                {formatMoney(row.remaining)}
+                <span className="ml-1 text-xs font-semibold text-harbor-navy/45">left</span>
+              </div>
+              <button type="button" onClick={() => onOpenSpend(row.item, weekIndex)} className={`min-h-10 shrink-0 rounded-md border bg-white px-3 py-1.5 text-xs font-semibold hover:text-white ${accent.button}`}>+ Spend</button>
+            </div>
+          </div>
+        ))}
       </div>
-    </div>
+    </section>
   );
+}
+
+function chartAccent(chart: string) {
+  const accents = [
+    { border: "border-cyan-200", header: "border-cyan-100 bg-cyan-50", amount: "text-cyan-800", button: "border-cyan-200 text-cyan-700 hover:bg-cyan-700" },
+    { border: "border-emerald-200", header: "border-emerald-100 bg-emerald-50", amount: "text-emerald-800", button: "border-emerald-200 text-emerald-700 hover:bg-emerald-700" },
+    { border: "border-rose-200", header: "border-rose-100 bg-rose-50", amount: "text-rose-800", button: "border-rose-200 text-rose-700 hover:bg-rose-700" },
+    { border: "border-amber-200", header: "border-amber-100 bg-amber-50", amount: "text-amber-800", button: "border-amber-200 text-amber-700 hover:bg-amber-700" },
+    { border: "border-indigo-200", header: "border-indigo-100 bg-indigo-50", amount: "text-indigo-800", button: "border-indigo-200 text-indigo-700 hover:bg-indigo-700" },
+  ];
+  const index = [...chart].reduce((sum, char) => sum + char.charCodeAt(0), 0) % accents.length;
+  return accents[index];
 }
 
 function WrapDecision({ performance, onSave, onLeave, onOver, onCancel }: {
@@ -743,8 +835,8 @@ function SpendingLog({ entries, rowsById, settings, onDelete }: {
         <h2 className="text-xl font-bold">Spending Log</h2>
         <p className="text-xs text-harbor-navy/45">Remove mistaken entries here.</p>
       </div>
-      <div className="mt-3 overflow-x-auto">
-        <table className="w-full min-w-[760px] text-sm">
+      <div className="mt-3 hidden md:block">
+        <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-slate-100 text-left text-xs font-semibold uppercase tracking-wide text-harbor-navy/40">
               <th className="py-2 pr-3">Date</th>
@@ -775,6 +867,27 @@ function SpendingLog({ entries, rowsById, settings, onDelete }: {
           </tbody>
         </table>
       </div>
+      <div className="mt-3 divide-y divide-slate-100 md:hidden">
+        {entries.map((entry) => {
+          const item = rowsById.get(entry.rippleId);
+          const date = new Date(`${entry.date}T00:00:00`);
+          return (
+            <div key={entry.id} className="py-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="truncate font-semibold">{item?.name ?? "Deleted plan"}</div>
+                  <div className="mt-0.5 text-xs text-harbor-navy/50">{item?.category ?? "Budget"} | {paymentMethodLabel(entry.paymentMethod, settings)} | {formatShortDate(date)}</div>
+                  {entry.note && <div className="mt-1 text-sm text-harbor-navy/55">{entry.note}</div>}
+                </div>
+                <div className="shrink-0 text-right font-bold tabular-nums">{formatMoney(entry.amount)}</div>
+              </div>
+              <div className="mt-2 flex justify-end">
+                <button type="button" onClick={() => void onDelete(entry)} className="rounded-md border border-slate-200 px-3 py-2 text-xs font-semibold text-harbor-red">Delete</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -800,7 +913,7 @@ function SpendForm({
 }) {
   const selected = items.find((item) => item.id === draft.itemId);
   return (
-    <div className="mt-4 rounded-md border border-harbor-teal-light bg-harbor-offwhite p-3">
+    <div id="budget-spend-form" className="mt-4 rounded-xl border border-teal-200 bg-teal-50 p-3 shadow-sm">
       <div className="mb-3 flex items-center justify-between gap-3">
         <h3 className="text-sm font-bold">{title}</h3>
         <button type="button" onClick={onCancel} className="text-xs font-semibold text-harbor-navy/45">Close</button>
@@ -814,7 +927,7 @@ function SpendForm({
             {items.map((item) => <option key={item.id} value={item.id}>{item.category} | {item.name}</option>)}
           </select>
         )}
-        <input className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" type="number" min="0" step="0.01" placeholder="Amount" value={draft.amount} onChange={(event) => onChange((current) => ({ ...current, amount: event.target.value }))} />
+        <input data-spend-amount className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" type="number" min="0" step="0.01" placeholder="Amount" value={draft.amount} onChange={(event) => onChange((current) => ({ ...current, amount: event.target.value }))} />
         <select className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" value={draft.paymentMethod} onChange={(event) => onChange((current) => ({ ...current, paymentMethod: event.target.value as PaymentMethod }))}>
           <option value="checking">Checking</option>
           {settings.creditCards.map((card) => <option key={card.id} value={card.id}>{card.label}</option>)}

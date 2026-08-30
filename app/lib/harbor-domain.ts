@@ -23,6 +23,8 @@ export type HarborCashEvent = {
   itemKind: DockItemState["itemKind"];
   weekIndex: number;
   cardId?: PaymentMethod;
+  chart?: string;
+  sourceLabel?: string;
   state?: DockItemState;
 };
 
@@ -175,11 +177,18 @@ export function hasWeekAmount(amounts: Record<string, Record<number, number>>, i
 
 export function budgetedForItemWeek(amounts: Record<string, Record<number, number>>, item: LineItem, week: HarborWeek, weekIndex: number, month: number, totalWeeks: number, year?: number) {
   const planType = getRipplePlanType(item);
-  if (planType === "weekly_allowance") return amountForWeek(amounts, item, weekIndex) || item.defaultAmount;
+  if (planType === "weekly_allowance") {
+    const applies = item.recurrence
+      ? lineItemAppliesToWeek(item, weekIndex, week.start, week.end, month, totalWeeks) || hasWeekAmount(amounts, item, weekIndex)
+      : true;
+    return applies ? amountForWeek(amounts, item, weekIndex) || item.defaultAmount : 0;
+  }
   if (planType === "monthly_allowance") {
     const oneTimeDate = parseDateOnly(item.oneTimeDate);
     if (oneTimeDate && (oneTimeDate.getMonth() !== month || (year !== undefined && oneTimeDate.getFullYear() !== year))) return 0;
-    return weekIndex === 0 ? item.defaultAmount : 0;
+    if (item.waveType === "oneTime") return weekIndexForDate([week], oneTimeDate ?? week.start) === 0 ? item.defaultAmount : 0;
+    const applies = lineItemAppliesToWeek(item, weekIndex, week.start, week.end, month, totalWeeks) || hasWeekAmount(amounts, item, weekIndex);
+    return applies ? amountForWeek(amounts, item, weekIndex) || item.defaultAmount : 0;
   }
 
   const applies = lineItemAppliesToWeek(item, weekIndex, week.start, week.end, month, totalWeeks) || hasWeekAmount(amounts, item, weekIndex);
@@ -258,55 +267,140 @@ function eventSortValue(event: HarborCashEvent) {
 }
 
 function scheduledCardIdFromState(state: DockItemState, cards: CreditCardAccount[]) {
-  const [, cardId] = state.itemId.match(/^scheduled-card-payment:([^:]+):/) ?? [];
+  const [, cardId] = state.itemId.match(/^(?:scheduled-card-payment|opening-card-payment):([^:]+):/) ?? [];
   if (cardId) return cardId as PaymentMethod;
 
   const note = state.note?.trim().toLowerCase() ?? "";
   return cards.find((card) => note.includes(card.label.trim().toLowerCase()))?.id;
 }
 
-function buildScheduledCardPaymentEvents({
+function dateIsInMonth(date: Date, year: number, month: number) {
+  return date.getFullYear() === year && date.getMonth() === month;
+}
+
+function cardBudgetForecastByDueDate({
   settings,
-  monthKey,
+  weeks,
+  month,
+  amounts,
   spendLogs,
-  cardSpendLogs = spendLogs,
   dockStates,
 }: {
   settings: AppSettings;
+  weeks: HarborWeek[];
+  month: number;
+  amounts: Record<string, Record<number, number>>;
+  spendLogs: SpendLogEntry[];
+  dockStates: DockItemState[];
+}) {
+  const stateByItemWeek = new Map<string, DockItemState>();
+  dockStates.forEach((state) => stateByItemWeek.set(stateKey(state.itemId, state.weekIndex), state));
+
+  const actualByItemWeekDueDate = spendLogs
+    .filter((entry) => isCardMethod(entry.paymentMethod))
+    .reduce<Record<string, number>>((totals, entry) => {
+      const card = settings.creditCards.find((candidate) => candidate.id === entry.paymentMethod);
+      const purchaseDate = parseDateOnly(entry.date);
+      if (!card || !purchaseDate) return totals;
+      const dueDate = cardCycleForDate(card, purchaseDate).dueDate;
+      const key = `${entry.rippleId}:${entry.weekIndex}:${card.id}:${isoDate(dueDate)}`;
+      return { ...totals, [key]: (totals[key] ?? 0) + entry.amount };
+    }, {});
+
+  return settings.lineItems.reduce<Record<string, number>>((totals, item) => {
+    if (item.isIncome || getItemBehavior(item) === "credit_card_payment" || !isCardMethod(item.paymentMethod)) return totals;
+
+    const card = settings.creditCards.find((candidate) => candidate.id === item.paymentMethod);
+    if (!card) return totals;
+    const anchorDate = parseDateOnly(card.currentBalanceUpdatedAt);
+
+    weeks.forEach((week, weekIndex) => {
+      const state = stateByItemWeek.get(stateKey(item.id, weekIndex));
+      if (state?.status === "skipped") return;
+
+      const stateAmount = Number(state?.actualAmount ?? state?.plannedAmount ?? 0);
+      const planned = stateAmount
+        || budgetedForItemWeek(amounts, item, week, weekIndex, month, weeks.length, week.start.getFullYear())
+        || item.defaultAmount;
+      if (planned <= 0 && stateAmount <= 0) return;
+
+      lineItemOccurrenceDatesForWeek(item, weekIndex, week.start, week.end, month, weeks.length).forEach((occurrenceDate) => {
+        if (anchorDate && occurrenceDate <= anchorDate) return;
+
+        const cycle = cardCycleForDate(card, occurrenceDate);
+        if (occurrenceDate < cycle.cycleStart || occurrenceDate > cycle.cycleEnd) return;
+
+        const dueDateKey = isoDate(cycle.dueDate);
+        const itemWeekDueKey = `${item.id}:${weekIndex}:${card.id}:${dueDateKey}`;
+        const actualForOccurrence = actualByItemWeekDueDate[itemWeekDueKey] ?? 0;
+        const remainingForecast = Math.max(planned - actualForOccurrence, 0);
+        if (remainingForecast <= 0) return;
+
+        const cardDueKey = `${card.id}:${dueDateKey}`;
+        totals[cardDueKey] = (totals[cardDueKey] ?? 0) + remainingForecast;
+      });
+    });
+
+    return totals;
+  }, {});
+}
+
+function buildScheduledCardPaymentEvents({
+  settings,
+  monthKey,
+  weeks,
+  month,
+  amounts,
+  spendLogs,
+  cardSpendLogs = spendLogs,
+  dockStates,
+  cardPaymentStates = dockStates,
+}: {
+  settings: AppSettings;
   monthKey: string;
+  weeks: HarborWeek[];
+  month: number;
+  amounts: Record<string, Record<number, number>>;
   spendLogs: SpendLogEntry[];
   cardSpendLogs?: SpendLogEntry[];
   dockStates: DockItemState[];
+  cardPaymentStates?: DockItemState[];
 }) {
   const sourceMonth = monthPartsFromKey(monthKey);
-  const manualPayments = dockStates
-    .filter((state) => state.itemKind === "credit_card_payment" && state.itemId.startsWith("scheduled-card-payment:"))
-    .map((state) => {
-      const date = parseDateOnly(state.pendingUntil);
-      const amount = Number(state.actualAmount ?? state.plannedAmount ?? 0);
-      return date && amount > 0 ? {
-        id: state.itemId,
-        date,
-        label: state.note || "Card payment",
-        amount,
-        kind: "cardPayment" as const,
-        status: state.status === "cleared" ? "done" as const : "upcoming" as const,
-        sourceMonthKey: monthKey,
-        itemId: state.itemId,
-        itemKind: "credit_card_payment" as const,
-        weekIndex: state.weekIndex,
-        state,
-        cardId: scheduledCardIdFromState(state, settings.creditCards),
-      } : null;
-    })
+  const paymentEventFromState = (state: DockItemState) => {
+    const date = parseDateOnly(state.pendingUntil);
+    const amount = Number(state.actualAmount ?? state.plannedAmount ?? 0);
+    return date && amount > 0 ? {
+      id: state.itemId,
+      date,
+      label: state.note || "Card payment",
+      amount,
+      kind: "cardPayment" as const,
+      status: state.status === "cleared" ? "done" as const : "upcoming" as const,
+      sourceMonthKey: state.monthKey,
+      itemId: state.itemId,
+      itemKind: "credit_card_payment" as const,
+      weekIndex: state.weekIndex,
+      state,
+      cardId: scheduledCardIdFromState(state, settings.creditCards),
+      chart: "Credit Card",
+      sourceLabel: "Checking",
+    } : null;
+  };
+  const allManualPayments = cardPaymentStates
+    .filter((state) => state.itemKind === "credit_card_payment" && (
+      state.itemId.startsWith("scheduled-card-payment:")
+      || state.itemId.startsWith("opening-card-payment:")
+    ))
+    .map(paymentEventFromState)
     .filter((event): event is NonNullable<typeof event> => Boolean(event));
-
-  const manualPaymentTotalsByCard = manualPayments
-    .filter((event) => event.status !== "done" && event.cardId)
-    .reduce<Record<string, number>>((totals, event) => ({
-      ...totals,
-      [event.cardId as string]: (totals[event.cardId as string] ?? 0) + event.amount,
-    }), {});
+  const manualPayments = dockStates
+    .filter((state) => state.itemKind === "credit_card_payment" && (
+      state.itemId.startsWith("scheduled-card-payment:")
+      || state.itemId.startsWith("opening-card-payment:")
+    ))
+    .map(paymentEventFromState)
+    .filter((event): event is NonNullable<typeof event> => Boolean(event));
 
   const cardSpendByCardDueDate = cardSpendLogs
     .filter((entry) => isCardMethod(entry.paymentMethod))
@@ -314,21 +408,33 @@ function buildScheduledCardPaymentEvents({
       const card = settings.creditCards.find((candidate) => candidate.id === entry.paymentMethod);
       const purchaseDate = parseDateOnly(entry.date);
       if (!card || !purchaseDate) return totals;
+      if (!dateIsInMonth(purchaseDate, sourceMonth.year, sourceMonth.month)) return totals;
       const anchorDate = parseDateOnly(card.currentBalanceUpdatedAt);
       if (anchorDate && purchaseDate < anchorDate) return totals;
       const dueDate = cardCycleForDate(card, purchaseDate).dueDate;
       const key = `${card.id}:${isoDate(dueDate)}`;
       return { ...totals, [key]: (totals[key] ?? 0) + entry.amount };
     }, {});
+  const cardBudgetForecastByCardDueDate = cardBudgetForecastByDueDate({
+    settings,
+    weeks,
+    month,
+    amounts,
+    spendLogs: cardSpendLogs,
+    dockStates,
+  });
 
   const projectedPayments = settings.creditCards.flatMap((card) => {
     const anchorDate = parseDateOnly(card.currentBalanceUpdatedAt);
     const anchorCycle = anchorDate ? cardCycleForDate(card, anchorDate) : null;
-    const allocatedClosedObligations = manualPaymentTotalsByCard[card.id] ?? 0;
+    const allocatedClosedObligations = allManualPayments
+      .filter((event) => event.status !== "done" && event.cardId === card.id)
+      .filter((event) => anchorCycle ? event.date <= anchorCycle.dueDate : true)
+      .reduce((sum, event) => sum + event.amount, 0);
     const activeAnchorAmount = Math.max(0, Number(card.currentBalance ?? 0) - allocatedClosedObligations);
     const projectedEntries = new Map<string, { date: Date; amount: number }>();
 
-    if (anchorCycle && activeAnchorAmount > 0) {
+    if (anchorCycle && activeAnchorAmount > 0 && dateIsInMonth(anchorCycle.cycleEnd, sourceMonth.year, sourceMonth.month)) {
       projectedEntries.set(isoDate(anchorCycle.dueDate), { date: anchorCycle.dueDate, amount: activeAnchorAmount });
     }
 
@@ -341,10 +447,18 @@ function buildScheduledCardPaymentEvents({
         projectedEntries.set(isoDate(date), { date, amount: (existing?.amount ?? 0) + amount });
       });
 
+    Object.entries(cardBudgetForecastByCardDueDate)
+      .filter(([key]) => key.startsWith(`${card.id}:`))
+      .forEach(([key, amount]) => {
+        const date = parseDateOnly(key.split(":").at(-1));
+        if (!date || amount <= 0) return;
+        const existing = projectedEntries.get(isoDate(date));
+        projectedEntries.set(isoDate(date), { date, amount: (existing?.amount ?? 0) + amount });
+      });
+
     return [...projectedEntries.values()].flatMap(({ date, amount }) => {
       const projectedId = `projected-card-payment:${card.id}:${isoDate(date)}`;
       const projectedState = dockStates.find((state) => state.itemId === projectedId && state.itemKind === "credit_card_payment");
-      if (date.getFullYear() !== sourceMonth.year || date.getMonth() !== sourceMonth.month) return [];
       return [{
         id: projectedId,
         date,
@@ -358,11 +472,96 @@ function buildScheduledCardPaymentEvents({
         weekIndex: 0,
         state: projectedState,
         cardId: card.id,
+        chart: "Credit Card",
+        sourceLabel: "Checking",
       }];
     });
   });
 
   return [...manualPayments, ...projectedPayments];
+}
+
+export function buildCurrentForwardBudgetSummary({
+  settings,
+  weeks,
+  month,
+  year,
+  amounts,
+  spendLogs,
+  today = new Date(),
+}: {
+  settings: AppSettings;
+  weeks: HarborWeek[];
+  month: number;
+  year: number;
+  amounts: Record<string, Record<number, number>>;
+  spendLogs: SpendLogEntry[];
+  today?: Date;
+}) {
+  const currentWeekIndex = weekIndexForDate(weeks, today);
+  const monthStart = new Date(year, month, 1);
+  const monthEnd = new Date(year, month + 1, 0);
+  const actionableWeekIndexes = weeks
+    .map((_, index) => index)
+    .filter((index) => {
+      if (currentWeekIndex >= 0) return index >= currentWeekIndex;
+      return monthStart > today;
+    });
+  const historicalWeekIndexes = weeks
+    .map((_, index) => index)
+    .filter((index) => {
+      if (currentWeekIndex >= 0) return index < currentWeekIndex;
+      return monthEnd < today;
+    });
+
+  const spendingItems = settings.lineItems.filter((item) => !item.isIncome && getItemBehavior(item) !== "credit_card_payment");
+  const incomeItems = settings.lineItems.filter((item) => item.isIncome);
+
+  const budgetedForIndexes = (items: LineItem[], indexes: number[]) => indexes.reduce((sum, weekIndex) => {
+    const week = weeks[weekIndex];
+    if (!week) return sum;
+    return sum + items.reduce((itemSum, item) => (
+      itemSum + budgetedForItemWeek(amounts, item, week, weekIndex, month, weeks.length, year)
+    ), 0);
+  }, 0);
+
+  const spentInIndexes = (indexes: number[]) => spendLogs
+    .filter((entry) => indexes.includes(entry.weekIndex))
+    .reduce((sum, entry) => sum + entry.amount, 0);
+
+  const plannedSpending = budgetedForIndexes(spendingItems, weeks.map((_, index) => index));
+  const spentSoFar = spendLogs.reduce((sum, entry) => sum + entry.amount, 0);
+  const remainingPlannedSpending = budgetedForIndexes(spendingItems, actionableWeekIndexes);
+  const remainingExpectedIncome = budgetedForIndexes(incomeItems, actionableWeekIndexes);
+  const historicalBudgeted = budgetedForIndexes(spendingItems, historicalWeekIndexes);
+  const historicalSpent = spentInIndexes(historicalWeekIndexes);
+  const thisWeekBudgeted = currentWeekIndex >= 0 ? budgetedForIndexes(spendingItems, [currentWeekIndex]) : 0;
+  const thisWeekSpent = currentWeekIndex >= 0 ? spentInIndexes([currentWeekIndex]) : 0;
+  const forwardSpent = spentInIndexes(actionableWeekIndexes);
+
+  return {
+    currentWeekIndex,
+    earlierWeekCount: historicalWeekIndexes.length,
+    thisWeek: {
+      budgeted: thisWeekBudgeted,
+      spent: thisWeekSpent,
+      remaining: thisWeekBudgeted - thisWeekSpent,
+    },
+    restOfMonth: {
+      remainingPlannedSpending,
+      spent: forwardSpent,
+      remainingExpectedIncome,
+      availablePosition: remainingPlannedSpending - forwardSpent,
+    },
+    monthPosition: {
+      plannedSpending,
+      spentSoFar,
+      historicalBudgeted,
+      historicalSpent,
+      remainingPlannedSpending,
+      recordedRemaining: plannedSpending - spentSoFar,
+    },
+  };
 }
 
 export function buildBudgetGroups({
@@ -425,6 +624,7 @@ export function buildCashEvents({
   spendLogs,
   cardSpendLogs,
   dockStates,
+  cardPaymentStates,
   buoys,
 }: {
   settings: AppSettings;
@@ -435,6 +635,7 @@ export function buildCashEvents({
   spendLogs: SpendLogEntry[];
   cardSpendLogs?: SpendLogEntry[];
   dockStates: DockItemState[];
+  cardPaymentStates?: DockItemState[];
   buoys: Buoy[];
 }) {
   const stateByItemWeek = new Map<string, DockItemState>();
@@ -452,7 +653,53 @@ export function buildCashEvents({
   weeks.forEach((week, weekIndex) => {
     settings.lineItems.forEach((item) => {
       if (getItemBehavior(item) === "credit_card_payment") return;
-      if (!item.isIncome && getRipplePlanType(item) !== "scheduled_expense") return;
+      const planType = getRipplePlanType(item);
+      if (!item.isIncome && planType !== "scheduled_expense") {
+        const actualCheckingEntries = spendByItemWeek.get(stateKey(item.id, weekIndex))?.filter((entry) => entry.paymentMethod === "checking") ?? [];
+        if (actualCheckingEntries.length > 0) {
+          actualCheckingEntries.forEach((entry) => {
+            const date = parseDateOnly(entry.date);
+            if (!date) return;
+            addEvent({
+              id: `${monthKey}:${entry.id}:checking`,
+              date,
+              label: entry.note?.trim() || item.name,
+              amount: entry.amount,
+              kind: "checkingPayment",
+              status: "done",
+              sourceMonthKey: monthKey,
+              itemId: item.id,
+              itemKind: "ripple",
+              weekIndex,
+              chart: item.category,
+              sourceLabel: "Checking",
+            });
+          });
+          return;
+        }
+        if (item.includeInCashForecast && !isCardMethod(item.paymentMethod)) {
+          const applies = lineItemAppliesToWeek(item, weekIndex, week.start, week.end, month, weeks.length) || hasWeekAmount(amounts, item, weekIndex);
+          const state = stateByItemWeek.get(stateKey(item.id, weekIndex));
+          const amount = Number(state?.actualAmount ?? amountForWeek(amounts, item, weekIndex));
+          if (!applies || state?.status === "skipped" || amount <= 0) return;
+          cashDatesForCheckingItem(item, state, weekIndex, week, month, weeks.length).forEach((date) => addEvent({
+            id: `${monthKey}:${item.id}:${weekIndex}:${isoDate(date)}:checking-allowance`,
+            date,
+            label: item.name,
+            amount,
+            kind: "checkingPayment",
+            status: state?.status === "cleared" ? "done" : "upcoming",
+            sourceMonthKey: monthKey,
+            itemId: item.id,
+            itemKind: "ripple",
+            weekIndex,
+            state,
+            chart: item.category,
+            sourceLabel: "Checking",
+          }));
+        }
+        return;
+      }
       const applies = lineItemAppliesToWeek(item, weekIndex, week.start, week.end, month, weeks.length) || hasWeekAmount(amounts, item, weekIndex);
       if (!applies) return;
       const state = stateByItemWeek.get(stateKey(item.id, weekIndex));
@@ -473,6 +720,8 @@ export function buildCashEvents({
           itemKind: "wave",
           weekIndex,
           state,
+          chart: item.category,
+          sourceLabel: "Checking",
         }));
         return;
       }
@@ -496,6 +745,8 @@ export function buildCashEvents({
             itemKind: "ripple",
             weekIndex,
             state,
+            chart: item.category,
+            sourceLabel: "Checking",
           });
         });
         return;
@@ -513,6 +764,8 @@ export function buildCashEvents({
         itemKind: "ripple",
         weekIndex,
         state,
+        chart: item.category,
+        sourceLabel: "Checking",
       }));
     });
   });
@@ -536,10 +789,12 @@ export function buildCashEvents({
         itemKind: income ? "wave" : "ripple",
         weekIndex: state.weekIndex,
         state,
+        chart: income ? "Income" : "Cash",
+        sourceLabel: "Checking",
       });
     });
 
-  buildScheduledCardPaymentEvents({ settings, monthKey, spendLogs, cardSpendLogs, dockStates }).forEach(addEvent);
+  buildScheduledCardPaymentEvents({ settings, monthKey, weeks, month, amounts, spendLogs, cardSpendLogs, dockStates, cardPaymentStates }).forEach(addEvent);
 
   buoys.forEach((buoy) => {
     const amount = buoy.autoSave ?? 0;
@@ -557,6 +812,8 @@ export function buildCashEvents({
       itemId: `transfer:${buoy.id}`,
       itemKind: "ripple",
       weekIndex: weekIndexForDate(weeks, date),
+      chart: "Buoy",
+      sourceLabel: "Checking",
     });
   });
 
@@ -626,7 +883,10 @@ export function buildCardObligations(settings: AppSettings, monthKey: string, sp
     const anchorDate = parseDateOnly(card.currentBalanceUpdatedAt) ?? new Date();
     const activeCycle = cardCycleForDate(card, anchorDate);
     const closedObligations = cashEvents
-      .filter((event) => event.kind === "cardPayment" && event.status !== "done" && event.itemId.startsWith("scheduled-card-payment:") && (event.cardId === card.id || event.label.toLowerCase().includes(card.label.toLowerCase())))
+      .filter((event) => event.kind === "cardPayment" && event.status !== "done" && (
+        event.itemId.startsWith("scheduled-card-payment:")
+        || event.itemId.startsWith("opening-card-payment:")
+      ) && (event.cardId === card.id || event.label.toLowerCase().includes(card.label.toLowerCase())))
       .reduce((sum, event) => sum + event.amount, 0);
     const anchorAmount = Math.max(0, Number(card.currentBalance ?? 0) - closedObligations);
     const newSpending = spendLogs
@@ -637,9 +897,10 @@ export function buildCardObligations(settings: AppSettings, monthKey: string, sp
         return date >= anchorDate && cardCycleForDate(card, date).dueDate.getTime() === activeCycle.dueDate.getTime();
       })
       .reduce((sum, entry) => sum + entry.amount, 0);
-    const amount = anchorAmount + newSpending;
     const dueDate = activeCycle.dueDate;
     const payments = cashEvents.filter((event) => event.kind === "cardPayment" && (event.cardId === card.id || event.label.toLowerCase().includes(card.label.toLowerCase())));
+    const projectedPayment = payments.find((event) => event.itemId === `projected-card-payment:${card.id}:${isoDate(dueDate)}`);
+    const amount = projectedPayment?.amount ?? anchorAmount + newSpending;
     const scheduledByDue = payments
       .filter((event) => event.date > activeCycle.cycleEnd && event.date <= dueDate)
       .reduce((sum, event) => sum + event.amount, 0);

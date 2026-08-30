@@ -50,6 +50,7 @@ type LineItemRow = {
   recurrence?: Recurrence | null;
   ripple_type?: RippleType | null;
   plan_type?: RipplePlanType | null;
+  include_in_cash_forecast?: boolean | null;
   preferred_payment_date?: string | null;
   payment_due_date?: string | null;
 };
@@ -169,9 +170,12 @@ type CreditCardPaymentRow = {
   amount: number | string;
   scheduled_date: string;
   status: "planned" | "paid" | "skipped";
+  source_type?: "generated" | "manual" | "opening_statement" | null;
   statement_period_start: string | null;
   statement_period_end: string | null;
+  statement_close_date?: string | null;
   due_date: string | null;
+  paid_date?: string | null;
   notes: string | null;
   created_at: string;
   updated_at: string | null;
@@ -318,6 +322,7 @@ function buildSettingsFromSupabase({
       recurrence: item.recurrence ?? undefined,
       rippleType: item.ripple_type ?? undefined,
       planType: item.plan_type ?? undefined,
+      includeInCashForecast: item.include_in_cash_forecast ?? undefined,
       preferredPaymentDate: item.preferred_payment_date ?? undefined,
       paymentDueDate: item.payment_due_date ?? undefined,
     })),
@@ -408,9 +413,12 @@ function fromCreditCardPaymentRow(row: CreditCardPaymentRow): CreditCardPayment 
     amount: Number(row.amount),
     scheduledDate: row.scheduled_date,
     status: row.status,
+    sourceType: row.source_type ?? undefined,
     statementPeriodStart: row.statement_period_start ?? undefined,
     statementPeriodEnd: row.statement_period_end ?? undefined,
+    statementCloseDate: row.statement_close_date ?? undefined,
     dueDate: row.due_date ?? undefined,
+    paidDate: row.paid_date ?? undefined,
     notes: row.notes ?? undefined,
     createdAt: row.created_at,
     updatedAt: row.updated_at ?? undefined,
@@ -480,7 +488,7 @@ async function loadSettingsForUser(userId: string): Promise<AppSettings | null> 
       .returns<CategoryRow[]>(),
     supabase
       .from("line_items")
-      .select("id, category_id, payment_account_id, name, default_amount, is_income, frequency, anchor_date, anchor_month, wave_type, one_time_date, recurrence, ripple_type, plan_type, preferred_payment_date, payment_due_date")
+      .select("id, category_id, payment_account_id, name, default_amount, is_income, frequency, anchor_date, anchor_month, wave_type, one_time_date, recurrence, ripple_type, plan_type, include_in_cash_forecast, preferred_payment_date, payment_due_date")
       .eq("user_id", userId)
       .order("sort_order", { ascending: true })
       .returns<LineItemRow[]>(),
@@ -727,7 +735,7 @@ async function getCreditCardPayments(): Promise<CreditCardPayment[]> {
     getPaymentAccounts(user.id),
     supabase
       .from("credit_card_payments")
-      .select("id, user_id, credit_card_account_id, cash_account_id, amount, scheduled_date, status, statement_period_start, statement_period_end, due_date, notes, created_at, updated_at")
+      .select("id, user_id, credit_card_account_id, cash_account_id, amount, scheduled_date, status, source_type, statement_period_start, statement_period_end, statement_close_date, due_date, paid_date, notes, created_at, updated_at")
       .eq("user_id", user.id)
       .order("scheduled_date", { ascending: true })
       .returns<CreditCardPaymentRow[]>(),
@@ -767,16 +775,19 @@ async function saveCreditCardPayment(payment: CreditCardPayment): Promise<Credit
         amount: payment.amount,
         scheduled_date: payment.scheduledDate.slice(0, 10),
         status: payment.status,
+        source_type: payment.sourceType ?? "manual",
         statement_period_start: payment.statementPeriodStart?.slice(0, 10) ?? null,
         statement_period_end: payment.statementPeriodEnd?.slice(0, 10) ?? null,
+        statement_close_date: payment.statementCloseDate?.slice(0, 10) ?? null,
         due_date: payment.dueDate?.slice(0, 10) ?? null,
+        paid_date: payment.paidDate?.slice(0, 10) ?? null,
         notes: payment.notes?.trim() || null,
         created_at: payment.createdAt ?? now,
         updated_at: now,
       },
       { onConflict: "id" },
     )
-    .select("id, user_id, credit_card_account_id, cash_account_id, amount, scheduled_date, status, statement_period_start, statement_period_end, due_date, notes, created_at, updated_at")
+    .select("id, user_id, credit_card_account_id, cash_account_id, amount, scheduled_date, status, source_type, statement_period_start, statement_period_end, statement_close_date, due_date, paid_date, notes, created_at, updated_at")
     .single<CreditCardPaymentRow>();
 
   if (error) throw error;
@@ -1027,6 +1038,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       recurrence: item.waveType === "oneTime" ? null : item.recurrence ?? null,
       ripple_type: item.isIncome ? null : item.rippleType ?? null,
       plan_type: item.isIncome ? null : item.planType ?? null,
+      include_in_cash_forecast: item.isIncome ? false : item.includeInCashForecast ?? false,
       preferred_payment_date: item.preferredPaymentDate?.slice(0, 10) ?? null,
       payment_due_date: item.paymentDueDate?.slice(0, 10) ?? null,
       sort_order: index,
@@ -1045,7 +1057,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       .from("line_items")
       .upsert(existingRows, { onConflict: "id" });
 
-    if (upsertLineItemsError) throwSupabaseError(upsertLineItemsError, "Could not save Ripples or Waves. Apply db/0013_ripple_plan_type.sql if this mentions plan_type");
+    if (upsertLineItemsError) throwSupabaseError(upsertLineItemsError, "Could not save Ripples or Waves. Apply db/0015_start_from_today_obligations.sql if this mentions include_in_cash_forecast");
   }
 
   if (newRows.length > 0) {
@@ -1053,7 +1065,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       .from("line_items")
       .insert(newRows);
 
-    if (insertLineItemsError) throwSupabaseError(insertLineItemsError, "Could not add Ripple or Wave. Apply db/0013_ripple_plan_type.sql if this mentions plan_type");
+    if (insertLineItemsError) throwSupabaseError(insertLineItemsError, "Could not add Ripple or Wave. Apply db/0015_start_from_today_obligations.sql if this mentions include_in_cash_forecast");
   }
 
   const desiredAccountKeys = new Set(desiredAccounts.map((account) => account.account_key));

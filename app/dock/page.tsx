@@ -65,6 +65,17 @@ function dedupeEvents(events: HarborCashEvent[]) {
   const byKey = new Map<string, HarborCashEvent>();
 
   events.forEach((event) => {
+    if (event.itemId.startsWith("projected-card-payment:")) {
+      const existing = byKey.get(event.itemId);
+      byKey.set(event.itemId, existing ? {
+        ...existing,
+        amount: existing.amount + event.amount,
+        status: existing.status === "done" || event.status === "done" ? "done" : "upcoming",
+        state: existing.state ?? event.state,
+      } : event);
+      return;
+    }
+
     const eventMonthKey = monthKeyFor(event.date.getFullYear(), event.date.getMonth());
     const key = [
       isoDate(event.date),
@@ -99,6 +110,7 @@ export default function DockPage() {
   const [loadingTimeline, setLoadingTimeline] = useState(false);
   const [horizonWeeks, setHorizonWeeks] = useState(8);
   const [expandedWeeks, setExpandedWeeks] = useState<Record<string, boolean>>({});
+  const [collapsedWeeks, setCollapsedWeeks] = useState<Record<string, boolean>>({});
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [showCheckingForm, setShowCheckingForm] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -132,6 +144,7 @@ export default function DockPage() {
         spendLogs: monthSpendLogs,
         cardSpendLogs: spendLogs,
         dockStates: monthDockStates,
+        cardPaymentStates: dockStates,
         buoys,
       });
     });
@@ -273,37 +286,38 @@ export default function DockPage() {
   }
 
   return (
-    <main className="flex-1 bg-harbor-offwhite p-4 text-harbor-navy">
-      <div className="mx-auto max-w-[1180px] space-y-6">
-        <header className="border-b border-harbor-teal-light py-3">
+    <main className="harbor-page flex-1 p-3 text-harbor-navy sm:p-4">
+      <div className="mx-auto max-w-[1180px] space-y-4 sm:space-y-6">
+        <header className="harbor-hero rounded-xl px-4 py-4 sm:px-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-harbor-teal">Dock</p>
-              <h1 className="mt-1 text-3xl font-bold">Cash forecast</h1>
+              <p className="text-xs font-semibold uppercase tracking-wide text-white/70">Dock</p>
+              <h1 className="mt-1 text-2xl font-bold sm:text-3xl">Cash forecast</h1>
+              <p className="mt-1 text-sm text-white/70">What hits checking, when it hits, and where cash lands.</p>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" onClick={() => setShowAddEvent((current) => !current)} className="rounded-md bg-harbor-teal px-4 py-2 text-sm font-semibold text-white hover:bg-harbor-teal/90">+ Add Cash Event</button>
-              <button type="button" onClick={() => setShowCheckingForm((current) => !current)} className="rounded-md border border-harbor-teal-light bg-white px-4 py-2 text-sm font-semibold text-harbor-teal hover:bg-harbor-teal-light/45">Update Checking</button>
+            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
+              <button type="button" onClick={() => setShowAddEvent((current) => !current)} className="harbor-action px-4 py-2 text-sm">+ Add Cash Event</button>
+              <button type="button" onClick={() => setShowCheckingForm((current) => !current)} className="rounded-md border border-white/25 bg-white px-4 py-2 text-sm font-semibold text-harbor-teal hover:bg-white/90">Update Checking</button>
             </div>
           </div>
         </header>
 
-        <section className="grid gap-3 md:grid-cols-3">
+        <section className="grid gap-2 sm:gap-3 md:grid-cols-3">
           <Metric label="Checking Now" value={startingChecking} detail={`As of ${anchorDateLabel}`} action={<button type="button" onClick={() => setShowCheckingForm(true)} className="text-xs font-semibold text-harbor-teal hover:text-harbor-navy">Update Checking</button>} />
           <Metric label={`Projected ${formatShortDate(projectedPoint.date)}`} value={projectedPoint.balance} detail="Next 30 days" tone={projectedPoint.balance < 0 ? "red" : "navy"} />
           <Metric label="Lowest Next 30 Days" value={lowestPoint.balance} detail={formatShortDate(lowestPoint.date)} tone={lowestPoint.balance < 0 ? "red" : lowestPoint.balance < 500 ? "red" : "navy"} />
         </section>
 
         {showCheckingForm && (
-          <section className="rounded-md border border-harbor-teal-light bg-white p-3 shadow-sm">
-            <div className="grid gap-2 md:grid-cols-[1fr_180px_auto_auto] md:items-end">
-              <div>
+          <section className="rounded-xl border border-teal-200 bg-teal-50 p-3 shadow-sm">
+            <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_180px_auto_auto] md:items-end">
+              <div className="min-w-0">
                 <h2 className="text-sm font-bold">Update Checking</h2>
                 <p className="text-xs text-harbor-navy/50">This becomes the reality anchor for the forecast as of {anchorDateLabel}.</p>
               </div>
-              <label className="grid gap-1">
+              <label className="grid min-w-0 gap-1">
                 <span className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">Balance</span>
-                <input type="number" value={checkingBalance} onChange={(event) => setCheckingBalance(event.target.value)} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-right text-sm font-semibold" />
+                <input type="number" value={checkingBalance} onChange={(event) => setCheckingBalance(event.target.value)} className="w-full min-w-0 rounded-md border border-slate-200 bg-white px-3 py-2 text-right text-sm font-semibold" />
               </label>
               <button type="button" onClick={() => void saveCheckingBalance()} className="rounded-md bg-harbor-teal px-4 py-2 text-sm font-semibold text-white">Save</button>
               <button type="button" onClick={() => setShowCheckingForm(false)} className="rounded-md px-3 py-2 text-sm font-semibold text-harbor-navy/45">Cancel</button>
@@ -312,7 +326,7 @@ export default function DockPage() {
         )}
 
         {showAddEvent && (
-          <section className="rounded-md border border-harbor-teal-light bg-white p-3 shadow-sm">
+          <section className="rounded-xl border border-indigo-200 bg-indigo-50 p-3 shadow-sm">
             <div className="mb-3 flex items-center justify-between gap-3">
               <h2 className="text-sm font-bold">Add Cash Event</h2>
               <button type="button" onClick={() => setShowAddEvent(false)} className="text-xs font-semibold text-harbor-navy/45">Close</button>
@@ -334,14 +348,25 @@ export default function DockPage() {
           {loadingTimeline && <p className="text-sm text-harbor-navy/45">Updating forecast...</p>}
           {forecast.map((week, index) => {
             const isCurrent = anchorDate >= week.week.start && anchorDate <= week.week.end;
-            const shouldExpand = isCurrent || Boolean(expandedWeeks[week.week.label]) || (index < 3 && week.events.length > 0);
+            const isAutoExpanded = isCurrent || (index < 3 && week.events.length > 0);
+            const shouldExpand = collapsedWeeks[week.week.label]
+              ? false
+              : Boolean(expandedWeeks[week.week.label]) || isAutoExpanded;
             return (
               <TimelineWeek
                 key={week.week.label}
                 week={week}
                 isCurrent={isCurrent}
                 isExpanded={shouldExpand}
-                onToggle={() => setExpandedWeeks((current) => ({ ...current, [week.week.label]: !shouldExpand }))}
+                onToggle={() => {
+                  if (shouldExpand) {
+                    setCollapsedWeeks((current) => ({ ...current, [week.week.label]: true }));
+                    setExpandedWeeks((current) => ({ ...current, [week.week.label]: false }));
+                    return;
+                  }
+                  setCollapsedWeeks((current) => ({ ...current, [week.week.label]: false }));
+                  setExpandedWeeks((current) => ({ ...current, [week.week.label]: true }));
+                }}
                 onSetDone={setEventDone}
               />
             );
@@ -369,7 +394,7 @@ export default function DockPage() {
             <h2 className="text-sm font-bold uppercase tracking-wide text-harbor-navy/50">Card Obligations</h2>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
               {cardObligations.map((obligation) => (
-                <div key={obligation.card.id} className="bg-white px-4 py-3 shadow-sm">
+                <div key={obligation.card.id} className="rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50 to-white px-4 py-3 shadow-sm">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="text-sm font-bold">{obligation.card.label}</div>
@@ -394,13 +419,14 @@ export default function DockPage() {
 
 function Metric({ label, value, tone = "navy", detail, action }: { label: string; value: number; tone?: "navy" | "red"; detail?: string; action?: React.ReactNode }) {
   const toneClass = tone === "red" ? "text-harbor-red" : "text-harbor-navy";
+  const accentClass = tone === "red" ? "from-red-50 to-white border-red-100" : "from-teal-50 to-white border-teal-100";
   return (
-    <div className="border-b-2 border-harbor-teal-light bg-white px-4 py-3 shadow-sm">
+    <div className={`rounded-lg border bg-gradient-to-br px-4 py-3 shadow-sm ${accentClass}`}>
       <div className="flex items-center justify-between gap-3">
         <div className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">{label}</div>
         {action}
       </div>
-      <div className={`mt-1 text-2xl font-bold ${toneClass}`}>{formatMoney(value)}</div>
+      <div className={`mt-1 text-2xl font-bold tabular-nums ${toneClass}`}>{formatMoney(value)}</div>
       {detail && <div className="text-xs text-harbor-navy/50">{detail}</div>}
     </div>
   );
@@ -417,7 +443,7 @@ function TimelineWeek({ week, isCurrent, isExpanded, onToggle, onSetDone }: {
   const risk = week.lowest < 0 ? "text-harbor-red" : week.lowest < 500 ? "text-harbor-red" : "text-harbor-navy";
 
   return (
-    <section className={`${isCurrent ? "border-l-4 border-harbor-teal bg-white pl-4 shadow-sm" : "border-t border-slate-200 pt-4"} py-4`}>
+    <section className={`${isCurrent ? "rounded-xl border border-harbor-teal bg-white p-4 shadow-sm" : "rounded-xl border border-white bg-white/75 p-4 shadow-sm"} py-4`}>
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
           <div className="flex flex-wrap items-center gap-2">
@@ -432,16 +458,16 @@ function TimelineWeek({ week, isCurrent, isExpanded, onToggle, onSetDone }: {
         <div className="flex items-center gap-2">
           <div className={`text-sm font-bold ${net < 0 ? "text-harbor-red" : "text-harbor-navy"}`}>{formatMoney(net)}</div>
           <button type="button" onClick={onToggle} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/65 hover:border-harbor-teal-light hover:text-harbor-teal">
-            <span aria-hidden>{isExpanded ? "v" : ">"}</span> {isExpanded ? "Collapse" : "Expand"}
+            {isExpanded ? "Collapse" : "Expand"}
           </button>
         </div>
       </div>
       {isExpanded && (
-        <div className="mt-3 overflow-x-auto">
+        <div className="mt-3">
           {week.events.length === 0 ? (
             <p className="text-sm text-harbor-navy/45">No unresolved cash events in this week.</p>
           ) : (
-            <EventRows events={week.events} onSetDone={onSetDone} />
+            <DayEventGroups week={week} onSetDone={onSetDone} />
           )}
         </div>
       )}
@@ -449,34 +475,63 @@ function TimelineWeek({ week, isCurrent, isExpanded, onToggle, onSetDone }: {
   );
 }
 
+function DayEventGroups({ week, onSetDone }: { week: HarborWeekForecast; onSetDone: (event: HarborCashEvent, done: boolean) => void | Promise<void> }) {
+  const days = week.days.length > 0
+    ? week.days
+    : [{ date: week.week.start, events: week.events, ending: week.ending }];
+
+  return (
+    <div className="space-y-3">
+      {days.map((day) => (
+        <section key={isoDate(day.date)} className="overflow-hidden rounded-xl border border-cyan-100 bg-white shadow-sm">
+          <div className="flex items-center justify-between gap-3 border-b border-cyan-100 bg-cyan-50 px-4 py-2.5">
+            <div>
+              <div className="text-xs font-bold uppercase tracking-wide text-harbor-navy/65">{day.date.toLocaleDateString("en-US", { weekday: "short" })} | {formatShortDate(day.date)}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-xs font-semibold text-harbor-navy/45">Ending</div>
+              <div className={`text-sm font-bold tabular-nums ${day.ending < 0 ? "text-harbor-red" : "text-harbor-navy"}`}>{formatMoney(day.ending)}</div>
+            </div>
+          </div>
+          <EventRows events={day.events} onSetDone={onSetDone} />
+        </section>
+      ))}
+    </div>
+  );
+}
+
 function EventRows({ events, onSetDone, quiet = false }: { events: HarborCashEvent[]; onSetDone: (event: HarborCashEvent, done: boolean) => void | Promise<void>; quiet?: boolean }) {
   return (
-    <table className="w-full min-w-[700px] text-sm">
-      <thead>
-        <tr className="border-b border-slate-100 text-left text-xs font-semibold uppercase tracking-wide text-harbor-navy/40">
-          <th className="py-2 pr-3">Date</th>
-          <th className="px-3 py-2">Cash Event</th>
-          <th className="px-3 py-2 text-right">Change</th>
-          <th className="px-3 py-2 text-right">Status</th>
-          <th className="py-2 pl-3 text-right">Action</th>
-        </tr>
-      </thead>
-      <tbody>
-        {events.map((event) => {
-          const impact = eventImpact(event);
-          return (
-            <tr key={event.id} className={`border-b border-slate-100 last:border-0 ${quiet || event.status === "done" ? "text-harbor-navy/50" : ""}`}>
-              <td className="py-2 pr-3 font-medium">{formatShortDate(event.date)}</td>
-              <td className="px-3 py-2">{event.label}</td>
-              <td className={`px-3 py-2 text-right font-bold ${impact >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>{formatMoney(impact)}</td>
-              <td className="px-3 py-2 text-right text-harbor-navy/55">{event.status === "done" ? "Done" : "Upcoming"}</td>
-              <td className="py-2 pl-3 text-right">
-                <button type="button" onClick={() => void onSetDone(event, event.status !== "done")} className="rounded-md border border-harbor-teal-light px-2 py-1 text-xs font-semibold text-harbor-teal hover:bg-harbor-teal-light/45">{event.status === "done" ? "Undo" : "Done"}</button>
-              </td>
-            </tr>
-          );
-        })}
-      </tbody>
-    </table>
+    <div className="divide-y divide-slate-100 px-4">
+      {events.map((event) => {
+        const impact = eventImpact(event);
+        return (
+          <div key={event.id} className={`grid gap-2 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center ${quiet || event.status === "done" ? "text-harbor-navy/50" : ""}`}>
+            <div className="min-w-0 sm:pr-4">
+              <div className="truncate text-base font-semibold sm:text-sm">{event.label}</div>
+              <div className="mt-0.5 text-xs text-harbor-navy/55">{eventContext(event)}</div>
+              <div className="mt-0.5 text-xs font-medium text-harbor-navy/45 sm:hidden">{formatShortDate(event.date)} | {eventStatusLabel(event)}</div>
+            </div>
+            <div className="flex items-center justify-between gap-3 sm:justify-end">
+              <div className="text-right">
+                <div className={`font-bold tabular-nums ${impact >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>{formatMoney(impact)}</div>
+                <div className="hidden text-xs font-medium text-harbor-navy/45 sm:block">{eventStatusLabel(event)}</div>
+              </div>
+              <button type="button" onClick={() => void onSetDone(event, event.status !== "done")} className="min-h-10 shrink-0 rounded-md border border-harbor-teal-light bg-white px-3 py-1.5 text-xs font-semibold text-harbor-teal hover:bg-harbor-teal-light/45">{event.status === "done" ? "Undo" : "Done"}</button>
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
+}
+
+function eventContext(event: HarborCashEvent) {
+  return [event.chart, event.sourceLabel].filter(Boolean).join(" | ") || (event.kind === "income" ? "Checking" : "Checking");
+}
+
+function eventStatusLabel(event: HarborCashEvent) {
+  if (event.status === "done") return "Paid";
+  if (event.kind === "cardPayment" || event.kind === "checkingPayment") return event.state?.pendingUntil ? "Scheduled" : "Expected";
+  return "Expected";
 }
