@@ -152,30 +152,36 @@ async function getCreditCardPayments(): Promise<CreditCardPayment[]> {
 }
 
 async function saveCreditCardPayment(payment: CreditCardPayment): Promise<CreditCardPayment> {
+  let supabaseUserChecked = false;
   try {
     const user = await supabaseBudgetRepo.getUser();
+    supabaseUserChecked = true;
     if (user) {
       const savedPayment = await supabaseBudgetRepo.saveCreditCardPayment(payment);
       localBudgetRepo.saveCreditCardPayment(savedPayment);
       return savedPayment;
     }
-  } catch {
-    // Fall through to local persistence if auth/Supabase is unavailable.
+  } catch (error) {
+    console.error("[BudgetRepo] Supabase credit-card payment save failed", readableError(error));
+    if (supabaseUserChecked) throw error;
   }
 
   return localBudgetRepo.saveCreditCardPayment(payment);
 }
 
 async function deleteCreditCardPayment(paymentId: string) {
+  let supabaseUserChecked = false;
   try {
     const user = await supabaseBudgetRepo.getUser();
+    supabaseUserChecked = true;
     if (user) {
       await supabaseBudgetRepo.deleteCreditCardPayment(paymentId);
       localBudgetRepo.deleteCreditCardPayment(paymentId);
       return;
     }
-  } catch {
-    // Fall through to local persistence if auth/Supabase is unavailable.
+  } catch (error) {
+    console.error("[BudgetRepo] Supabase credit-card payment delete failed", readableError(error));
+    if (supabaseUserChecked) throw error;
   }
 
   localBudgetRepo.deleteCreditCardPayment(paymentId);
@@ -472,15 +478,18 @@ async function getDockItemStates(monthKey: string): Promise<DockItemState[]> {
 }
 
 async function saveDockItemState(state: DockItemState): Promise<DockItemState> {
+  let supabaseUserChecked = false;
   try {
     const user = await supabaseBudgetRepo.getUser();
+    supabaseUserChecked = true;
     if (user) {
       const savedState = await supabaseBudgetRepo.saveDockItemState(state);
       localBudgetRepo.saveDockItemState(savedState);
       return savedState;
     }
-  } catch {
-    // Fall through to local persistence if auth/Supabase is unavailable.
+  } catch (error) {
+    console.error("[BudgetRepo] Supabase Dock state save failed", readableError(error));
+    if (supabaseUserChecked) throw error;
   }
 
   return localBudgetRepo.saveDockItemState(state);
@@ -507,30 +516,36 @@ async function deleteDockItemState(
 }
 
 async function saveSpendLog(entry: SpendLogEntry): Promise<SpendLogEntry> {
+  let supabaseUserChecked = false;
   try {
     const user = await supabaseBudgetRepo.getUser();
+    supabaseUserChecked = true;
     if (user) {
       const savedEntry = await supabaseBudgetRepo.saveSpendLog(entry);
       localBudgetRepo.saveSpendLog(savedEntry);
       return savedEntry;
     }
-  } catch {
-    // Fall through to local persistence if auth/Supabase is unavailable.
+  } catch (error) {
+    console.error("[BudgetRepo] Supabase spend log save failed", readableError(error));
+    if (supabaseUserChecked) throw error;
   }
 
   return localBudgetRepo.saveSpendLog(entry);
 }
 
 async function deleteSpendLog(monthKey: string, entryId: string) {
+  let supabaseUserChecked = false;
   try {
     const user = await supabaseBudgetRepo.getUser();
+    supabaseUserChecked = true;
     if (user) {
       await supabaseBudgetRepo.deleteSpendLog(monthKey, entryId);
       localBudgetRepo.deleteSpendLog(monthKey, entryId);
       return;
     }
-  } catch {
-    // Fall through to local persistence if auth/Supabase is unavailable.
+  } catch (error) {
+    console.error("[BudgetRepo] Supabase spend log delete failed", readableError(error));
+    if (supabaseUserChecked) throw error;
   }
 
   localBudgetRepo.deleteSpendLog(monthKey, entryId);

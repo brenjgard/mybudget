@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import type { CreditCardPayment, PaymentAccount } from "../lib/types";
 
 type Draft = {
@@ -20,22 +20,36 @@ function todayISODate() {
   ].join("-");
 }
 
+function suggestedPaymentAmount(card: PaymentAccount | undefined, payments: CreditCardPayment[]) {
+  if (!card) return "";
+  const unresolvedPayments = payments
+    .filter((payment) => payment.creditCardAccountId === card.id && payment.status === "planned")
+    .reduce((sum, payment) => sum + payment.amount, 0);
+  return Math.max((card.currentBalance ?? 0) - unresolvedPayments, 0).toFixed(2);
+}
+
 export function ScheduleCardPaymentForm({
   creditCards,
   cashAccounts,
   onSchedule,
+  payments = [],
 }: {
   creditCards: PaymentAccount[];
   cashAccounts: PaymentAccount[];
   onSchedule: (payment: CreditCardPayment) => Promise<void>;
+  payments?: CreditCardPayment[];
 }) {
   const [draft, setDraft] = useState<Draft>({
     creditCardAccountId: creditCards[0]?.id ?? "",
     cashAccountId: cashAccounts[0]?.id ?? "checking",
-    amount: "",
+    amount: suggestedPaymentAmount(creditCards[0], payments),
     scheduledDate: todayISODate(),
     notes: "",
   });
+  const suggestedAmount = useMemo(() => {
+    const card = creditCards.find((candidate) => candidate.id === draft.creditCardAccountId);
+    return suggestedPaymentAmount(card, payments);
+  }, [creditCards, draft.creditCardAccountId, payments]);
 
   async function submit() {
     const amount = Number(draft.amount);
@@ -53,7 +67,7 @@ export function ScheduleCardPaymentForm({
       notes: draft.notes.trim() || undefined,
     });
 
-    setDraft((current) => ({ ...current, amount: "", notes: "" }));
+    setDraft((current) => ({ ...current, amount: suggestedAmount, notes: "" }));
   }
 
   return (
@@ -62,7 +76,10 @@ export function ScheduleCardPaymentForm({
       <div className="mt-3 grid gap-3 md:grid-cols-5">
         <select
           value={draft.creditCardAccountId}
-          onChange={(event) => setDraft((current) => ({ ...current, creditCardAccountId: event.target.value }))}
+          onChange={(event) => {
+            const card = creditCards.find((candidate) => candidate.id === event.target.value);
+            setDraft((current) => ({ ...current, creditCardAccountId: event.target.value, amount: suggestedPaymentAmount(card, payments) }));
+          }}
           className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-harbor-navy"
         >
           {creditCards.map((card) => (
@@ -85,6 +102,7 @@ export function ScheduleCardPaymentForm({
           inputMode="decimal"
           placeholder="Scheduled payment amount"
           value={draft.amount}
+          onFocus={(event) => event.currentTarget.select()}
           onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))}
           className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-harbor-navy"
         />

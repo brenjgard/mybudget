@@ -370,6 +370,7 @@ function buildScheduledCardPaymentEvents({
   const paymentEventFromState = (state: DockItemState) => {
     const date = parseDateOnly(state.pendingUntil);
     const amount = Number(state.actualAmount ?? state.plannedAmount ?? 0);
+    if (state.status === "skipped") return null;
     return date && amount > 0 ? {
       id: state.itemId,
       date,
@@ -459,6 +460,7 @@ function buildScheduledCardPaymentEvents({
     return [...projectedEntries.values()].flatMap(({ date, amount }) => {
       const projectedId = `projected-card-payment:${card.id}:${isoDate(date)}`;
       const projectedState = dockStates.find((state) => state.itemId === projectedId && state.itemKind === "credit_card_payment");
+      if (projectedState?.status === "skipped") return [];
       return [{
         id: projectedId,
         date,

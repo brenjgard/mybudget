@@ -190,7 +190,7 @@ export function useHarborMonth() {
         kind: "credit" as const,
         type: "credit_card" as const,
         label: card.label,
-        currentBalance: 0,
+        currentBalance: card.currentBalance ?? 0,
         statementCloseDay: card.statementClosingDay,
         statementClosingDay: card.statementClosingDay,
         active: true,
@@ -396,7 +396,11 @@ export function useHarborMonth() {
   }
 
   async function markCreditCardPayment(payment: CreditCardPayment, status: CreditCardPayment["status"]) {
-    await scheduleCreditCardPayment({ ...payment, status });
+    await scheduleCreditCardPayment({
+      ...payment,
+      status,
+      paidDate: status === "paid" ? payment.paidDate ?? new Date().toISOString().slice(0, 10) : payment.paidDate,
+    });
     if (status === "paid") {
       const linkedEvents = cashFlowEvents.filter((event) => event.linkedCreditCardPaymentId === payment.id);
       await Promise.all(linkedEvents.map((event) => updateCashEventStatus(event.id, "cleared")));

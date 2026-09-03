@@ -123,9 +123,9 @@ export default function DockPage() {
   }, [checkingUpdatedAt, now]);
   const anchorDateLabel = formatShortDate(anchorDate);
   const weeks = useMemo(() => getCalendarWeeksForRange(anchorDate, horizonWeeks), [anchorDate, horizonWeeks]);
-  const rangeStart = weeks[0]?.start ?? anchorDate;
+  const lookbackDate = useMemo(() => addDays(anchorDate, -21), [anchorDate]);
   const rangeEnd = weeks.at(-1)?.end ?? addDays(anchorDate, 55);
-  const monthKeys = useMemo(() => monthKeysForRange(rangeStart, rangeEnd), [rangeEnd, rangeStart]);
+  const monthKeys = useMemo(() => monthKeysForRange(lookbackDate, rangeEnd), [lookbackDate, rangeEnd]);
   const startingChecking = Number(checkingBalance || 0);
 
   const cashEvents = useMemo(() => {
@@ -152,7 +152,8 @@ export default function DockPage() {
   }, [amountsByMonth, buoys, dockStates, monthKeys, settings, spendLogs]);
 
   const activeCashEvents = useMemo(() => cashEvents.filter((event) => event.date >= anchorDate && event.status !== "done"), [anchorDate, cashEvents]);
-  const historyEvents = useMemo(() => cashEvents.filter((event) => event.date < anchorDate || event.status === "done"), [anchorDate, cashEvents]);
+  const overdueCashEvents = useMemo(() => cashEvents.filter((event) => event.date < anchorDate && event.status !== "done"), [anchorDate, cashEvents]);
+  const historyEvents = useMemo(() => cashEvents.filter((event) => event.status === "done"), [cashEvents]);
   const forecast = useMemo(() => buildDockForecast(activeCashEvents, startingChecking, weeks), [activeCashEvents, startingChecking, weeks]);
   const projectionEndDate = addDays(anchorDate, 30);
   const projectionPoints = useMemo(() => buildDockProjection(activeCashEvents, startingChecking, anchorDate, projectionEndDate), [activeCashEvents, anchorDate, projectionEndDate, startingChecking]);
@@ -346,9 +347,27 @@ export default function DockPage() {
 
         <section className="space-y-3">
           {loadingTimeline && <p className="text-sm text-harbor-navy/45">Updating forecast...</p>}
-          {forecast.map((week, index) => {
+          {overdueCashEvents.length > 0 && (
+            <section className="rounded-xl border border-amber-200 bg-amber-50 p-3 shadow-sm sm:p-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <h2 className="text-lg font-bold">Awaiting reconciliation</h2>
+                  <p className="mt-1 text-sm text-harbor-navy/60">
+                    Past scheduled items stay here until you mark them done.
+                  </p>
+                </div>
+                <div className="text-sm font-bold text-harbor-red">
+                  {formatMoney(overdueCashEvents.reduce((sum, event) => sum + Math.abs(eventImpact(event)), 0))}
+                </div>
+              </div>
+              <div className="mt-3 overflow-hidden rounded-lg border border-amber-100 bg-white">
+                <EventRows events={overdueCashEvents} onSetDone={setEventDone} overdue />
+              </div>
+            </section>
+          )}
+          {forecast.map((week) => {
             const isCurrent = anchorDate >= week.week.start && anchorDate <= week.week.end;
-            const isAutoExpanded = isCurrent || (index < 3 && week.events.length > 0);
+            const isAutoExpanded = isCurrent || week.lowest < 0;
             const shouldExpand = collapsedWeeks[week.week.label]
               ? false
               : Boolean(expandedWeeks[week.week.label]) || isAutoExpanded;
@@ -500,7 +519,7 @@ function DayEventGroups({ week, onSetDone }: { week: HarborWeekForecast; onSetDo
   );
 }
 
-function EventRows({ events, onSetDone, quiet = false }: { events: HarborCashEvent[]; onSetDone: (event: HarborCashEvent, done: boolean) => void | Promise<void>; quiet?: boolean }) {
+function EventRows({ events, onSetDone, quiet = false, overdue = false }: { events: HarborCashEvent[]; onSetDone: (event: HarborCashEvent, done: boolean) => void | Promise<void>; quiet?: boolean; overdue?: boolean }) {
   return (
     <div className="divide-y divide-slate-100 px-4">
       {events.map((event) => {
@@ -510,12 +529,12 @@ function EventRows({ events, onSetDone, quiet = false }: { events: HarborCashEve
             <div className="min-w-0 sm:pr-4">
               <div className="truncate text-base font-semibold sm:text-sm">{event.label}</div>
               <div className="mt-0.5 text-xs text-harbor-navy/55">{eventContext(event)}</div>
-              <div className="mt-0.5 text-xs font-medium text-harbor-navy/45 sm:hidden">{formatShortDate(event.date)} | {eventStatusLabel(event)}</div>
+              <div className="mt-0.5 text-xs font-medium text-harbor-navy/45 sm:hidden">{formatShortDate(event.date)} | {eventStatusLabel(event, overdue)}</div>
             </div>
             <div className="flex items-center justify-between gap-3 sm:justify-end">
               <div className="text-right">
                 <div className={`font-bold tabular-nums ${impact >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>{formatMoney(impact)}</div>
-                <div className="hidden text-xs font-medium text-harbor-navy/45 sm:block">{eventStatusLabel(event)}</div>
+                <div className="hidden text-xs font-medium text-harbor-navy/45 sm:block">{eventStatusLabel(event, overdue)}</div>
               </div>
               <button type="button" onClick={() => void onSetDone(event, event.status !== "done")} className="min-h-10 shrink-0 rounded-md border border-harbor-teal-light bg-white px-3 py-1.5 text-xs font-semibold text-harbor-teal hover:bg-harbor-teal-light/45">{event.status === "done" ? "Undo" : "Done"}</button>
             </div>
@@ -530,8 +549,9 @@ function eventContext(event: HarborCashEvent) {
   return [event.chart, event.sourceLabel].filter(Boolean).join(" | ") || (event.kind === "income" ? "Checking" : "Checking");
 }
 
-function eventStatusLabel(event: HarborCashEvent) {
+function eventStatusLabel(event: HarborCashEvent, overdue = false) {
   if (event.status === "done") return "Paid";
+  if (overdue) return `Past due | Scheduled ${formatShortDate(event.date)}`;
   if (event.kind === "cardPayment" || event.kind === "checkingPayment") return event.state?.pendingUntil ? "Scheduled" : "Expected";
   return "Expected";
 }

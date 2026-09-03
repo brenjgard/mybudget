@@ -65,6 +65,8 @@ export default function BudgetPage() {
   const [showEarlierWeeks, setShowEarlierWeeks] = useState(false);
   const [wrappingWeek, setWrappingWeek] = useState<number | null>(null);
   const [wrappedWeeks, setWrappedWeeks] = useState<Record<number, WeekStatus>>({});
+  const [spendError, setSpendError] = useState<string | null>(null);
+  const [savingSpend, setSavingSpend] = useState(false);
   const [spendDraft, setSpendDraft] = useState<SpendDraft>({
     itemId: "",
     amount: "",
@@ -219,10 +221,24 @@ export default function BudgetPage() {
     return isoDate(inMonthStart);
   }
 
+  function defaultAmountForItem(item: LineItem, weekIndex?: number) {
+    if (weekIndex === undefined) {
+      const budgeted = monthlyPlanRows.find((row) => row.item.id === item.id)?.budgeted ?? item.defaultAmount;
+      const spent = spendLogs.filter((entry) => entry.rippleId === item.id).reduce((sum, entry) => sum + entry.amount, 0);
+      return Math.max(budgeted - spent, 0).toFixed(2);
+    }
+
+    const row = weekRows(weekIndex).find((candidate) => candidate.item.id === item.id);
+    const budgeted = row?.budgeted ?? item.defaultAmount;
+    const spent = row?.spent ?? 0;
+    return Math.max(budgeted - spent, 0).toFixed(2);
+  }
+
   function openSpendForm(item: LineItem, weekIndex?: number) {
+    setSpendError(null);
     setSpendDraft({
       itemId: item.id,
-      amount: "",
+      amount: defaultAmountForItem(item, weekIndex),
       paymentMethod: item.paymentMethod,
       date: weekIndex !== undefined ? defaultDateForWeek(weekIndex) : defaultSpendDate,
       note: "",
@@ -236,11 +252,14 @@ export default function BudgetPage() {
   function openGlobalSpend() {
     const item = selectedItem ?? budgetRows[0];
     if (!item) return;
+    setSpendError(null);
+    const date = defaultSpendDate;
+    const dateWeekIndex = weekIndexForDate(weeks, new Date(`${date}T00:00:00`));
     setSpendDraft({
       itemId: item.id,
-      amount: "",
+      amount: defaultAmountForItem(item, dateWeekIndex >= 0 ? dateWeekIndex : undefined),
       paymentMethod: item.paymentMethod,
-      date: defaultSpendDate,
+      date,
       note: "",
     });
     setActiveSpend("global");
@@ -253,21 +272,29 @@ export default function BudgetPage() {
     const weekIndex = weekIndexForDate(weeks, date);
     if (!settings || !item || !Number.isFinite(amount) || amount <= 0 || weekIndex < 0) return;
 
-    const saved = await budgetRepo.saveSpendLog({
-      id: crypto.randomUUID(),
-      monthKey,
-      weekIndex,
-      rippleId: item.id,
-      amount,
-      paymentMethod: spendDraft.paymentMethod,
-      date: spendDraft.date,
-      note: spendDraft.note.trim() || item.name,
-      createdAt: new Date().toISOString(),
-    });
-    setSpendLogs((current) => [saved, ...current]);
-    setSpendDraft((draft) => ({ ...draft, amount: "", note: "" }));
-    setExpandedWeeks((current) => ({ ...current, [weekIndex]: true }));
-    setActiveSpend(null);
+    setSavingSpend(true);
+    setSpendError(null);
+    try {
+      const saved = await budgetRepo.saveSpendLog({
+        id: crypto.randomUUID(),
+        monthKey,
+        weekIndex,
+        rippleId: item.id,
+        amount,
+        paymentMethod: spendDraft.paymentMethod,
+        date: spendDraft.date,
+        note: spendDraft.note.trim() || item.name,
+        createdAt: new Date().toISOString(),
+      });
+      setSpendLogs((current) => [saved, ...current]);
+      setSpendDraft((draft) => ({ ...draft, amount: "", note: "" }));
+      setExpandedWeeks((current) => ({ ...current, [weekIndex]: true }));
+      setActiveSpend(null);
+    } catch (error) {
+      setSpendError(error instanceof Error ? error.message : "Spending could not be saved. Check the amount and try again.");
+    } finally {
+      setSavingSpend(false);
+    }
   }
 
   async function deleteSpend(entry: SpendLogEntry) {
@@ -376,6 +403,17 @@ export default function BudgetPage() {
             onChange={setSpendDraft}
             onSave={logSpend}
             onCancel={() => setActiveSpend(null)}
+            error={spendError}
+            saving={savingSpend}
+            onSelectItem={(item) => {
+              const dateWeekIndex = weekIndexForDate(weeks, new Date(`${spendDraft.date}T00:00:00`));
+              setSpendDraft((current) => ({
+                ...current,
+                itemId: item.id,
+                amount: defaultAmountForItem(item, dateWeekIndex >= 0 ? dateWeekIndex : undefined),
+                paymentMethod: item.paymentMethod,
+              }));
+            }}
             showPlan
           />
         )}
@@ -400,6 +438,8 @@ export default function BudgetPage() {
             onChangeSpend={setSpendDraft}
             onSaveSpend={logSpend}
             onCancelSpend={() => setActiveSpend(null)}
+            spendError={spendError}
+            savingSpend={savingSpend}
             onToggle={() => undefined}
             onStartWrap={() => setWrappingWeek(currentWeekIndex)}
             onCancelWrap={() => setWrappingWeek(null)}
@@ -433,6 +473,8 @@ export default function BudgetPage() {
                 onChangeSpend={setSpendDraft}
                 onSaveSpend={logSpend}
                 onCancelSpend={() => setActiveSpend(null)}
+                spendError={spendError}
+                savingSpend={savingSpend}
                 onToggle={() => setExpandedWeeks((current) => ({ ...current, [weekIndex]: !current[weekIndex] }))}
                 onStartWrap={() => undefined}
                 onCancelWrap={() => undefined}
@@ -477,6 +519,8 @@ export default function BudgetPage() {
                 onChangeSpend={setSpendDraft}
                 onSaveSpend={logSpend}
                 onCancelSpend={() => setActiveSpend(null)}
+                spendError={spendError}
+                savingSpend={savingSpend}
                 onToggle={() => setExpandedWeeks((current) => ({ ...current, [weekIndex]: !current[weekIndex] }))}
                 onStartWrap={() => {
                   setExpandedWeeks((current) => ({ ...current, [weekIndex]: true }));
@@ -502,6 +546,8 @@ export default function BudgetPage() {
             onChangeSpend={setSpendDraft}
             onSaveSpend={logSpend}
             onCancelSpend={() => setActiveSpend(null)}
+            spendError={spendError}
+            savingSpend={savingSpend}
           />
         )}
 
@@ -579,6 +625,8 @@ function WeekSection({
   onChangeSpend,
   onSaveSpend,
   onCancelSpend,
+  spendError,
+  savingSpend,
   onToggle,
   onStartWrap,
   onCancelWrap,
@@ -604,6 +652,8 @@ function WeekSection({
   onChangeSpend: React.Dispatch<React.SetStateAction<SpendDraft>>;
   onSaveSpend: () => void | Promise<void>;
   onCancelSpend: () => void;
+  spendError: string | null;
+  savingSpend: boolean;
   onToggle: () => void;
   onStartWrap: () => void;
   onCancelWrap: () => void;
@@ -672,6 +722,8 @@ function WeekSection({
               onChange={onChangeSpend}
               onSave={onSaveSpend}
               onCancel={onCancelSpend}
+              error={spendError}
+              saving={savingSpend}
             />
           )}
         </div>
@@ -786,6 +838,8 @@ function MonthlyPlans({
   onChangeSpend,
   onSaveSpend,
   onCancelSpend,
+  spendError,
+  savingSpend,
 }: {
   rows: BudgetRow[];
   activeSpend: SpendTarget | null;
@@ -796,6 +850,8 @@ function MonthlyPlans({
   onChangeSpend: React.Dispatch<React.SetStateAction<SpendDraft>>;
   onSaveSpend: () => void | Promise<void>;
   onCancelSpend: () => void;
+  spendError: string | null;
+  savingSpend: boolean;
 }) {
   const grouped = groupRowsByChart(rows);
   const activeMonthlySpend = activeSpend !== null && activeSpend !== "global" && activeSpend.weekIndex === undefined ? activeSpend : null;
@@ -817,6 +873,8 @@ function MonthlyPlans({
           onChange={onChangeSpend}
           onSave={onSaveSpend}
           onCancel={onCancelSpend}
+          error={spendError}
+          saving={savingSpend}
         />
       )}
     </section>
@@ -900,6 +958,9 @@ function SpendForm({
   onChange,
   onSave,
   onCancel,
+  error,
+  saving = false,
+  onSelectItem,
   showPlan = false,
 }: {
   title: string;
@@ -909,6 +970,9 @@ function SpendForm({
   onChange: React.Dispatch<React.SetStateAction<SpendDraft>>;
   onSave: () => void | Promise<void>;
   onCancel: () => void;
+  error?: string | null;
+  saving?: boolean;
+  onSelectItem?: (item: LineItem) => void;
   showPlan?: boolean;
 }) {
   const selected = items.find((item) => item.id === draft.itemId);
@@ -922,12 +986,16 @@ function SpendForm({
         {showPlan && (
           <select className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" value={draft.itemId} onChange={(event) => {
             const item = items.find((candidate) => candidate.id === event.target.value);
+            if (item && onSelectItem) {
+              onSelectItem(item);
+              return;
+            }
             onChange((current) => ({ ...current, itemId: event.target.value, paymentMethod: item?.paymentMethod ?? current.paymentMethod }));
           }}>
             {items.map((item) => <option key={item.id} value={item.id}>{item.category} | {item.name}</option>)}
           </select>
         )}
-        <input data-spend-amount className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" type="number" min="0" step="0.01" placeholder="Amount" value={draft.amount} onChange={(event) => onChange((current) => ({ ...current, amount: event.target.value }))} />
+        <input data-spend-amount className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" type="number" min="0" step="0.01" inputMode="decimal" placeholder="Amount" value={draft.amount} onFocus={(event) => event.currentTarget.select()} onChange={(event) => onChange((current) => ({ ...current, amount: event.target.value }))} />
         <select className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" value={draft.paymentMethod} onChange={(event) => onChange((current) => ({ ...current, paymentMethod: event.target.value as PaymentMethod }))}>
           <option value="checking">Checking</option>
           {settings.creditCards.map((card) => <option key={card.id} value={card.id}>{card.label}</option>)}
@@ -935,9 +1003,10 @@ function SpendForm({
         <input className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" type="date" value={draft.date} onChange={(event) => onChange((current) => ({ ...current, date: event.target.value }))} />
         <input className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" placeholder="Note" value={draft.note} onChange={(event) => onChange((current) => ({ ...current, note: event.target.value }))} />
       </div>
+      {error && <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-harbor-red">{error}</p>}
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-harbor-navy/50">{selected && (isCardMethod(draft.paymentMethod) ? "Budget updates now. Dock sees the future card payment." : `Budget updates now. Dock uses ${paymentMethodLabel(draft.paymentMethod, settings)} cash timing.`)}</p>
-        <button type="button" onClick={() => void onSave()} className="rounded-md bg-harbor-teal px-4 py-2 text-sm font-semibold text-white">Log</button>
+        <button type="button" disabled={saving} onClick={() => void onSave()} className="rounded-md bg-harbor-teal px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Saving..." : "Log"}</button>
       </div>
     </div>
   );
