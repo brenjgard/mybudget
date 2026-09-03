@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { loadSettingsWithSupabaseFallback } from "../lib/budget-settings";
 import { budgetRepo } from "../lib/repositories/budget-repo";
-import { getRipplePlanType } from "../lib/ripple-type";
+import { getItemBehavior } from "../lib/ripple-type";
 import { buildProjectedAmounts } from "../lib/schedule";
 import type { AppSettings, DockItemState, LineItem, PaymentMethod, SpendLogEntry } from "../lib/types";
 import {
@@ -37,6 +37,8 @@ type BudgetRow = {
   budgeted: number;
   spent: number;
   remaining: number;
+  planned: number;
+  dockState?: DockItemState;
 };
 
 type WeekPerformance = {
@@ -67,6 +69,10 @@ export default function BudgetPage() {
   const [wrappedWeeks, setWrappedWeeks] = useState<Record<number, WeekStatus>>({});
   const [spendError, setSpendError] = useState<string | null>(null);
   const [savingSpend, setSavingSpend] = useState(false);
+  const [savingRowIds, setSavingRowIds] = useState<Record<string, boolean>>({});
+  const [deletingSpendIds, setDeletingSpendIds] = useState<Record<string, boolean>>({});
+  const [savingWrapWeek, setSavingWrapWeek] = useState<number | null>(null);
+  const [summaryScope, setSummaryScope] = useState<"week" | "month">("week");
   const [spendDraft, setSpendDraft] = useState<SpendDraft>({
     itemId: "",
     amount: "",
@@ -86,8 +92,6 @@ export default function BudgetPage() {
   ), [monthEnd, monthStart, today]);
 
   const budgetRows = useMemo(() => settings?.lineItems.filter((item) => !item.isIncome) ?? [], [settings]);
-  const weeklyRows = useMemo(() => budgetRows.filter((item) => getRipplePlanType(item) !== "monthly_allowance"), [budgetRows]);
-  const monthlyRows = useMemo(() => budgetRows.filter((item) => getRipplePlanType(item) === "monthly_allowance"), [budgetRows]);
   const rowsById = useMemo(() => new Map(budgetRows.map((item) => [item.id, item])), [budgetRows]);
   const currentWeekIndex = useMemo(() => weekIndexForDate(weeks, now), [now, weeks]);
   const selectedItem = rowsById.get(spendDraft.itemId) ?? budgetRows[0];
@@ -101,28 +105,19 @@ export default function BudgetPage() {
     : monthStart > today ? weekIndices : [];
   const laterThisMonthWeekIndices = futureWeekIndices.filter((weekIndex) => weekRows(weekIndex).length > 0);
 
-  const monthlyPlanRows = useMemo(() => monthlyRows.map((item) => {
-    const spent = spendLogs.filter((entry) => entry.rippleId === item.id).reduce((sum, entry) => sum + entry.amount, 0);
-    const budgeted = weeks.reduce((sum, week, weekIndex) => (
-      sum + budgetedForItemWeek(amounts, item, week, weekIndex, month, weeks.length, year)
-    ), 0);
-    return { item, budgeted, spent, remaining: budgeted - spent };
-  }).filter((row) => row.budgeted > 0 || row.spent > 0), [amounts, month, monthlyRows, spendLogs, weeks, year]);
   const recentSpendLogs = useMemo(() => [...spendLogs].sort((a, b) => (
     b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt)
   )), [spendLogs]);
 
   const totals = useMemo(() => {
-    const weeklyBudgeted = weeklyRows.reduce((sum, item) => (
+    const budgeted = budgetRows.reduce((sum, item) => (
       sum + weeks.reduce((weekSum, week, weekIndex) => (
         weekSum + budgetedForItemWeek(amounts, item, week, weekIndex, month, weeks.length, year)
       ), 0)
     ), 0);
-    const monthlyBudgeted = monthlyPlanRows.reduce((sum, row) => sum + row.budgeted, 0);
     const spent = spendLogs.reduce((sum, entry) => sum + entry.amount, 0);
-    const budgeted = weeklyBudgeted + monthlyBudgeted;
     return { budgeted, spent, remaining: budgeted - spent };
-  }, [amounts, month, monthlyPlanRows, spendLogs, weeklyRows, weeks, year]);
+  }, [amounts, budgetRows, month, spendLogs, weeks, year]);
   const currentForward = useMemo(() => settings ? buildCurrentForwardBudgetSummary({
     settings,
     weeks,
@@ -133,6 +128,10 @@ export default function BudgetPage() {
     today,
   }) : null, [amounts, month, settings, spendLogs, today, weeks, year]);
   const shouldUseForwardSummary = Boolean(currentForward && monthEnd >= today);
+
+  function budgetRowKey(item: LineItem, weekIndex: number | undefined) {
+    return `${item.id}:${weekIndex ?? "month"}`;
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -164,16 +163,19 @@ export default function BudgetPage() {
     let cancelled = false;
     async function loadMonth() {
       setMonthLoading(true);
-      const [savedAmounts, savedSpendLogs, savedDockStates] = await Promise.all([
-        budgetRepo.getMonthlyAmounts(monthKey),
-        budgetRepo.getSpendLogs(monthKey),
-        budgetRepo.getDockItemStates(monthKey),
-      ]);
-      if (cancelled) return;
-      setAmounts(buildProjectedAmounts(activeSettings, weeks, month, savedAmounts));
-      setSpendLogs(savedSpendLogs);
-      setDockStates(savedDockStates);
-      setMonthLoading(false);
+      try {
+        const [savedAmounts, savedSpendLogs, savedDockStates] = await Promise.all([
+          budgetRepo.getMonthlyAmounts(monthKey),
+          budgetRepo.getSpendLogs(monthKey),
+          budgetRepo.getDockItemStates(monthKey),
+        ]);
+        if (cancelled) return;
+        setAmounts(buildProjectedAmounts(activeSettings, weeks, month, savedAmounts));
+        setSpendLogs(savedSpendLogs);
+        setDockStates(savedDockStates);
+      } finally {
+        if (!cancelled) setMonthLoading(false);
+      }
     }
     void loadMonth();
     return () => {
@@ -221,9 +223,37 @@ export default function BudgetPage() {
     return isoDate(inMonthStart);
   }
 
+  function dateInWeek(dateValue: string | undefined, weekIndex: number) {
+    const week = weeks[weekIndex];
+    if (!dateValue || !week) return false;
+    const date = new Date(`${dateValue.slice(0, 10)}T00:00:00`);
+    return !Number.isNaN(date.getTime()) && date >= week.start && date <= week.end;
+  }
+
+  function dockStateForItemWeek(item: LineItem, weekIndex: number) {
+    return dockStates.find((state) => (
+      state.itemId === item.id
+      && state.itemKind === "ripple"
+      && (state.weekIndex === weekIndex || dateInWeek(state.pendingUntil, weekIndex))
+    ));
+  }
+
+  function plannedAmountForRow(item: LineItem, weekIndex: number) {
+    const week = weeks[weekIndex];
+    if (!week) return 0;
+    const scheduledDate = item.preferredPaymentDate ?? item.paymentDueDate;
+    if (scheduledDate) {
+      const date = new Date(`${scheduledDate.slice(0, 10)}T00:00:00`);
+      if (!Number.isNaN(date.getTime()) && date.getFullYear() === year && date.getMonth() === month) {
+        return date >= week.start && date <= week.end ? item.defaultAmount : 0;
+      }
+    }
+    return budgetedForItemWeek(amounts, item, week, weekIndex, month, weeks.length, year);
+  }
+
   function defaultAmountForItem(item: LineItem, weekIndex?: number) {
     if (weekIndex === undefined) {
-      const budgeted = monthlyPlanRows.find((row) => row.item.id === item.id)?.budgeted ?? item.defaultAmount;
+      const budgeted = weeks.reduce((sum, _week, index) => sum + plannedAmountForRow(item, index), 0) || item.defaultAmount;
       const spent = spendLogs.filter((entry) => entry.rippleId === item.id).reduce((sum, entry) => sum + entry.amount, 0);
       return Math.max(budgeted - spent, 0).toFixed(2);
     }
@@ -298,38 +328,128 @@ export default function BudgetPage() {
   }
 
   async function deleteSpend(entry: SpendLogEntry) {
-    await budgetRepo.deleteSpendLog(entry.monthKey, entry.id);
-    setSpendLogs((current) => current.filter((candidate) => candidate.id !== entry.id));
+    setDeletingSpendIds((current) => ({ ...current, [entry.id]: true }));
+    try {
+      await budgetRepo.deleteSpendLog(entry.monthKey, entry.id);
+      setSpendLogs((current) => current.filter((candidate) => candidate.id !== entry.id));
+    } finally {
+      setDeletingSpendIds((current) => ({ ...current, [entry.id]: false }));
+    }
   }
 
   async function saveUnderBudget(weekIndex: number, amount: number) {
     const nextWeek = weeks[Math.min(weekIndex + 1, weeks.length - 1)] ?? weeks[weekIndex];
     if (!nextWeek || amount <= 0) return;
-    const saved = await budgetRepo.saveDockItemState({
-      monthKey,
-      weekIndex: Math.min(weekIndex + 1, weeks.length - 1),
-      itemId: `one-time-cash:${crypto.randomUUID()}`,
-      itemKind: "ripple",
-      behaviorType: "fixed_bill",
-      status: "upcoming",
-      plannedAmount: amount,
-      actualAmount: amount,
-      pendingUntil: isoDate(nextWeek.start),
-      note: "Save under-budget money",
-    });
-    setDockStates((current) => [saved, ...current]);
-    setWrappedWeeks((current) => ({ ...current, [weekIndex]: "saved" }));
-    setWrappingWeek(null);
+    setSavingWrapWeek(weekIndex);
+    try {
+      const saved = await budgetRepo.saveDockItemState({
+        monthKey,
+        weekIndex: Math.min(weekIndex + 1, weeks.length - 1),
+        itemId: `one-time-cash:${crypto.randomUUID()}`,
+        itemKind: "ripple",
+        behaviorType: "fixed_bill",
+        status: "upcoming",
+        plannedAmount: amount,
+        actualAmount: amount,
+        pendingUntil: isoDate(nextWeek.start),
+        note: "Save under-budget money",
+      });
+      setDockStates((current) => [saved, ...current]);
+      setWrappedWeeks((current) => ({ ...current, [weekIndex]: "saved" }));
+      setWrappingWeek(null);
+    } finally {
+      setSavingWrapWeek(null);
+    }
+  }
+
+  async function markBudgetRow(item: LineItem, weekIndex: number | undefined, status: "cleared" | "skipped") {
+    const rowKey = budgetRowKey(item, weekIndex);
+    const date = weekIndex !== undefined ? defaultDateForWeek(weekIndex) : defaultSpendDate;
+    const parsedDate = new Date(`${date}T00:00:00`);
+    const targetWeekIndex = weekIndex ?? weekIndexForDate(weeks, parsedDate);
+    if (targetWeekIndex < 0) return;
+    const sourceMonthKey = monthKeyFor(parsedDate.getFullYear(), parsedDate.getMonth());
+    const sourceWeeks = getCalendarWeeksForMonth(parsedDate.getFullYear(), parsedDate.getMonth());
+    const sourceWeekIndex = Math.max(0, weekIndexForDate(sourceWeeks, parsedDate));
+    const row = weekRows(targetWeekIndex).find((candidate) => candidate.item.id === item.id)
+      ?? { item, budgeted: item.defaultAmount, spent: 0, remaining: item.defaultAmount, planned: item.defaultAmount, dockState: undefined };
+    const amount = Math.max(row?.remaining ?? row?.budgeted ?? item.defaultAmount, 0);
+    setSavingRowIds((current) => ({ ...current, [rowKey]: true }));
+    try {
+      const saved = await budgetRepo.saveDockItemState({
+        monthKey: sourceMonthKey,
+        weekIndex: sourceWeekIndex,
+        itemId: item.id,
+        itemKind: "ripple",
+        behaviorType: getItemBehavior(item),
+        status,
+        plannedAmount: row?.planned ?? row?.budgeted ?? item.defaultAmount,
+        actualAmount: status === "cleared" ? amount : 0,
+        pendingUntil: date,
+        clearedAt: status === "cleared" ? new Date().toISOString() : undefined,
+        note: item.name,
+      });
+      setDockStates((current) => {
+        const without = current.filter((state) => !(state.monthKey === saved.monthKey && state.weekIndex === saved.weekIndex && state.itemId === saved.itemId && state.itemKind === saved.itemKind));
+        return [...without, saved];
+      });
+      if (weekIndex !== undefined) setExpandedWeeks((current) => ({ ...current, [weekIndex]: true }));
+    } finally {
+      setSavingRowIds((current) => ({ ...current, [rowKey]: false }));
+    }
+  }
+
+  async function adjustBudgetRow(item: LineItem, weekIndex: number | undefined, amount: number) {
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    const rowKey = budgetRowKey(item, weekIndex);
+    const date = weekIndex !== undefined ? defaultDateForWeek(weekIndex) : defaultSpendDate;
+    const parsedDate = new Date(`${date}T00:00:00`);
+    const targetWeekIndex = weekIndex ?? weekIndexForDate(weeks, parsedDate);
+    if (targetWeekIndex < 0) return;
+    const sourceMonthKey = monthKeyFor(parsedDate.getFullYear(), parsedDate.getMonth());
+    const sourceWeeks = getCalendarWeeksForMonth(parsedDate.getFullYear(), parsedDate.getMonth());
+    const sourceWeekIndex = Math.max(0, weekIndexForDate(sourceWeeks, parsedDate));
+    const row = weekRows(targetWeekIndex).find((candidate) => candidate.item.id === item.id)
+      ?? { item, budgeted: item.defaultAmount, spent: 0, remaining: item.defaultAmount, planned: item.defaultAmount, dockState: undefined };
+    setSavingRowIds((current) => ({ ...current, [rowKey]: true }));
+    try {
+      const saved = await budgetRepo.saveDockItemState({
+        ...row?.dockState,
+        monthKey: sourceMonthKey,
+        weekIndex: sourceWeekIndex,
+        itemId: item.id,
+        itemKind: "ripple",
+        behaviorType: getItemBehavior(item),
+        status: "adjusted",
+        plannedAmount: row?.planned ?? row?.budgeted ?? item.defaultAmount,
+        actualAmount: amount,
+        pendingUntil: date,
+        note: item.name,
+      });
+      setDockStates((current) => {
+        const without = current.filter((state) => !(state.monthKey === saved.monthKey && state.weekIndex === saved.weekIndex && state.itemId === saved.itemId && state.itemKind === saved.itemKind));
+        return [...without, saved];
+      });
+      if (weekIndex !== undefined) setExpandedWeeks((current) => ({ ...current, [weekIndex]: true }));
+    } finally {
+      setSavingRowIds((current) => ({ ...current, [rowKey]: false }));
+    }
   }
 
   function weekRows(weekIndex: number) {
     const week = weeks[weekIndex];
     if (!week) return [];
-    return weeklyRows.map((item) => {
-      const budgeted = budgetedForItemWeek(amounts, item, week, weekIndex, month, weeks.length, year);
-      const spent = spendLogs.filter((entry) => entry.rippleId === item.id && entry.weekIndex === weekIndex).reduce((sum, entry) => sum + entry.amount, 0);
-      return { item, budgeted, spent, remaining: budgeted - spent };
-    }).filter((row) => row.budgeted > 0 || row.spent > 0);
+    return budgetRows.map((item) => {
+      const dockState = dockStateForItemWeek(item, weekIndex);
+      const planned = plannedAmountForRow(item, weekIndex);
+      const adjusted = dockState?.status !== "cleared" && dockState?.status !== "skipped" && dockState?.actualAmount !== undefined
+        ? Number(dockState.actualAmount)
+        : planned;
+      const loggedSpend = spendLogs.filter((entry) => entry.rippleId === item.id && entry.weekIndex === weekIndex).reduce((sum, entry) => sum + entry.amount, 0);
+      const spent = dockState?.status === "cleared" ? Number(dockState.actualAmount ?? dockState.plannedAmount ?? adjusted) : loggedSpend;
+      const budgeted = dockState?.status === "skipped" ? 0 : adjusted;
+      return { item, budgeted, spent, remaining: Math.max(budgeted - spent, 0), planned, dockState };
+    }).filter((row) => row.budgeted > 0 || row.spent > 0 || row.dockState?.status === "skipped");
   }
 
   function weekPerformance(weekIndex: number) {
@@ -380,11 +500,31 @@ export default function BudgetPage() {
           </div>
         </header>
 
+        {monthLoading && (
+          <div className="rounded-lg border border-harbor-teal-light bg-white px-4 py-3 text-sm font-semibold text-harbor-navy/50 shadow-sm">
+            Loading month...
+          </div>
+        )}
+
         {shouldUseForwardSummary && currentForward ? (
-          <section className="grid gap-2 sm:gap-3 md:grid-cols-[1.4fr_1fr_1fr]">
-            <Metric label="Remaining Budget" value={currentForward.restOfMonth.remainingPlannedSpending} detail="Known plan from today through month end" />
-            <Metric label="Used Forward" value={currentForward.restOfMonth.spent} tone="red" detail="Recorded in the current actionable period" />
-            <Metric label="Forward Room" value={currentForward.restOfMonth.availablePosition} tone={currentForward.restOfMonth.availablePosition >= 0 ? "green" : "red"} detail="Remaining plan minus forward spending" />
+          <section className="space-y-2">
+            <div className="inline-flex rounded-lg border border-slate-200 bg-white p-1 shadow-sm">
+              <button type="button" onClick={() => setSummaryScope("week")} className={`rounded-md px-3 py-1.5 text-xs font-semibold ${summaryScope === "week" ? "bg-harbor-teal text-white" : "text-harbor-navy/60"}`}>This Week</button>
+              <button type="button" onClick={() => setSummaryScope("month")} className={`rounded-md px-3 py-1.5 text-xs font-semibold ${summaryScope === "month" ? "bg-harbor-teal text-white" : "text-harbor-navy/60"}`}>This Month</button>
+            </div>
+            {summaryScope === "week" ? (
+              <section className="grid gap-2 sm:gap-3 md:grid-cols-3">
+                <Metric label="Planned" value={currentForward.thisWeek.budgeted} detail="Budget for this week" />
+                <Metric label="Done" value={currentForward.thisWeek.spent} tone="red" detail="Already recorded" />
+                <Metric label="Still Available" value={currentForward.thisWeek.remaining} tone={currentForward.thisWeek.remaining >= 0 ? "green" : "red"} detail="Planned minus done" />
+              </section>
+            ) : (
+              <section className="grid gap-2 sm:gap-3 md:grid-cols-3">
+                <Metric label="Planned Left" value={currentForward.restOfMonth.remainingPlannedSpending} detail="Today through month end" />
+                <Metric label="Done So Far" value={currentForward.restOfMonth.spent} tone="red" detail="Recorded from today forward" />
+                <Metric label="Still Available" value={currentForward.restOfMonth.availablePosition} tone={currentForward.restOfMonth.availablePosition >= 0 ? "green" : "red"} detail="Planned left minus done" />
+              </section>
+            )}
           </section>
         ) : (
           <section className="grid gap-2 sm:gap-3 md:grid-cols-3">
@@ -426,7 +566,7 @@ export default function BudgetPage() {
             rows={weekRows(currentWeekIndex)}
             performance={weekPerformance(currentWeekIndex)}
             status={savedStatusForWeek(currentWeekIndex)}
-            isExpanded
+            isExpanded={Boolean(expandedWeeks[currentWeekIndex]) || activeSpend !== null && activeSpend !== "global" && activeSpend.weekIndex === currentWeekIndex || wrappingWeek === currentWeekIndex}
             isFeatured
             isPast={false}
             isWrapping={wrappingWeek === currentWeekIndex}
@@ -435,12 +575,16 @@ export default function BudgetPage() {
             spendDraft={spendDraft}
             rowsById={rowsById}
             onOpenSpend={openSpendForm}
+            onMarkRow={markBudgetRow}
+            onAdjustRow={adjustBudgetRow}
             onChangeSpend={setSpendDraft}
             onSaveSpend={logSpend}
             onCancelSpend={() => setActiveSpend(null)}
             spendError={spendError}
             savingSpend={savingSpend}
-            onToggle={() => undefined}
+            savingRowIds={savingRowIds}
+            savingWrap={savingWrapWeek === currentWeekIndex}
+            onToggle={() => setExpandedWeeks((current) => ({ ...current, [currentWeekIndex]: !current[currentWeekIndex] }))}
             onStartWrap={() => setWrappingWeek(currentWeekIndex)}
             onCancelWrap={() => setWrappingWeek(null)}
             onSaveWrap={() => void saveUnderBudget(currentWeekIndex, weekPerformance(currentWeekIndex).remaining)}
@@ -470,11 +614,15 @@ export default function BudgetPage() {
                 spendDraft={spendDraft}
                 rowsById={rowsById}
                 onOpenSpend={openSpendForm}
+                onMarkRow={markBudgetRow}
+                onAdjustRow={adjustBudgetRow}
                 onChangeSpend={setSpendDraft}
                 onSaveSpend={logSpend}
                 onCancelSpend={() => setActiveSpend(null)}
                 spendError={spendError}
                 savingSpend={savingSpend}
+                savingRowIds={savingRowIds}
+                savingWrap={false}
                 onToggle={() => setExpandedWeeks((current) => ({ ...current, [weekIndex]: !current[weekIndex] }))}
                 onStartWrap={() => undefined}
                 onCancelWrap={() => undefined}
@@ -516,11 +664,15 @@ export default function BudgetPage() {
                 spendDraft={spendDraft}
                 rowsById={rowsById}
                 onOpenSpend={openSpendForm}
+                onMarkRow={markBudgetRow}
+                onAdjustRow={adjustBudgetRow}
                 onChangeSpend={setSpendDraft}
                 onSaveSpend={logSpend}
                 onCancelSpend={() => setActiveSpend(null)}
                 spendError={spendError}
                 savingSpend={savingSpend}
+                savingRowIds={savingRowIds}
+                savingWrap={savingWrapWeek === weekIndex}
                 onToggle={() => setExpandedWeeks((current) => ({ ...current, [weekIndex]: !current[weekIndex] }))}
                 onStartWrap={() => {
                   setExpandedWeeks((current) => ({ ...current, [weekIndex]: true }));
@@ -535,28 +687,13 @@ export default function BudgetPage() {
           </section>
         )}
 
-        {monthlyPlanRows.length > 0 && (
-          <MonthlyPlans
-            rows={monthlyPlanRows}
-            activeSpend={activeSpend}
-            spendDraft={spendDraft}
-            settings={settings}
-            rowsById={rowsById}
-            onOpenSpend={openSpendForm}
-            onChangeSpend={setSpendDraft}
-            onSaveSpend={logSpend}
-            onCancelSpend={() => setActiveSpend(null)}
-            spendError={spendError}
-            savingSpend={savingSpend}
-          />
-        )}
-
         {recentSpendLogs.length > 0 && (
           <SpendingLog
             entries={recentSpendLogs}
             rowsById={rowsById}
             settings={settings}
             onDelete={deleteSpend}
+            deletingIds={deletingSpendIds}
           />
         )}
       </div>
@@ -622,11 +759,15 @@ function WeekSection({
   spendDraft,
   rowsById,
   onOpenSpend,
+  onMarkRow,
+  onAdjustRow,
   onChangeSpend,
   onSaveSpend,
   onCancelSpend,
   spendError,
   savingSpend,
+  savingRowIds,
+  savingWrap,
   onToggle,
   onStartWrap,
   onCancelWrap,
@@ -649,11 +790,15 @@ function WeekSection({
   spendDraft: SpendDraft;
   rowsById: Map<string, LineItem>;
   onOpenSpend: (item: LineItem, weekIndex?: number) => void;
+  onMarkRow: (item: LineItem, weekIndex: number | undefined, status: "cleared" | "skipped") => void | Promise<void>;
+  onAdjustRow: (item: LineItem, weekIndex: number | undefined, amount: number) => void | Promise<void>;
   onChangeSpend: React.Dispatch<React.SetStateAction<SpendDraft>>;
   onSaveSpend: () => void | Promise<void>;
   onCancelSpend: () => void;
   spendError: string | null;
   savingSpend: boolean;
+  savingRowIds: Record<string, boolean>;
+  savingWrap: boolean;
   onToggle: () => void;
   onStartWrap: () => void;
   onCancelWrap: () => void;
@@ -683,13 +828,11 @@ function WeekSection({
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center gap-2">
-          {!isFeatured && (
-            <button type="button" onClick={onToggle} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/65">
-              {isExpanded ? "Collapse" : "Inspect"}
-            </button>
-          )}
+          <button type="button" onClick={onToggle} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/65">
+            {isExpanded ? "Collapse" : "Open"}
+          </button>
           {isPast && !status && !isWrapping && performance.budgeted > 0 && (
-            <button type="button" onClick={onStartWrap} className="rounded-md bg-harbor-teal px-3 py-1.5 text-xs font-semibold text-white">Wrap Week</button>
+            <button type="button" disabled={savingWrap} onClick={onStartWrap} className="rounded-md bg-harbor-teal px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">Wrap Week</button>
           )}
         </div>
       </div>
@@ -701,6 +844,7 @@ function WeekSection({
           onLeave={onLeaveWrap}
           onOver={onOverWrap}
           onCancel={onCancelWrap}
+          saving={savingWrap}
         />
       )}
 
@@ -710,7 +854,7 @@ function WeekSection({
             <p className="text-sm text-harbor-navy/45">No budget activity in this week.</p>
           ) : (
             Object.entries(grouped).map(([chart, chartRows]) => (
-              <ChartRows key={chart} chart={chart} rows={chartRows} weekIndex={weekIndex} onOpenSpend={onOpenSpend} />
+              <ChartRows key={chart} chart={chart} rows={chartRows} weekIndex={weekIndex} onOpenSpend={onOpenSpend} onMarkRow={onMarkRow} onAdjustRow={onAdjustRow} savingRowIds={savingRowIds} />
             ))
           )}
           {activeInlineSpend && (
@@ -732,12 +876,18 @@ function WeekSection({
   );
 }
 
-function ChartRows({ chart, rows, weekIndex, onOpenSpend }: {
+function ChartRows({ chart, rows, weekIndex, onOpenSpend, onMarkRow, onAdjustRow, savingRowIds }: {
   chart: string;
   rows: BudgetRow[];
   weekIndex?: number;
   onOpenSpend: (item: LineItem, weekIndex?: number) => void;
+  onMarkRow: (item: LineItem, weekIndex: number | undefined, status: "cleared" | "skipped") => void | Promise<void>;
+  onAdjustRow: (item: LineItem, weekIndex: number | undefined, amount: number) => void | Promise<void>;
+  savingRowIds: Record<string, boolean>;
 }) {
+  const [expanded, setExpanded] = useState(false);
+  const [editingItemId, setEditingItemId] = useState<string | null>(null);
+  const [amountDraft, setAmountDraft] = useState("");
   const subtotal = rows.reduce<WeekPerformance>((sum, row) => ({
     budgeted: sum.budgeted + row.budgeted,
     spent: sum.spent + row.spent,
@@ -747,27 +897,41 @@ function ChartRows({ chart, rows, weekIndex, onOpenSpend }: {
 
   return (
     <section className={`overflow-hidden rounded-xl border bg-white shadow-sm ${accent.border}`}>
-      <div className={`border-b px-4 py-3 ${accent.header}`}>
+      <div className={`px-4 py-3 ${expanded ? "border-b" : ""} ${accent.header}`}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="truncate text-sm font-bold uppercase tracking-wide text-harbor-navy">{chart}</h3>
             <p className="mt-0.5 text-xs font-medium text-harbor-navy/55">
-              {formatMoney(subtotal.budgeted)} planned | {formatMoney(subtotal.spent)} spent
+              {rows.length} item{rows.length === 1 ? "" : "s"} | {formatMoney(subtotal.budgeted)} planned | {formatMoney(subtotal.spent)} done
             </p>
           </div>
-          <div className={`shrink-0 text-right text-lg font-bold tabular-nums ${subtotal.remaining < 0 ? "text-harbor-red" : accent.amount}`}>
-            {formatMoney(subtotal.remaining)}
-            <div className="text-xs font-semibold text-harbor-navy/45">left</div>
+          <div className="flex shrink-0 items-start gap-3">
+            <div className={`text-right text-lg font-bold tabular-nums ${subtotal.remaining < 0 ? "text-harbor-red" : accent.amount}`}>
+              {formatMoney(subtotal.remaining)}
+              <div className="text-xs font-semibold text-harbor-navy/45">left</div>
+            </div>
+            <button type="button" onClick={() => setExpanded((current) => !current)} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/60">
+              {expanded ? "Collapse" : "Open"}
+            </button>
           </div>
         </div>
       </div>
-      <div className="divide-y divide-slate-100 px-4">
-        {rows.map((row) => (
+      {expanded && <div className="divide-y divide-slate-100 px-4">
+        {rows.map((row) => {
+          const canCheckOff = row.item.paymentMethod === "checking";
+          const isDone = row.dockState?.status === "cleared";
+          const isEditing = editingItemId === row.item.id;
+          const saving = Boolean(savingRowIds[`${row.item.id}:${weekIndex ?? "month"}`]);
+          return (
           <div key={row.item.id} className="grid gap-2 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
             <div className="min-w-0 sm:pr-4">
               <div className="truncate text-base font-semibold text-harbor-navy sm:text-sm">{row.item.name}</div>
               <div className="mt-0.5 text-xs font-medium text-harbor-navy/50">
-                {formatMoney(row.budgeted)} planned | {formatMoney(row.spent)} spent
+                {row.dockState?.status === "skipped"
+                  ? "Skipped"
+                  : row.dockState?.status === "adjusted"
+                    ? `${formatMoney(row.planned)} planned | ${formatMoney(row.budgeted)} current`
+                    : `${formatMoney(row.planned)} planned | ${formatMoney(row.spent)} done`}
               </div>
             </div>
             <div className="flex items-center justify-between gap-3 sm:justify-end">
@@ -775,11 +939,31 @@ function ChartRows({ chart, rows, weekIndex, onOpenSpend }: {
                 {formatMoney(row.remaining)}
                 <span className="ml-1 text-xs font-semibold text-harbor-navy/45">left</span>
               </div>
-              <button type="button" onClick={() => onOpenSpend(row.item, weekIndex)} className={`min-h-10 shrink-0 rounded-md border bg-white px-3 py-1.5 text-xs font-semibold hover:text-white ${accent.button}`}>+ Spend</button>
+              <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                {canCheckOff && !isDone && row.dockState?.status !== "skipped" && <button type="button" disabled={saving} onClick={() => {
+                  setEditingItemId(row.item.id);
+                  setAmountDraft(row.budgeted.toFixed(2));
+                }} className="min-h-10 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/55 disabled:opacity-50">Edit</button>}
+                {canCheckOff && !isDone && <button type="button" disabled={saving} onClick={() => void onMarkRow(row.item, weekIndex, "cleared")} className="min-h-10 rounded-md border border-harbor-teal-light bg-white px-3 py-1.5 text-xs font-semibold text-harbor-teal disabled:opacity-50">{saving ? "Saving..." : "Done"}</button>}
+                {canCheckOff && row.dockState?.status !== "skipped" && <button type="button" disabled={saving} onClick={() => void onMarkRow(row.item, weekIndex, "skipped")} className="min-h-10 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/55 disabled:opacity-50">{saving ? "Saving..." : "Skip"}</button>}
+                <button type="button" disabled={saving} onClick={() => onOpenSpend(row.item, weekIndex)} className={`min-h-10 rounded-md border bg-white px-3 py-1.5 text-xs font-semibold hover:text-white disabled:opacity-50 ${accent.button}`}>+ Spend</button>
+              </div>
             </div>
+            {isEditing && (
+              <div className="rounded-md border border-teal-200 bg-teal-50 p-2 sm:col-span-2">
+                <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+                  <input type="number" min="0" step="0.01" inputMode="decimal" value={amountDraft} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setAmountDraft(event.target.value)} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" />
+                  <button type="button" disabled={saving} onClick={() => {
+                    void onAdjustRow(row.item, weekIndex, Number(amountDraft));
+                    setEditingItemId(null);
+                  }} className="rounded-md bg-harbor-teal px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{saving ? "Saving..." : "Save Amount"}</button>
+                  <button type="button" disabled={saving} onClick={() => setEditingItemId(null)} className="rounded-md px-3 py-2 text-xs font-semibold text-harbor-navy/45 disabled:opacity-50">Cancel</button>
+                </div>
+              </div>
+            )}
           </div>
-        ))}
-      </div>
+        );})}
+      </div>}
     </section>
   );
 }
@@ -796,21 +980,22 @@ function chartAccent(chart: string) {
   return accents[index];
 }
 
-function WrapDecision({ performance, onSave, onLeave, onOver, onCancel }: {
+function WrapDecision({ performance, onSave, onLeave, onOver, onCancel, saving = false }: {
   performance: WeekPerformance;
   onSave: () => void;
   onLeave: () => void;
   onOver: () => void;
   onCancel: () => void;
+  saving?: boolean;
 }) {
   if (performance.remaining >= 0) {
     return (
       <div className="mt-3 rounded-md border border-harbor-teal-light bg-harbor-offwhite px-3 py-3">
         <p className="text-sm font-semibold text-harbor-green">You finished {formatMoney(performance.remaining)} under budget.</p>
         <div className="mt-3 flex flex-wrap gap-2">
-          <button type="button" onClick={onSave} className="rounded-md bg-harbor-teal px-3 py-1.5 text-xs font-semibold text-white">Save {formatMoney(performance.remaining)}</button>
-          <button type="button" onClick={onLeave} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/65">Leave It</button>
-          <button type="button" onClick={onCancel} className="rounded-md px-3 py-1.5 text-xs font-semibold text-harbor-navy/45">Cancel</button>
+          <button type="button" disabled={saving} onClick={onSave} className="rounded-md bg-harbor-teal px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">{saving ? "Saving..." : `Save ${formatMoney(performance.remaining)}`}</button>
+          <button type="button" disabled={saving} onClick={onLeave} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/65 disabled:opacity-50">Leave It</button>
+          <button type="button" disabled={saving} onClick={onCancel} className="rounded-md px-3 py-1.5 text-xs font-semibold text-harbor-navy/45 disabled:opacity-50">Cancel</button>
         </div>
       </div>
     );
@@ -821,71 +1006,19 @@ function WrapDecision({ performance, onSave, onLeave, onOver, onCancel }: {
       <p className="text-sm font-semibold text-harbor-red">You finished {formatMoney(Math.abs(performance.remaining))} over budget.</p>
       <p className="mt-1 text-xs text-harbor-navy/50">The additional spending is already reflected in your future cash forecast.</p>
       <div className="mt-3 flex flex-wrap gap-2">
-        <button type="button" onClick={onOver} className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-harbor-navy/65">Acknowledge</button>
-        <button type="button" onClick={onCancel} className="rounded-md px-3 py-1.5 text-xs font-semibold text-harbor-navy/45">Cancel</button>
+        <button type="button" disabled={saving} onClick={onOver} className="rounded-md border border-slate-200 px-3 py-1.5 text-xs font-semibold text-harbor-navy/65 disabled:opacity-50">Acknowledge</button>
+        <button type="button" disabled={saving} onClick={onCancel} className="rounded-md px-3 py-1.5 text-xs font-semibold text-harbor-navy/45 disabled:opacity-50">Cancel</button>
       </div>
     </div>
   );
 }
 
-function MonthlyPlans({
-  rows,
-  activeSpend,
-  spendDraft,
-  settings,
-  rowsById,
-  onOpenSpend,
-  onChangeSpend,
-  onSaveSpend,
-  onCancelSpend,
-  spendError,
-  savingSpend,
-}: {
-  rows: BudgetRow[];
-  activeSpend: SpendTarget | null;
-  spendDraft: SpendDraft;
-  settings: AppSettings;
-  rowsById: Map<string, LineItem>;
-  onOpenSpend: (item: LineItem, weekIndex?: number) => void;
-  onChangeSpend: React.Dispatch<React.SetStateAction<SpendDraft>>;
-  onSaveSpend: () => void | Promise<void>;
-  onCancelSpend: () => void;
-  spendError: string | null;
-  savingSpend: boolean;
-}) {
-  const grouped = groupRowsByChart(rows);
-  const activeMonthlySpend = activeSpend !== null && activeSpend !== "global" && activeSpend.weekIndex === undefined ? activeSpend : null;
-
-  return (
-    <section className="border-t border-harbor-teal-light pt-5">
-      <h2 className="text-xl font-bold">Monthly Plans</h2>
-      <div className="mt-4 space-y-5">
-        {Object.entries(grouped).map(([chart, chartRows]) => (
-          <ChartRows key={chart} chart={chart} rows={chartRows} onOpenSpend={onOpenSpend} />
-        ))}
-      </div>
-      {activeMonthlySpend && (
-        <SpendForm
-          title={`Log ${rowsById.get(activeMonthlySpend.itemId)?.name ?? "Spending"}`}
-          draft={spendDraft}
-          items={[]}
-          settings={settings}
-          onChange={onChangeSpend}
-          onSave={onSaveSpend}
-          onCancel={onCancelSpend}
-          error={spendError}
-          saving={savingSpend}
-        />
-      )}
-    </section>
-  );
-}
-
-function SpendingLog({ entries, rowsById, settings, onDelete }: {
+function SpendingLog({ entries, rowsById, settings, onDelete, deletingIds }: {
   entries: SpendLogEntry[];
   rowsById: Map<string, LineItem>;
   settings: AppSettings;
   onDelete: (entry: SpendLogEntry) => void | Promise<void>;
+  deletingIds: Record<string, boolean>;
 }) {
   return (
     <section className="border-t border-slate-200 pt-5">
@@ -917,7 +1050,7 @@ function SpendingLog({ entries, rowsById, settings, onDelete }: {
                   <td className="px-3 py-2 text-harbor-navy/55">{entry.note ?? ""}</td>
                   <td className="px-3 py-2 text-right font-bold">{formatMoney(entry.amount)}</td>
                   <td className="py-2 pl-3 text-right">
-                    <button type="button" onClick={() => void onDelete(entry)} className="rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-harbor-red hover:border-harbor-red/30 hover:bg-red-50">Delete</button>
+                    <button type="button" disabled={Boolean(deletingIds[entry.id])} onClick={() => void onDelete(entry)} className="rounded-md border border-slate-200 px-2 py-1 text-xs font-semibold text-harbor-red hover:border-harbor-red/30 hover:bg-red-50 disabled:opacity-50">{deletingIds[entry.id] ? "Deleting..." : "Delete"}</button>
                   </td>
                 </tr>
               );
@@ -940,7 +1073,7 @@ function SpendingLog({ entries, rowsById, settings, onDelete }: {
                 <div className="shrink-0 text-right font-bold tabular-nums">{formatMoney(entry.amount)}</div>
               </div>
               <div className="mt-2 flex justify-end">
-                <button type="button" onClick={() => void onDelete(entry)} className="rounded-md border border-slate-200 px-3 py-2 text-xs font-semibold text-harbor-red">Delete</button>
+                <button type="button" disabled={Boolean(deletingIds[entry.id])} onClick={() => void onDelete(entry)} className="rounded-md border border-slate-200 px-3 py-2 text-xs font-semibold text-harbor-red disabled:opacity-50">{deletingIds[entry.id] ? "Deleting..." : "Delete"}</button>
               </div>
             </div>
           );

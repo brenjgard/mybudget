@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { loadSettingsWithSupabaseFallback } from "../lib/budget-settings";
 import { budgetRepo } from "../lib/repositories/budget-repo";
@@ -108,13 +108,18 @@ export default function DockPage() {
   const [checkingUpdatedAt, setCheckingUpdatedAt] = useState<string | undefined>();
   const [loaded, setLoaded] = useState(false);
   const [loadingTimeline, setLoadingTimeline] = useState(false);
+  const [timelineLoaded, setTimelineLoaded] = useState(false);
   const [horizonWeeks, setHorizonWeeks] = useState(8);
   const [expandedWeeks, setExpandedWeeks] = useState<Record<string, boolean>>({});
   const [collapsedWeeks, setCollapsedWeeks] = useState<Record<string, boolean>>({});
+  const [savingEventIds, setSavingEventIds] = useState<Record<string, boolean>>({});
+  const [savingChecking, setSavingChecking] = useState(false);
+  const [savingCashEvent, setSavingCashEvent] = useState(false);
   const [showAddEvent, setShowAddEvent] = useState(false);
   const [showCheckingForm, setShowCheckingForm] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
   const [eventDraft, setEventDraft] = useState<CashEventDraft>({ type: "payment", label: "", amount: "", date: todayISODate() });
+  const checkingInputRef = useRef<HTMLInputElement>(null);
 
   const anchorDate = useMemo(() => {
     if (!checkingUpdatedAt) return now;
@@ -190,28 +195,33 @@ export default function DockPage() {
     let cancelled = false;
     async function loadTimeline() {
       setLoadingTimeline(true);
-      const monthResults = await Promise.all(monthKeys.map(async (monthKey) => {
-        const { year, month } = monthPartsFromKey(monthKey);
-        const sourceWeeks = getCalendarWeeksForMonth(year, month);
-        const [savedAmounts, savedSpendLogs, savedDockStates] = await Promise.all([
-          budgetRepo.getMonthlyAmounts(monthKey),
-          budgetRepo.getSpendLogs(monthKey),
-          budgetRepo.getDockItemStates(monthKey),
-        ]);
-        return {
-          monthKey,
-          amounts: buildProjectedAmounts(activeSettings, sourceWeeks, month, savedAmounts),
-          spendLogs: savedSpendLogs,
-          dockStates: savedDockStates,
-        };
-      }));
-      const savedBuoys = await budgetRepo.getBuoys();
-      if (cancelled) return;
-      setAmountsByMonth(Object.fromEntries(monthResults.map((result) => [result.monthKey, result.amounts])));
-      setSpendLogs(monthResults.flatMap((result) => result.spendLogs));
-      setDockStates(monthResults.flatMap((result) => result.dockStates));
-      setBuoys(savedBuoys);
-      setLoadingTimeline(false);
+      setTimelineLoaded(false);
+      try {
+        const monthResults = await Promise.all(monthKeys.map(async (monthKey) => {
+          const { year, month } = monthPartsFromKey(monthKey);
+          const sourceWeeks = getCalendarWeeksForMonth(year, month);
+          const [savedAmounts, savedSpendLogs, savedDockStates] = await Promise.all([
+            budgetRepo.getMonthlyAmounts(monthKey),
+            budgetRepo.getSpendLogs(monthKey),
+            budgetRepo.getDockItemStates(monthKey),
+          ]);
+          return {
+            monthKey,
+            amounts: buildProjectedAmounts(activeSettings, sourceWeeks, month, savedAmounts),
+            spendLogs: savedSpendLogs,
+            dockStates: savedDockStates,
+          };
+        }));
+        const savedBuoys = await budgetRepo.getBuoys();
+        if (cancelled) return;
+        setAmountsByMonth(Object.fromEntries(monthResults.map((result) => [result.monthKey, result.amounts])));
+        setSpendLogs(monthResults.flatMap((result) => result.spendLogs));
+        setDockStates(monthResults.flatMap((result) => result.dockStates));
+        setBuoys(savedBuoys);
+        setTimelineLoaded(true);
+      } finally {
+        if (!cancelled) setLoadingTimeline(false);
+      }
     }
     void loadTimeline();
     return () => {
@@ -219,13 +229,26 @@ export default function DockPage() {
     };
   }, [monthKeys, settings]);
 
+  useEffect(() => {
+    if (!showCheckingForm) return;
+    window.requestAnimationFrame(() => {
+      checkingInputRef.current?.focus();
+      checkingInputRef.current?.select();
+    });
+  }, [showCheckingForm]);
+
   async function saveCheckingBalance() {
     const parsed = checkingBalance.trim() === "" ? null : Number(checkingBalance);
     if (parsed !== null && !Number.isFinite(parsed)) return;
-    const saved = await budgetRepo.saveCheckingAnchor(parsed);
-    setCheckingBalance(String(saved.balance ?? 0));
-    setCheckingUpdatedAt(saved.updatedAt);
-    setShowCheckingForm(false);
+    setSavingChecking(true);
+    try {
+      const saved = await budgetRepo.saveCheckingAnchor(parsed);
+      setCheckingBalance(String(saved.balance ?? 0));
+      setCheckingUpdatedAt(saved.updatedAt);
+      setShowCheckingForm(false);
+    } finally {
+      setSavingChecking(false);
+    }
   }
 
   async function saveDockState(state: DockItemState) {
@@ -240,29 +263,34 @@ export default function DockPage() {
     const amount = Number(eventDraft.amount);
     const date = new Date(`${eventDraft.date}T00:00:00`);
     if (!Number.isFinite(amount) || amount <= 0 || !eventDraft.label.trim() || Number.isNaN(date.getTime())) return;
+    setSavingCashEvent(true);
     const income = eventDraft.type === "income";
     const sourceMonthKey = monthKeyFor(date.getFullYear(), date.getMonth());
     const { year, month } = monthPartsFromKey(sourceMonthKey);
     const sourceWeeks = getCalendarWeeksForMonth(year, month);
     const weekIndex = Math.max(0, weekIndexForDate(sourceWeeks, date));
-    await saveDockState({
-      monthKey: sourceMonthKey,
-      weekIndex,
-      itemId: `${income ? "one-time-income" : "one-time-cash"}:${crypto.randomUUID()}`,
-      itemKind: income ? "wave" : "ripple",
-      behaviorType: income ? "income" : "fixed_bill",
-      status: "upcoming",
-      plannedAmount: amount,
-      actualAmount: amount,
-      pendingUntil: eventDraft.date,
-      note: eventDraft.label.trim(),
-    });
-    setEventDraft({ type: "payment", label: "", amount: "", date: todayISODate() });
-    setShowAddEvent(false);
+    try {
+      await saveDockState({
+        monthKey: sourceMonthKey,
+        weekIndex,
+        itemId: `${income ? "one-time-income" : "one-time-cash"}:${crypto.randomUUID()}`,
+        itemKind: income ? "wave" : "ripple",
+        behaviorType: income ? "income" : "fixed_bill",
+        status: "upcoming",
+        plannedAmount: amount,
+        actualAmount: amount,
+        pendingUntil: eventDraft.date,
+        note: eventDraft.label.trim(),
+      });
+      setEventDraft({ type: "payment", label: "", amount: "", date: todayISODate() });
+      setShowAddEvent(false);
+    } finally {
+      setSavingCashEvent(false);
+    }
   }
 
   async function setEventDone(event: HarborCashEvent, done: boolean) {
-    await saveDockState({
+    const nextState = {
       ...event.state,
       monthKey: event.sourceMonthKey,
       weekIndex: event.weekIndex,
@@ -270,12 +298,75 @@ export default function DockPage() {
       itemKind: event.itemKind,
       behaviorType: event.kind === "income" ? "income" : event.kind === "cardPayment" ? "credit_card_payment" : "fixed_bill",
       status: done ? "cleared" : "upcoming",
-      plannedAmount: event.amount,
+      plannedAmount: event.state?.plannedAmount ?? event.amount,
       actualAmount: event.amount,
       pendingUntil: isoDate(event.date),
       clearedAt: done ? new Date().toISOString() : undefined,
       note: event.label,
+    } satisfies DockItemState;
+    setDockStates((current) => {
+      const without = current.filter((item) => !(item.itemId === nextState.itemId && item.itemKind === nextState.itemKind && item.weekIndex === nextState.weekIndex && item.monthKey === nextState.monthKey));
+      return [...without, nextState];
     });
+    setSavingEventIds((current) => ({ ...current, [event.id]: true }));
+    try {
+      await saveDockState(nextState);
+    } finally {
+      setSavingEventIds((current) => ({ ...current, [event.id]: false }));
+    }
+  }
+
+  async function setEventSkipped(event: HarborCashEvent) {
+    const nextState = {
+      ...event.state,
+      monthKey: event.sourceMonthKey,
+      weekIndex: event.weekIndex,
+      itemId: event.itemId,
+      itemKind: event.itemKind,
+      behaviorType: event.kind === "income" ? "income" : event.kind === "cardPayment" ? "credit_card_payment" : "fixed_bill",
+      status: "skipped",
+      plannedAmount: event.state?.plannedAmount ?? event.amount,
+      actualAmount: 0,
+      pendingUntil: isoDate(event.date),
+      note: event.label,
+    } satisfies DockItemState;
+    setDockStates((current) => {
+      const without = current.filter((item) => !(item.itemId === nextState.itemId && item.itemKind === nextState.itemKind && item.weekIndex === nextState.weekIndex && item.monthKey === nextState.monthKey));
+      return [...without, nextState];
+    });
+    setSavingEventIds((current) => ({ ...current, [event.id]: true }));
+    try {
+      await saveDockState(nextState);
+    } finally {
+      setSavingEventIds((current) => ({ ...current, [event.id]: false }));
+    }
+  }
+
+  async function updateEventAmount(event: HarborCashEvent, amount: number) {
+    if (!Number.isFinite(amount) || amount <= 0) return;
+    const nextState = {
+      ...event.state,
+      monthKey: event.sourceMonthKey,
+      weekIndex: event.weekIndex,
+      itemId: event.itemId,
+      itemKind: event.itemKind,
+      behaviorType: event.kind === "income" ? "income" : event.kind === "cardPayment" ? "credit_card_payment" : "fixed_bill",
+      status: event.state?.status === "cleared" ? "cleared" : "adjusted",
+      plannedAmount: event.state?.plannedAmount ?? event.amount,
+      actualAmount: amount,
+      pendingUntil: isoDate(event.date),
+      note: event.label,
+    } satisfies DockItemState;
+    setDockStates((current) => {
+      const without = current.filter((item) => !(item.itemId === nextState.itemId && item.itemKind === nextState.itemKind && item.weekIndex === nextState.weekIndex && item.monthKey === nextState.monthKey));
+      return [...without, nextState];
+    });
+    setSavingEventIds((current) => ({ ...current, [event.id]: true }));
+    try {
+      await saveDockState(nextState);
+    } finally {
+      setSavingEventIds((current) => ({ ...current, [event.id]: false }));
+    }
   }
 
   if (!loaded || !settings) {
@@ -305,8 +396,17 @@ export default function DockPage() {
 
         <section className="grid gap-2 sm:gap-3 md:grid-cols-3">
           <Metric label="Checking Now" value={startingChecking} detail={`As of ${anchorDateLabel}`} action={<button type="button" onClick={() => setShowCheckingForm(true)} className="text-xs font-semibold text-harbor-teal hover:text-harbor-navy">Update Checking</button>} />
-          <Metric label={`Projected ${formatShortDate(projectedPoint.date)}`} value={projectedPoint.balance} detail="Next 30 days" tone={projectedPoint.balance < 0 ? "red" : "navy"} />
-          <Metric label="Lowest Next 30 Days" value={lowestPoint.balance} detail={formatShortDate(lowestPoint.date)} tone={lowestPoint.balance < 0 ? "red" : lowestPoint.balance < 500 ? "red" : "navy"} />
+          {timelineLoaded ? (
+            <>
+              <Metric label={`Projected ${formatShortDate(projectedPoint.date)}`} value={projectedPoint.balance} detail="Next 30 days" tone={projectedPoint.balance < 0 ? "red" : "navy"} />
+              <Metric label="Lowest Next 30 Days" value={lowestPoint.balance} detail={formatShortDate(lowestPoint.date)} tone={lowestPoint.balance < 0 ? "red" : lowestPoint.balance < 500 ? "red" : "navy"} />
+            </>
+          ) : (
+            <>
+              <LoadingMetric label="Projected" detail="Loading forecast" />
+              <LoadingMetric label="Lowest Next 30 Days" detail="Loading forecast" />
+            </>
+          )}
         </section>
 
         {showCheckingForm && (
@@ -318,10 +418,10 @@ export default function DockPage() {
               </div>
               <label className="grid min-w-0 gap-1">
                 <span className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">Balance</span>
-                <input type="number" value={checkingBalance} onChange={(event) => setCheckingBalance(event.target.value)} className="w-full min-w-0 rounded-md border border-slate-200 bg-white px-3 py-2 text-right text-sm font-semibold" />
+                <input ref={checkingInputRef} type="number" value={checkingBalance} disabled={savingChecking} onChange={(event) => setCheckingBalance(event.target.value)} className="w-full min-w-0 rounded-md border border-slate-200 bg-white px-3 py-2 text-right text-sm font-semibold disabled:opacity-50" />
               </label>
-              <button type="button" onClick={() => void saveCheckingBalance()} className="rounded-md bg-harbor-teal px-4 py-2 text-sm font-semibold text-white">Save</button>
-              <button type="button" onClick={() => setShowCheckingForm(false)} className="rounded-md px-3 py-2 text-sm font-semibold text-harbor-navy/45">Cancel</button>
+              <button type="button" disabled={savingChecking} onClick={() => void saveCheckingBalance()} className="rounded-md bg-harbor-teal px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{savingChecking ? "Saving..." : "Save"}</button>
+              <button type="button" disabled={savingChecking} onClick={() => setShowCheckingForm(false)} className="rounded-md px-3 py-2 text-sm font-semibold text-harbor-navy/45 disabled:opacity-50">Cancel</button>
             </div>
           </section>
         )}
@@ -340,20 +440,20 @@ export default function DockPage() {
               <input className="rounded-md border border-slate-200 px-3 py-2 text-sm" type="text" placeholder="Description" value={eventDraft.label} onChange={(event) => setEventDraft((draft) => ({ ...draft, label: event.target.value }))} />
               <input className="rounded-md border border-slate-200 px-3 py-2 text-sm" type="number" min="0" step="0.01" placeholder="Amount" value={eventDraft.amount} onChange={(event) => setEventDraft((draft) => ({ ...draft, amount: event.target.value }))} />
               <input className="rounded-md border border-slate-200 px-3 py-2 text-sm" type="date" value={eventDraft.date} onChange={(event) => setEventDraft((draft) => ({ ...draft, date: event.target.value }))} />
-              <button type="button" onClick={() => void addOneTimeEvent()} className="rounded-md bg-harbor-teal px-4 py-2 text-sm font-semibold text-white">Add Event</button>
+              <button type="button" disabled={savingCashEvent} onClick={() => void addOneTimeEvent()} className="rounded-md bg-harbor-teal px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{savingCashEvent ? "Adding..." : "Add Event"}</button>
             </div>
           </section>
         )}
 
         <section className="space-y-3">
           {loadingTimeline && <p className="text-sm text-harbor-navy/45">Updating forecast...</p>}
-          {overdueCashEvents.length > 0 && (
+          {timelineLoaded && overdueCashEvents.length > 0 && (
             <section className="rounded-xl border border-amber-200 bg-amber-50 p-3 shadow-sm sm:p-4">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                 <div>
-                  <h2 className="text-lg font-bold">Awaiting reconciliation</h2>
+                  <h2 className="text-lg font-bold">Check these off</h2>
                   <p className="mt-1 text-sm text-harbor-navy/60">
-                    Past scheduled items stay here until you mark them done.
+                    These were planned for earlier dates. Mark them paid if they happened, or skip them if they should not affect Dock.
                   </p>
                 </div>
                 <div className="text-sm font-bold text-harbor-red">
@@ -361,13 +461,13 @@ export default function DockPage() {
                 </div>
               </div>
               <div className="mt-3 overflow-hidden rounded-lg border border-amber-100 bg-white">
-                <EventRows events={overdueCashEvents} onSetDone={setEventDone} overdue />
+                <EventRows events={overdueCashEvents} onSetDone={setEventDone} onSkip={setEventSkipped} onUpdateAmount={updateEventAmount} savingEventIds={savingEventIds} overdue />
               </div>
             </section>
           )}
-          {forecast.map((week) => {
+          {timelineLoaded && forecast.map((week) => {
             const isCurrent = anchorDate >= week.week.start && anchorDate <= week.week.end;
-            const isAutoExpanded = isCurrent || week.lowest < 0;
+            const isAutoExpanded = false;
             const shouldExpand = collapsedWeeks[week.week.label]
               ? false
               : Boolean(expandedWeeks[week.week.label]) || isAutoExpanded;
@@ -387,6 +487,9 @@ export default function DockPage() {
                   setExpandedWeeks((current) => ({ ...current, [week.week.label]: true }));
                 }}
                 onSetDone={setEventDone}
+                onSkip={setEventSkipped}
+                onUpdateAmount={updateEventAmount}
+                savingEventIds={savingEventIds}
               />
             );
           })}
@@ -394,21 +497,21 @@ export default function DockPage() {
 
         <section className="flex flex-wrap items-center justify-center gap-3 border-t border-harbor-teal-light pt-5">
           <button type="button" onClick={() => setHorizonWeeks((current) => current + 4)} className="rounded-md border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-harbor-navy/65 hover:border-harbor-teal-light hover:text-harbor-teal">Show More</button>
-          {historyEvents.length > 0 && (
+          {timelineLoaded && historyEvents.length > 0 && (
             <button type="button" onClick={() => setShowHistory((current) => !current)} className="rounded-md px-4 py-2 text-sm font-semibold text-harbor-teal hover:text-harbor-navy">{showHistory ? "Hide Past Activity" : "View Past Activity"}</button>
           )}
         </section>
 
-        {showHistory && historyEvents.length > 0 && (
+        {timelineLoaded && showHistory && historyEvents.length > 0 && (
           <section className="border-t border-slate-200 pt-4">
             <h2 className="text-sm font-bold uppercase tracking-wide text-harbor-navy/50">Past Activity</h2>
             <div className="mt-3 overflow-x-auto">
-              <EventRows events={historyEvents.slice(0, 24)} onSetDone={setEventDone} quiet />
+              <EventRows events={historyEvents.slice(0, 24)} onSetDone={setEventDone} onSkip={setEventSkipped} onUpdateAmount={updateEventAmount} savingEventIds={savingEventIds} quiet />
             </div>
           </section>
         )}
 
-        {cardObligations.length > 0 && (
+        {timelineLoaded && cardObligations.length > 0 && (
           <section className="border-t border-slate-200 pt-4">
             <h2 className="text-sm font-bold uppercase tracking-wide text-harbor-navy/50">Card Obligations</h2>
             <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -451,42 +554,66 @@ function Metric({ label, value, tone = "navy", detail, action }: { label: string
   );
 }
 
-function TimelineWeek({ week, isCurrent, isExpanded, onToggle, onSetDone }: {
+function LoadingMetric({ label, detail }: { label: string; detail: string }) {
+  return (
+    <div className="rounded-lg border border-teal-100 bg-white px-4 py-3 shadow-sm">
+      <div className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/35">{label}</div>
+      <div className="mt-1 text-2xl font-bold tabular-nums text-harbor-navy/30">--</div>
+      <div className="text-xs text-harbor-navy/45">{detail}</div>
+    </div>
+  );
+}
+
+function TimelineWeek({ week, isCurrent, isExpanded, onToggle, onSetDone, onSkip, onUpdateAmount, savingEventIds }: {
   week: HarborWeekForecast;
   isCurrent: boolean;
   isExpanded: boolean;
   onToggle: () => void;
   onSetDone: (event: HarborCashEvent, done: boolean) => void | Promise<void>;
+  onSkip: (event: HarborCashEvent) => void | Promise<void>;
+  onUpdateAmount: (event: HarborCashEvent, amount: number) => void | Promise<void>;
+  savingEventIds: Record<string, boolean>;
 }) {
   const net = week.inflows - week.outflows;
   const risk = week.lowest < 0 ? "text-harbor-red" : week.lowest < 500 ? "text-harbor-red" : "text-harbor-navy";
+  const endingRisk = week.ending < 0 ? "text-harbor-red" : "text-harbor-navy";
 
   return (
-    <section className={`${isCurrent ? "rounded-xl border border-harbor-teal bg-white p-4 shadow-sm" : "rounded-xl border border-white bg-white/75 p-4 shadow-sm"} py-4`}>
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <h2 className={`${isCurrent ? "text-2xl" : "text-lg"} font-bold`}>{isCurrent ? "This Week" : week.week.label}</h2>
+    <section className={`${isCurrent ? "rounded-xl border border-harbor-teal bg-white shadow-sm" : "rounded-xl border border-white bg-white/75 shadow-sm"} overflow-hidden`}>
+      <div className="px-3 py-3 sm:px-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className={`${isCurrent ? "text-xl" : "text-base"} font-bold`}>{isCurrent ? "This Week" : week.week.label}</h2>
             {isCurrent && <span className="rounded-full bg-harbor-teal/10 px-2 py-0.5 text-xs font-semibold text-harbor-teal">{week.week.label}</span>}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold text-harbor-navy/45">
+              <span>Start <span className="text-harbor-navy">{formatMoney(week.starting)}</span></span>
+              <span className="text-harbor-green">In {formatMoney(week.inflows)}</span>
+              <span className={week.outflows > 0 ? "text-harbor-red" : "text-harbor-navy/55"}>Out {formatMoney(week.outflows)}</span>
+              <span className={risk}>Low {formatMoney(week.lowest)} {formatShortDate(week.lowestDate)}</span>
+            </div>
           </div>
-          <p className="mt-2 text-sm text-harbor-navy/60">
-            Starting {formatMoney(week.starting)} | In {formatMoney(week.inflows)} | Out {formatMoney(-week.outflows)} | Ending <span className={week.ending < 0 ? "font-bold text-harbor-red" : "font-bold text-harbor-navy"}>{formatMoney(week.ending)}</span>
-          </p>
-          <p className={`mt-1 text-sm font-semibold ${risk}`}>Lowest {formatMoney(week.lowest)} | {formatShortDate(week.lowestDate)}</p>
+          <div className="shrink-0 text-right">
+            <div className={`text-lg font-bold tabular-nums ${endingRisk}`}>{formatMoney(week.ending)}</div>
+            <div className={`text-xs font-bold ${net < 0 ? "text-harbor-red" : "text-harbor-green"}`}>{net < 0 ? "-" : "+"}{formatMoney(Math.abs(net))}</div>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <div className={`text-sm font-bold ${net < 0 ? "text-harbor-red" : "text-harbor-navy"}`}>{formatMoney(net)}</div>
+        <div className="mt-2 flex items-center justify-between gap-3 border-t border-slate-100 pt-2">
+          <div className="text-xs font-semibold text-harbor-navy/40">
+            Ending balance | net change
+          </div>
           <button type="button" onClick={onToggle} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/65 hover:border-harbor-teal-light hover:text-harbor-teal">
             {isExpanded ? "Collapse" : "Expand"}
           </button>
         </div>
       </div>
       {isExpanded && (
-        <div className="mt-3">
+        <div className="border-t border-slate-100 px-3 py-3 sm:px-4">
           {week.events.length === 0 ? (
             <p className="text-sm text-harbor-navy/45">No unresolved cash events in this week.</p>
           ) : (
-            <DayEventGroups week={week} onSetDone={onSetDone} />
+            <DayEventGroups week={week} onSetDone={onSetDone} onSkip={onSkip} onUpdateAmount={onUpdateAmount} savingEventIds={savingEventIds} />
           )}
         </div>
       )}
@@ -494,7 +621,7 @@ function TimelineWeek({ week, isCurrent, isExpanded, onToggle, onSetDone }: {
   );
 }
 
-function DayEventGroups({ week, onSetDone }: { week: HarborWeekForecast; onSetDone: (event: HarborCashEvent, done: boolean) => void | Promise<void> }) {
+function DayEventGroups({ week, onSetDone, onSkip, onUpdateAmount, savingEventIds }: { week: HarborWeekForecast; onSetDone: (event: HarborCashEvent, done: boolean) => void | Promise<void>; onSkip: (event: HarborCashEvent) => void | Promise<void>; onUpdateAmount: (event: HarborCashEvent, amount: number) => void | Promise<void>; savingEventIds: Record<string, boolean> }) {
   const days = week.days.length > 0
     ? week.days
     : [{ date: week.week.start, events: week.events, ending: week.ending }];
@@ -512,18 +639,22 @@ function DayEventGroups({ week, onSetDone }: { week: HarborWeekForecast; onSetDo
               <div className={`text-sm font-bold tabular-nums ${day.ending < 0 ? "text-harbor-red" : "text-harbor-navy"}`}>{formatMoney(day.ending)}</div>
             </div>
           </div>
-          <EventRows events={day.events} onSetDone={onSetDone} />
+          <EventRows events={day.events} onSetDone={onSetDone} onSkip={onSkip} onUpdateAmount={onUpdateAmount} savingEventIds={savingEventIds} />
         </section>
       ))}
     </div>
   );
 }
 
-function EventRows({ events, onSetDone, quiet = false, overdue = false }: { events: HarborCashEvent[]; onSetDone: (event: HarborCashEvent, done: boolean) => void | Promise<void>; quiet?: boolean; overdue?: boolean }) {
+function EventRows({ events, onSetDone, onSkip, onUpdateAmount, savingEventIds, quiet = false, overdue = false }: { events: HarborCashEvent[]; onSetDone: (event: HarborCashEvent, done: boolean) => void | Promise<void>; onSkip: (event: HarborCashEvent) => void | Promise<void>; onUpdateAmount: (event: HarborCashEvent, amount: number) => void | Promise<void>; savingEventIds: Record<string, boolean>; quiet?: boolean; overdue?: boolean }) {
+  const [editingEventId, setEditingEventId] = useState<string | null>(null);
+  const [amountDraft, setAmountDraft] = useState("");
   return (
     <div className="divide-y divide-slate-100 px-4">
       {events.map((event) => {
         const impact = eventImpact(event);
+        const saving = Boolean(savingEventIds[event.id]);
+        const isEditing = editingEventId === event.id;
         return (
           <div key={event.id} className={`grid gap-2 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center ${quiet || event.status === "done" ? "text-harbor-navy/50" : ""}`}>
             <div className="min-w-0 sm:pr-4">
@@ -536,8 +667,27 @@ function EventRows({ events, onSetDone, quiet = false, overdue = false }: { even
                 <div className={`font-bold tabular-nums ${impact >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>{formatMoney(impact)}</div>
                 <div className="hidden text-xs font-medium text-harbor-navy/45 sm:block">{eventStatusLabel(event, overdue)}</div>
               </div>
-              <button type="button" onClick={() => void onSetDone(event, event.status !== "done")} className="min-h-10 shrink-0 rounded-md border border-harbor-teal-light bg-white px-3 py-1.5 text-xs font-semibold text-harbor-teal hover:bg-harbor-teal-light/45">{event.status === "done" ? "Undo" : "Done"}</button>
+              <div className="flex shrink-0 gap-2">
+                {event.status !== "done" && <button type="button" disabled={saving} onClick={() => {
+                  setEditingEventId(event.id);
+                  setAmountDraft(event.amount.toFixed(2));
+                }} className="min-h-10 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/55 hover:border-harbor-teal-light hover:text-harbor-teal disabled:opacity-50">Edit</button>}
+                <button type="button" disabled={saving} onClick={() => void onSetDone(event, event.status !== "done")} className="min-h-10 rounded-md border border-harbor-teal-light bg-white px-3 py-1.5 text-xs font-semibold text-harbor-teal hover:bg-harbor-teal-light/45 disabled:opacity-50">{saving ? "Saving" : event.status === "done" ? "Undo" : event.kind === "income" ? "Received" : "Paid"}</button>
+                {event.status !== "done" && <button type="button" disabled={saving} onClick={() => void onSkip(event)} className="min-h-10 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/55 hover:border-harbor-red/30 hover:text-harbor-red disabled:opacity-50">Skip</button>}
+              </div>
             </div>
+            {isEditing && (
+              <div className="rounded-md border border-teal-200 bg-teal-50 p-2 sm:col-span-2">
+                <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
+                  <input type="number" min="0" step="0.01" inputMode="decimal" value={amountDraft} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setAmountDraft(event.target.value)} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" />
+                  <button type="button" disabled={saving} onClick={() => {
+                    void onUpdateAmount(event, Number(amountDraft));
+                    setEditingEventId(null);
+                  }} className="rounded-md bg-harbor-teal px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">Save Amount</button>
+                  <button type="button" onClick={() => setEditingEventId(null)} className="rounded-md px-3 py-2 text-xs font-semibold text-harbor-navy/45">Cancel</button>
+                </div>
+              </div>
+            )}
           </div>
         );
       })}
@@ -550,7 +700,7 @@ function eventContext(event: HarborCashEvent) {
 }
 
 function eventStatusLabel(event: HarborCashEvent, overdue = false) {
-  if (event.status === "done") return "Paid";
+  if (event.status === "done") return event.kind === "income" ? "Received" : "Paid";
   if (overdue) return `Past due | Scheduled ${formatShortDate(event.date)}`;
   if (event.kind === "cardPayment" || event.kind === "checkingPayment") return event.state?.pendingUntil ? "Scheduled" : "Expected";
   return "Expected";
