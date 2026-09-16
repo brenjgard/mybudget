@@ -101,3 +101,10 @@ Confirmed root cause: the old app/favicon.ico visually contained the starter tri
 - Physical iPhone keyboard layout, Safari focus/dismiss scale and horizontal position, and browser icon presentation still require a real device/browser check. Served assets and markup were verified; these are not claims of on-device testing.
 
 After deployment, first revisit Harbor and close/reopen its Safari tab. Old history/bookmark suggestions may retain the previous cached icon even when the served files are correct. If it persists, Safari's cache/website-data controls are under Settings > Apps > Safari > Advanced > Website Data; clearing history is a separate, broader option. Clearing site data can sign you out and remove locally stored fallback data, so ensure any local-only data is backed up before doing that. Do not clear all browsing data as a first step or keep restructuring the correct icon configuration. Apple guidance: https://support.apple.com/en-us/105082.
+
+
+## Cross-browser mobile input requirement
+
+The shared financial-input and form-focus treatment applies to iOS Safari, Chrome on iPhone, and Chrome on Android. It uses native HTML input types, inputMode="decimal" for currency, inputMode="numeric" for integer fields, and a minimum 16px form-control font on narrow screens or coarse-pointer devices. There is no user-agent detection, Safari-specific JavaScript, scripted zoom reset, or restriction on intentional pinch zoom.
+
+The browser/OS chooses the exact keyboard layout; inputMode is a standards-based hint. Existing parsing, validation and persistence remain unchanged. Before calling device verification complete, check each supported browser for decimal entry (123, 123.45, 0.99), negative balances where allowed, focus/dismiss scale and horizontal position, and saving then refreshing. These physical-device checks remain pending; source/markup checks do not substitute for them.
