@@ -21,7 +21,7 @@ export function HelpTooltip({
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
         onBlur={() => window.setTimeout(() => setOpen(false), 120)}
-        className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-harbor-teal/30 bg-harbor-teal-light text-[11px] font-bold text-harbor-teal transition-colors hover:border-harbor-teal hover:bg-white focus:outline-none focus:ring-2 focus:ring-harbor-teal/25"
+        className="inline-flex h-5 w-5 items-center justify-center rounded-md border border-harbor-teal/30 bg-harbor-teal-light text-[11px] font-bold text-harbor-teal transition-colors hover:border-harbor-teal hover:bg-white focus:outline-none focus:ring-2 focus:ring-harbor-teal/25"
       >
         ?
       </button>

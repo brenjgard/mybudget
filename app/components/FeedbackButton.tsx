@@ -107,7 +107,7 @@ export default function FeedbackButton() {
 
             {submitted ? (
               <div className="px-6 py-9 text-center">
-                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-harbor-teal-light text-harbor-teal">
+                <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-lg bg-harbor-teal-light text-harbor-teal">
                   <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                     <polyline points="20 6 9 17 4 12" />
                   </svg>

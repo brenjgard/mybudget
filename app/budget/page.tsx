@@ -1,6 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { budgetActions } from "../lib/budget-actions";
+import { DisclosureHeader } from "../components/DisclosureHeader";
+import { HarborLoading } from "../components/HarborLoading";
 import { useRouter } from "next/navigation";
 import { loadSettingsWithSupabaseFallback } from "../lib/budget-settings";
 import { budgetRepo } from "../lib/repositories/budget-repo";
@@ -67,6 +71,7 @@ export default function BudgetPage() {
   const [showEarlierWeeks, setShowEarlierWeeks] = useState(false);
   const [wrappingWeek, setWrappingWeek] = useState<number | null>(null);
   const [wrappedWeeks, setWrappedWeeks] = useState<Record<number, WeekStatus>>({});
+  const [actionError, setActionError] = useState<string | null>(null);
   const [spendError, setSpendError] = useState<string | null>(null);
   const [savingSpend, setSavingSpend] = useState(false);
   const [savingRowIds, setSavingRowIds] = useState<Record<string, boolean>>({});
@@ -91,7 +96,7 @@ export default function BudgetPage() {
     today >= monthStart && today <= monthEnd ? todayISODate() : isoDate(monthStart)
   ), [monthEnd, monthStart, today]);
 
-  const budgetRows = useMemo(() => settings?.lineItems.filter((item) => !item.isIncome) ?? [], [settings]);
+  const budgetRows = useMemo(() => settings?.lineItems.filter((item) => !item.isIncome && getItemBehavior(item) !== "credit_card_payment") ?? [], [settings]);
   const rowsById = useMemo(() => new Map(budgetRows.map((item) => [item.id, item])), [budgetRows]);
   const currentWeekIndex = useMemo(() => weekIndexForDate(weeks, now), [now, weeks]);
   const selectedItem = rowsById.get(spendDraft.itemId) ?? budgetRows[0];
@@ -109,15 +114,6 @@ export default function BudgetPage() {
     b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt)
   )), [spendLogs]);
 
-  const totals = useMemo(() => {
-    const budgeted = budgetRows.reduce((sum, item) => (
-      sum + weeks.reduce((weekSum, week, weekIndex) => (
-        weekSum + budgetedForItemWeek(amounts, item, week, weekIndex, month, weeks.length, year)
-      ), 0)
-    ), 0);
-    const spent = spendLogs.reduce((sum, entry) => sum + entry.amount, 0);
-    return { budgeted, spent, remaining: budgeted - spent };
-  }, [amounts, budgetRows, month, spendLogs, weeks, year]);
   const currentForward = useMemo(() => settings ? buildCurrentForwardBudgetSummary({
     settings,
     weeks,
@@ -125,8 +121,14 @@ export default function BudgetPage() {
     year,
     amounts,
     spendLogs,
+    dockStates,
     today,
-  }) : null, [amounts, month, settings, spendLogs, today, weeks, year]);
+  }) : null, [amounts, dockStates, month, settings, spendLogs, today, weeks, year]);
+  const totals = {
+    budgeted: currentForward?.monthPosition.plannedSpending ?? 0,
+    spent: currentForward?.monthPosition.spentSoFar ?? 0,
+    remaining: currentForward?.monthPosition.recordedRemaining ?? 0,
+  };
   const shouldUseForwardSummary = Boolean(currentForward && monthEnd >= today);
 
   function budgetRowKey(item: LineItem, weekIndex: number | undefined) {
@@ -205,6 +207,16 @@ export default function BudgetPage() {
     setYear(next.year);
     setMonth(next.month);
     resetTransientUi();
+  }
+
+  function toggleWeek(weekIndex: number) {
+    const hasSpendForm = activeSpend !== null && activeSpend !== "global" && activeSpend.weekIndex === weekIndex;
+    const expanded = Boolean(expandedWeeks[weekIndex]) || hasSpendForm || wrappingWeek === weekIndex;
+    if (expanded) {
+      if (hasSpendForm) setActiveSpend(null);
+      if (wrappingWeek === weekIndex) setWrappingWeek(null);
+    }
+    setExpandedWeeks((current) => ({ ...current, [weekIndex]: !expanded }));
   }
 
   function resetTransientUi() {
@@ -362,7 +374,7 @@ export default function BudgetPage() {
     }
   }
 
-  async function markBudgetRow(item: LineItem, weekIndex: number | undefined, status: "cleared" | "skipped") {
+  async function markBudgetRow(item: LineItem, weekIndex: number | undefined, status: "cleared" | "skipped" | "upcoming") {
     const rowKey = budgetRowKey(item, weekIndex);
     const date = weekIndex !== undefined ? defaultDateForWeek(weekIndex) : defaultSpendDate;
     const parsedDate = new Date(`${date}T00:00:00`);
@@ -373,7 +385,10 @@ export default function BudgetPage() {
     const sourceWeekIndex = Math.max(0, weekIndexForDate(sourceWeeks, parsedDate));
     const row = weekRows(targetWeekIndex).find((candidate) => candidate.item.id === item.id)
       ?? { item, budgeted: item.defaultAmount, spent: 0, remaining: item.defaultAmount, planned: item.defaultAmount, dockState: undefined };
+    const actions = budgetActions(item, row.dockState, row.spent);
+    if (savingRowIds[rowKey] || (status === "skipped" && !actions.skip) || (status === "cleared" && !actions.done) || (status === "upcoming" && !actions.restore)) return;
     const amount = Math.max(row?.remaining ?? row?.budgeted ?? item.defaultAmount, 0);
+    setActionError(null);
     setSavingRowIds((current) => ({ ...current, [rowKey]: true }));
     try {
       const saved = await budgetRepo.saveDockItemState({
@@ -382,9 +397,9 @@ export default function BudgetPage() {
         itemId: item.id,
         itemKind: "ripple",
         behaviorType: getItemBehavior(item),
-        status,
-        plannedAmount: row?.planned ?? row?.budgeted ?? item.defaultAmount,
-        actualAmount: status === "cleared" ? amount : 0,
+        status: status === "upcoming" ? "adjusted" : status,
+        plannedAmount: status === "upcoming" ? row.dockState?.plannedAmount ?? row.planned : row.budgeted,
+        actualAmount: status === "cleared" ? amount : status === "skipped" ? 0 : row.dockState?.plannedAmount ?? row.planned,
         pendingUntil: date,
         clearedAt: status === "cleared" ? new Date().toISOString() : undefined,
         note: item.name,
@@ -394,13 +409,15 @@ export default function BudgetPage() {
         return [...without, saved];
       });
       if (weekIndex !== undefined) setExpandedWeeks((current) => ({ ...current, [weekIndex]: true }));
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not save this occurrence. Please try again.");
     } finally {
       setSavingRowIds((current) => ({ ...current, [rowKey]: false }));
     }
   }
 
   async function adjustBudgetRow(item: LineItem, weekIndex: number | undefined, amount: number) {
-    if (!Number.isFinite(amount) || amount <= 0) return;
+    if (!Number.isFinite(amount) || amount < 0) return;
     const rowKey = budgetRowKey(item, weekIndex);
     const date = weekIndex !== undefined ? defaultDateForWeek(weekIndex) : defaultSpendDate;
     const parsedDate = new Date(`${date}T00:00:00`);
@@ -411,6 +428,7 @@ export default function BudgetPage() {
     const sourceWeekIndex = Math.max(0, weekIndexForDate(sourceWeeks, parsedDate));
     const row = weekRows(targetWeekIndex).find((candidate) => candidate.item.id === item.id)
       ?? { item, budgeted: item.defaultAmount, spent: 0, remaining: item.defaultAmount, planned: item.defaultAmount, dockState: undefined };
+    setActionError(null);
     setSavingRowIds((current) => ({ ...current, [rowKey]: true }));
     try {
       const saved = await budgetRepo.saveDockItemState({
@@ -431,6 +449,8 @@ export default function BudgetPage() {
         return [...without, saved];
       });
       if (weekIndex !== undefined) setExpandedWeeks((current) => ({ ...current, [weekIndex]: true }));
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not save this occurrence. Please try again.");
     } finally {
       setSavingRowIds((current) => ({ ...current, [rowKey]: false }));
     }
@@ -444,12 +464,12 @@ export default function BudgetPage() {
       const planned = plannedAmountForRow(item, weekIndex);
       const adjusted = dockState?.status !== "cleared" && dockState?.status !== "skipped" && dockState?.actualAmount !== undefined
         ? Number(dockState.actualAmount)
-        : planned;
+        : dockState?.status === "cleared" ? Number(dockState.plannedAmount ?? planned) : planned;
       const loggedSpend = spendLogs.filter((entry) => entry.rippleId === item.id && entry.weekIndex === weekIndex).reduce((sum, entry) => sum + entry.amount, 0);
-      const spent = dockState?.status === "cleared" ? Number(dockState.actualAmount ?? dockState.plannedAmount ?? adjusted) : loggedSpend;
+      const spent = loggedSpend > 0 ? loggedSpend : dockState?.status === "cleared" ? Number(dockState.actualAmount ?? dockState.plannedAmount ?? adjusted) : 0;
       const budgeted = dockState?.status === "skipped" ? 0 : adjusted;
-      return { item, budgeted, spent, remaining: Math.max(budgeted - spent, 0), planned, dockState };
-    }).filter((row) => row.budgeted > 0 || row.spent > 0 || row.dockState?.status === "skipped");
+      return { item, budgeted, spent, remaining: budgeted - spent, planned, dockState };
+    }).filter((row) => row.planned > 0 || row.budgeted > 0 || row.spent > 0 || row.dockState?.status === "skipped");
   }
 
   function weekPerformance(weekIndex: number) {
@@ -476,7 +496,7 @@ export default function BudgetPage() {
   if (!loaded || !settings) {
     return (
       <main className="flex flex-1 items-center justify-center bg-harbor-offwhite text-harbor-navy">
-        <div className="rounded-lg border border-harbor-teal-light bg-white px-5 py-4 text-sm shadow-sm">Loading Budget...</div>
+        <div className="rounded-lg border border-harbor-teal-light bg-white px-5 py-4 text-sm shadow-sm"><HarborLoading label="Loading Budget" /></div>
       </main>
     );
   }
@@ -500,6 +520,9 @@ export default function BudgetPage() {
           </div>
         </header>
 
+        {actionError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-harbor-red">{actionError}</p>}
+        <Link href="/settings#ripples" className="inline-block text-sm font-semibold text-harbor-teal">Manage plans: edit details or delete</Link>
+        <span className="ml-3 text-sm text-harbor-navy/60">Payments in <Link href="/fleet" className="font-semibold text-harbor-teal">Fleet</Link> | Income in <Link href="/dock" className="font-semibold text-harbor-teal">Dock</Link></span>
         {monthLoading && (
           <div className="rounded-lg border border-harbor-teal-light bg-white px-4 py-3 text-sm font-semibold text-harbor-navy/50 shadow-sm">
             Loading month...
@@ -584,7 +607,7 @@ export default function BudgetPage() {
             savingSpend={savingSpend}
             savingRowIds={savingRowIds}
             savingWrap={savingWrapWeek === currentWeekIndex}
-            onToggle={() => setExpandedWeeks((current) => ({ ...current, [currentWeekIndex]: !current[currentWeekIndex] }))}
+            onToggle={() => toggleWeek(currentWeekIndex)}
             onStartWrap={() => setWrappingWeek(currentWeekIndex)}
             onCancelWrap={() => setWrappingWeek(null)}
             onSaveWrap={() => void saveUnderBudget(currentWeekIndex, weekPerformance(currentWeekIndex).remaining)}
@@ -623,7 +646,7 @@ export default function BudgetPage() {
                 savingSpend={savingSpend}
                 savingRowIds={savingRowIds}
                 savingWrap={false}
-                onToggle={() => setExpandedWeeks((current) => ({ ...current, [weekIndex]: !current[weekIndex] }))}
+                onToggle={() => toggleWeek(weekIndex)}
                 onStartWrap={() => undefined}
                 onCancelWrap={() => undefined}
                 onSaveWrap={() => undefined}
@@ -673,7 +696,7 @@ export default function BudgetPage() {
                 savingSpend={savingSpend}
                 savingRowIds={savingRowIds}
                 savingWrap={savingWrapWeek === weekIndex}
-                onToggle={() => setExpandedWeeks((current) => ({ ...current, [weekIndex]: !current[weekIndex] }))}
+                onToggle={() => toggleWeek(weekIndex)}
                 onStartWrap={() => {
                   setExpandedWeeks((current) => ({ ...current, [weekIndex]: true }));
                   setWrappingWeek(weekIndex);
@@ -688,6 +711,8 @@ export default function BudgetPage() {
         )}
 
         {recentSpendLogs.length > 0 && (
+          <details className="rounded-xl border border-slate-200 bg-white p-3">
+          <summary className="-m-3 min-h-12 cursor-pointer rounded-xl p-3 text-sm font-semibold focus-visible:outline-2 focus-visible:outline-harbor-teal">Spending Log | {recentSpendLogs.length} entries</summary>
           <SpendingLog
             entries={recentSpendLogs}
             rowsById={rowsById}
@@ -695,6 +720,7 @@ export default function BudgetPage() {
             onDelete={deleteSpend}
             deletingIds={deletingSpendIds}
           />
+          </details>
         )}
       </div>
     </main>
@@ -790,7 +816,7 @@ function WeekSection({
   spendDraft: SpendDraft;
   rowsById: Map<string, LineItem>;
   onOpenSpend: (item: LineItem, weekIndex?: number) => void;
-  onMarkRow: (item: LineItem, weekIndex: number | undefined, status: "cleared" | "skipped") => void | Promise<void>;
+  onMarkRow: (item: LineItem, weekIndex: number | undefined, status: "cleared" | "skipped" | "upcoming") => void | Promise<void>;
   onAdjustRow: (item: LineItem, weekIndex: number | undefined, amount: number) => void | Promise<void>;
   onChangeSpend: React.Dispatch<React.SetStateAction<SpendDraft>>;
   onSaveSpend: () => void | Promise<void>;
@@ -812,8 +838,8 @@ function WeekSection({
   const quietClass = isPast || status ? "border-slate-200 bg-white/70" : "border-white bg-white/85";
 
   return (
-    <section className={`${isFeatured ? "border-harbor-teal bg-gradient-to-br from-white to-teal-50 shadow-sm" : quietClass} border ${isFeatured ? "rounded-xl p-3 sm:p-4" : "rounded-xl px-3 py-3 shadow-sm sm:px-4"}`}>
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+    <section className={`${isFeatured ? "border-harbor-teal bg-gradient-to-br from-white to-teal-50 shadow-sm" : quietClass} border ${isFeatured ? "rounded-xl p-3 sm:px-4" : "rounded-xl px-3 py-3 shadow-sm sm:px-4"}`}>
+      <DisclosureHeader expanded={isExpanded} onToggle={onToggle} label={`${title} ${weekLabel}`} className="-m-3 rounded-xl p-3 sm:-mx-4 sm:px-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h2 className={`${isFeatured ? "text-2xl" : "text-base"} font-bold`}>{title}</h2>
@@ -827,15 +853,11 @@ function WeekSection({
           {status && <p className="mt-1 text-xs font-semibold text-harbor-navy/50">Outcome: {wrapOutcomeLabel(status, performance.remaining)}</p>}
         </div>
 
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <button type="button" onClick={onToggle} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/65">
-            {isExpanded ? "Collapse" : "Open"}
-          </button>
-          {isPast && !status && !isWrapping && performance.budgeted > 0 && (
-            <button type="button" disabled={savingWrap} onClick={onStartWrap} className="rounded-md bg-harbor-teal px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">Wrap Week</button>
-          )}
-        </div>
-      </div>
+      </DisclosureHeader>
+
+      {isPast && !status && !isWrapping && performance.budgeted > 0 && (
+        <button type="button" disabled={savingWrap} onClick={onStartWrap} className="mt-3 min-h-11 rounded-md bg-harbor-teal px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">Wrap Week</button>
+      )}
 
       {isWrapping && (
         <WrapDecision
@@ -881,7 +903,7 @@ function ChartRows({ chart, rows, weekIndex, onOpenSpend, onMarkRow, onAdjustRow
   rows: BudgetRow[];
   weekIndex?: number;
   onOpenSpend: (item: LineItem, weekIndex?: number) => void;
-  onMarkRow: (item: LineItem, weekIndex: number | undefined, status: "cleared" | "skipped") => void | Promise<void>;
+  onMarkRow: (item: LineItem, weekIndex: number | undefined, status: "cleared" | "skipped" | "upcoming") => void | Promise<void>;
   onAdjustRow: (item: LineItem, weekIndex: number | undefined, amount: number) => void | Promise<void>;
   savingRowIds: Record<string, boolean>;
 }) {
@@ -897,7 +919,7 @@ function ChartRows({ chart, rows, weekIndex, onOpenSpend, onMarkRow, onAdjustRow
 
   return (
     <section className={`overflow-hidden rounded-xl border bg-white shadow-sm ${accent.border}`}>
-      <div className={`px-4 py-3 ${expanded ? "border-b" : ""} ${accent.header}`}>
+      <DisclosureHeader expanded={expanded} onToggle={() => setExpanded((current) => !current)} label={chart} className={`px-4 py-3 ${expanded ? "border-b" : ""} ${accent.header}`}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <h3 className="truncate text-sm font-bold uppercase tracking-wide text-harbor-navy">{chart}</h3>
@@ -910,16 +932,13 @@ function ChartRows({ chart, rows, weekIndex, onOpenSpend, onMarkRow, onAdjustRow
               {formatMoney(subtotal.remaining)}
               <div className="text-xs font-semibold text-harbor-navy/45">left</div>
             </div>
-            <button type="button" onClick={() => setExpanded((current) => !current)} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/60">
-              {expanded ? "Collapse" : "Open"}
-            </button>
+
           </div>
         </div>
-      </div>
+      </DisclosureHeader>
       {expanded && <div className="divide-y divide-slate-100 px-4">
         {rows.map((row) => {
-          const canCheckOff = row.item.paymentMethod === "checking";
-          const isDone = row.dockState?.status === "cleared";
+          const actions = budgetActions(row.item, row.dockState, row.spent);
           const isEditing = editingItemId === row.item.id;
           const saving = Boolean(savingRowIds[`${row.item.id}:${weekIndex ?? "month"}`]);
           return (
@@ -940,20 +959,21 @@ function ChartRows({ chart, rows, weekIndex, onOpenSpend, onMarkRow, onAdjustRow
                 <span className="ml-1 text-xs font-semibold text-harbor-navy/45">left</span>
               </div>
               <div className="flex shrink-0 flex-wrap justify-end gap-2">
-                {canCheckOff && !isDone && row.dockState?.status !== "skipped" && <button type="button" disabled={saving} onClick={() => {
+                {actions.edit && <button type="button" disabled={saving} onClick={() => {
                   setEditingItemId(row.item.id);
                   setAmountDraft(row.budgeted.toFixed(2));
                 }} className="min-h-10 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/55 disabled:opacity-50">Edit</button>}
-                {canCheckOff && !isDone && <button type="button" disabled={saving} onClick={() => void onMarkRow(row.item, weekIndex, "cleared")} className="min-h-10 rounded-md border border-harbor-teal-light bg-white px-3 py-1.5 text-xs font-semibold text-harbor-teal disabled:opacity-50">{saving ? "Saving..." : "Done"}</button>}
-                {canCheckOff && row.dockState?.status !== "skipped" && <button type="button" disabled={saving} onClick={() => void onMarkRow(row.item, weekIndex, "skipped")} className="min-h-10 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/55 disabled:opacity-50">{saving ? "Saving..." : "Skip"}</button>}
-                <button type="button" disabled={saving} onClick={() => onOpenSpend(row.item, weekIndex)} className={`min-h-10 rounded-md border bg-white px-3 py-1.5 text-xs font-semibold hover:text-white disabled:opacity-50 ${accent.button}`}>+ Spend</button>
+                {actions.done && <button type="button" disabled={saving} onClick={() => void onMarkRow(row.item, weekIndex, "cleared")} className="min-h-10 rounded-md border border-harbor-teal-light bg-white px-3 py-1.5 text-xs font-semibold text-harbor-teal disabled:opacity-50">{saving ? "Saving..." : "Done"}</button>}
+                {actions.skip && <button type="button" disabled={saving} onClick={() => void onMarkRow(row.item, weekIndex, "skipped")} className="min-h-10 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/55 disabled:opacity-50">{saving ? "Saving..." : "Skip"}</button>}
+                {actions.restore && <button type="button" disabled={saving} onClick={() => void onMarkRow(row.item, weekIndex, "upcoming")} className="min-h-10 rounded-md border border-slate-200 px-3 text-xs font-semibold">Restore</button>}
+                {actions.spend && <button type="button" disabled={saving} onClick={() => onOpenSpend(row.item, weekIndex)} className={`min-h-10 rounded-md border bg-white px-3 py-1.5 text-xs font-semibold hover:text-white disabled:opacity-50 ${accent.button}`}>Log Spend</button>}
               </div>
             </div>
             {isEditing && (
               <div className="rounded-md border border-teal-200 bg-teal-50 p-2 sm:col-span-2">
                 <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-                  <input type="number" min="0" step="0.01" inputMode="decimal" value={amountDraft} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setAmountDraft(event.target.value)} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" />
-                  <button type="button" disabled={saving} onClick={() => {
+                  <input aria-label={`Amount for ${row.item.name}`} type="number" min="0" step="0.01" inputMode="decimal" value={amountDraft} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setAmountDraft(event.target.value)} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" />
+                  <button type="button" disabled={saving || amountDraft.trim() === "" || !Number.isFinite(Number(amountDraft)) || Number(amountDraft) < 0} onClick={() => {
                     void onAdjustRow(row.item, weekIndex, Number(amountDraft));
                     setEditingItemId(null);
                   }} className="rounded-md bg-harbor-teal px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{saving ? "Saving..." : "Save Amount"}</button>

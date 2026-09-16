@@ -1,5 +1,8 @@
 "use client";
 
+import { DisclosureHeader } from "../components/DisclosureHeader";
+import { HarborLoading } from "../components/HarborLoading";
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { loadSettingsWithSupabaseFallback } from "../lib/budget-settings";
@@ -372,7 +375,7 @@ export default function DockPage() {
   if (!loaded || !settings) {
     return (
       <main className="flex flex-1 items-center justify-center bg-harbor-offwhite text-harbor-navy">
-        <div className="rounded-lg border border-harbor-teal-light bg-white px-5 py-4 text-sm shadow-sm">Loading Dock...</div>
+        <div className="rounded-lg border border-harbor-teal-light bg-white px-5 py-4 text-sm shadow-sm"><HarborLoading label="Loading Dock" /></div>
       </main>
     );
   }
@@ -395,7 +398,7 @@ export default function DockPage() {
         </header>
 
         <section className="grid gap-2 sm:gap-3 md:grid-cols-3">
-          <Metric label="Checking Now" value={startingChecking} detail={`As of ${anchorDateLabel}`} action={<button type="button" onClick={() => setShowCheckingForm(true)} className="text-xs font-semibold text-harbor-teal hover:text-harbor-navy">Update Checking</button>} />
+          <Metric label="Checking Now" value={startingChecking} detail={`As of ${anchorDateLabel}`} />
           {timelineLoaded ? (
             <>
               <Metric label={`Projected ${formatShortDate(projectedPoint.date)}`} value={projectedPoint.balance} detail="Next 30 days" tone={projectedPoint.balance < 0 ? "red" : "navy"} />
@@ -580,7 +583,7 @@ function TimelineWeek({ week, isCurrent, isExpanded, onToggle, onSetDone, onSkip
 
   return (
     <section className={`${isCurrent ? "rounded-xl border border-harbor-teal bg-white shadow-sm" : "rounded-xl border border-white bg-white/75 shadow-sm"} overflow-hidden`}>
-      <div className="px-3 py-3 sm:px-4">
+      <DisclosureHeader expanded={isExpanded} onToggle={onToggle} label={week.week.label} className="px-3 py-3 sm:px-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -603,11 +606,9 @@ function TimelineWeek({ week, isCurrent, isExpanded, onToggle, onSetDone, onSkip
           <div className="text-xs font-semibold text-harbor-navy/40">
             Ending balance | net change
           </div>
-          <button type="button" onClick={onToggle} className="rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/65 hover:border-harbor-teal-light hover:text-harbor-teal">
-            {isExpanded ? "Collapse" : "Expand"}
-          </button>
+
         </div>
-      </div>
+      </DisclosureHeader>
       {isExpanded && (
         <div className="border-t border-slate-100 px-3 py-3 sm:px-4">
           {week.events.length === 0 ? (

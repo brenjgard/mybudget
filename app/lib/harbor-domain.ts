@@ -490,6 +490,7 @@ export function buildCurrentForwardBudgetSummary({
   year,
   amounts,
   spendLogs,
+  dockStates = [],
   today = new Date(),
 }: {
   settings: AppSettings;
@@ -498,6 +499,7 @@ export function buildCurrentForwardBudgetSummary({
   year: number;
   amounts: Record<string, Record<number, number>>;
   spendLogs: SpendLogEntry[];
+  dockStates?: DockItemState[];
   today?: Date;
 }) {
   const currentWeekIndex = weekIndexForDate(weeks, today);
@@ -522,17 +524,27 @@ export function buildCurrentForwardBudgetSummary({
   const budgetedForIndexes = (items: LineItem[], indexes: number[]) => indexes.reduce((sum, weekIndex) => {
     const week = weeks[weekIndex];
     if (!week) return sum;
-    return sum + items.reduce((itemSum, item) => (
-      itemSum + budgetedForItemWeek(amounts, item, week, weekIndex, month, weeks.length, year)
-    ), 0);
+    return sum + items.reduce((itemSum, item) => {
+      const state = dockStates.find((candidate) => candidate.monthKey === monthKeyFor(year, month) && candidate.itemId === item.id && candidate.weekIndex === weekIndex);
+      const planned = budgetedForItemWeek(amounts, item, week, weekIndex, month, weeks.length, year);
+      const amount = state?.status === "skipped" ? 0 : state?.status === "adjusted" ? Number(state.actualAmount ?? planned) : state?.status === "cleared" ? Number(state.plannedAmount ?? planned) : planned;
+      return itemSum + amount;
+    }, 0);
   }, 0);
 
-  const spentInIndexes = (indexes: number[]) => spendLogs
-    .filter((entry) => indexes.includes(entry.weekIndex))
-    .reduce((sum, entry) => sum + entry.amount, 0);
+  const spentInIndexes = (indexes: number[]) => {
+    const logs = spendLogs.filter((entry) => indexes.includes(entry.weekIndex));
+    // Done is the alternative to a spend log, not an additional transaction.
+    const completed = dockStates.filter((state) => state.monthKey === monthKeyFor(year, month)
+      && state.itemKind === "ripple" && state.status === "cleared" && indexes.includes(state.weekIndex)
+      && spendingItems.some((item) => item.id === state.itemId)
+      && !logs.some((entry) => entry.rippleId === state.itemId && entry.weekIndex === state.weekIndex));
+    return logs.reduce((sum, entry) => sum + entry.amount, 0)
+      + completed.reduce((sum, state) => sum + Number(state.actualAmount ?? state.plannedAmount ?? 0), 0);
+  };
 
   const plannedSpending = budgetedForIndexes(spendingItems, weeks.map((_, index) => index));
-  const spentSoFar = spendLogs.reduce((sum, entry) => sum + entry.amount, 0);
+  const spentSoFar = spentInIndexes(weeks.map((_, index) => index));
   const remainingPlannedSpending = budgetedForIndexes(spendingItems, actionableWeekIndexes);
   const remainingExpectedIncome = budgetedForIndexes(incomeItems, actionableWeekIndexes);
   const historicalBudgeted = budgetedForIndexes(spendingItems, historicalWeekIndexes);

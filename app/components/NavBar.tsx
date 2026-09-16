@@ -3,7 +3,7 @@
 import Link from "next/link";
 import Image from "next/image";
 import { usePathname } from "next/navigation";
-import { useState, useEffect, useRef } from "react";
+import { AccountActions } from "./AccountActions";
 
 const NAV_LINKS = [
   {
@@ -30,6 +30,11 @@ const NAV_LINKS = [
     ),
   },
   {
+    href: "/fleet",
+    label: "Fleet",
+    icon: <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="3"/><path d="M3 10h18M7 15h4"/></svg>,
+  },
+  {
     href: "/settings",
     label: "Settings",
     icon: (
@@ -43,31 +48,13 @@ const NAV_LINKS = [
 
 export default function NavBar() {
   const pathname = usePathname();
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
   const isAuthPage = pathname === "/login" || pathname === "/signup" || pathname.startsWith("/beta");
 
-  function openFeedback() {
-    setMenuOpen(false);
-    window.dispatchEvent(new Event("harbor:open-feedback"));
-  }
-
-  // Close menu when clicking outside
-  useEffect(() => {
-    function handleClickOutside(e: MouseEvent) {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-        setMenuOpen(false);
-      }
-    }
-    if (menuOpen) document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, [menuOpen]);
-
   return (
-    <header className="sticky top-0 flex-shrink-0 z-40" ref={menuRef}>
+    <header className="sticky top-0 flex-shrink-0 z-40">
 
       {/* ── Row 1: Brand bar ── */}
-      <div className="bg-harbor-navy flex h-16 items-center justify-between px-3 sm:px-4 md:h-20 md:px-8">
+      <div className="bg-harbor-navy flex h-14 items-center px-3 sm:px-4 md:h-20 md:px-8">
         <Link href={isAuthPage ? "/beta" : "/budget"} className="flex items-center gap-3 min-w-0">
           <Image
             src="/harbor-logo.svg"
@@ -81,28 +68,6 @@ export default function NavBar() {
           <span className="text-harbor-teal text-sm font-medium ml-1 hidden sm:inline">Plan ahead. Stay ahead.</span>
         </Link>
 
-        {/* Hamburger */}
-        {!isAuthPage && (
-        <button
-          onClick={() => setMenuOpen((v) => !v)}
-          className="min-h-11 min-w-11 rounded-md p-2 text-white/80 transition-colors hover:bg-white/10 hover:text-white md:hidden"
-          aria-label="Toggle menu"
-          aria-expanded={menuOpen}
-        >
-          {menuOpen ? (
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="18" y1="6" x2="6" y2="18"/>
-              <line x1="6" y1="6" x2="18" y2="18"/>
-            </svg>
-          ) : (
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="3" y1="6" x2="21" y2="6"/>
-              <line x1="3" y1="12" x2="21" y2="12"/>
-              <line x1="3" y1="18" x2="21" y2="18"/>
-            </svg>
-          )}
-        </button>
-        )}
       </div>
 
       {/* ── Row 2: Tab navigation ── */}
@@ -115,7 +80,7 @@ export default function NavBar() {
               <Link
                 key={href}
                 href={href}
-                onClick={() => setMenuOpen(false)}
+                aria-current={isActive ? "page" : undefined}
                 className={`flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 transition-colors whitespace-nowrap ${
                   isActive
                     ? "text-harbor-teal border-harbor-teal"
@@ -127,81 +92,16 @@ export default function NavBar() {
               </Link>
             );
           })}
-          {!isAuthPage && (
-            <button
-              type="button"
-              onClick={openFeedback}
-              className="flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-harbor-navy hover:border-slate-200 transition-colors whitespace-nowrap"
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-              </svg>
-              Feedback
-            </button>
-          )}
-          {!isAuthPage && (
-            <form action="/auth/signout" method="post">
-              <button
-                type="submit"
-                className="flex items-center gap-1.5 px-4 py-3 text-sm font-medium border-b-2 border-transparent text-slate-500 hover:text-harbor-navy hover:border-slate-200 transition-colors whitespace-nowrap"
-              >
-                Sign Out
-              </button>
-            </form>
-          )}
+          <AccountActions />
         </div>
       </div>
       )}
 
-      {/* ── Hamburger dropdown menu ── */}
-      {menuOpen && !isAuthPage && (
-        <div className="absolute right-3 top-full w-[min(18rem,calc(100vw-1.5rem))] overflow-hidden rounded-b-xl border border-slate-200 bg-white shadow-lg md:hidden">
-          {NAV_LINKS.map(({ href, label, icon }) => {
-            const isActive = pathname.startsWith(href);
-            return (
-              <Link
-                key={href}
-                href={href}
-                onClick={() => setMenuOpen(false)}
-                className={`flex items-center gap-3 px-5 py-3.5 text-sm font-medium border-b border-slate-50 last:border-0 transition-colors ${
-                  isActive
-                    ? "text-harbor-teal bg-harbor-teal-light"
-                    : "text-harbor-navy hover:bg-slate-50"
-                }`}
-              >
-                <span className={isActive ? "text-harbor-teal" : "text-slate-400"}>{icon}</span>
-                {label}
-                {isActive && (
-                  <span className="ml-auto w-1.5 h-1.5 rounded-full bg-harbor-teal" />
-                )}
-              </Link>
-            );
-          })}
-          {!isAuthPage && (
-            <form action="/auth/signout" method="post">
-              <button
-                type="submit"
-                className="w-full text-left px-5 py-3.5 text-sm font-medium text-harbor-navy hover:bg-slate-50 transition-colors border-t border-slate-100"
-              >
-                Sign Out
-              </button>
-            </form>
-          )}
-          <button
-            type="button"
-            onClick={openFeedback}
-            className="flex w-full items-center gap-3 border-t border-slate-100 px-5 py-3.5 text-left text-sm font-medium text-harbor-navy transition-colors hover:bg-slate-50"
-          >
-            <span className="text-slate-400">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-              </svg>
-            </span>
-            Feedback
-          </button>
-        </div>
-      )}
-
+      {!isAuthPage && <nav aria-label="Primary navigation" className="harbor-bottom-nav fixed inset-x-0 bottom-0 grid grid-cols-4 border-t border-slate-200 bg-white md:hidden">
+        {NAV_LINKS.map(({ href, label, icon }) => <Link key={href} href={href} aria-current={pathname.startsWith(href) ? "page" : undefined} className={`flex min-h-14 flex-col items-center justify-center gap-1 text-xs font-semibold ${pathname.startsWith(href) ? "bg-harbor-teal-light text-harbor-teal" : "text-harbor-navy/60"}`}>
+          <span aria-hidden="true">{icon}</span>{label}
+        </Link>)}
+      </nav>}
     </header>
   );
 }

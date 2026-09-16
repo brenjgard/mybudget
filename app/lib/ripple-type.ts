@@ -54,8 +54,10 @@ export function getRipplePlanType(item: Pick<LineItem, "isIncome" | "frequency" 
   return "scheduled_expense";
 }
 
-export function getItemBehavior(item: Pick<LineItem, "isIncome" | "category" | "name" | "paymentMethod" | "rippleType">): ItemBehavior {
+export function getItemBehavior(item: Pick<LineItem, "isIncome" | "category" | "name" | "paymentMethod" | "rippleType"> & Pick<Partial<LineItem>, "planType">): ItemBehavior {
   if (item.isIncome) return "income";
+  // Explicit allowances remain spending plans even in a legacy card-payment category.
+  if (item.planType === "weekly_allowance" || item.planType === "monthly_allowance") return "flexible_spend";
 
   const category = item.category.trim().toLowerCase();
   const name = item.name.trim().toLowerCase();

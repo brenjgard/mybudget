@@ -92,3 +92,17 @@ input[type="number"] {
   background: #f8fafc;
   color: rgba(27, 58, 92, 0.5);
 }
+
+.harbor-bottom-nav { padding-bottom: env(safe-area-inset-bottom, 0px); }
+@media (max-width: 767px) {
+  body:has(.harbor-bottom-nav) { padding-bottom: calc(3.5rem + env(safe-area-inset-bottom, 0px)); }
+  html { scroll-padding-bottom: calc(4rem + env(safe-area-inset-bottom, 0px)); }
+}
+.harbor-anchor { animation: harbor-drop-anchor 1.6s ease-in-out infinite; }
+@keyframes harbor-drop-anchor { 0%, 100% { transform: translateY(-2px); } 50% { transform: translateY(3px); } }
+@media (prefers-reduced-motion: reduce) { .harbor-anchor { animation: none; } }
+
+@media (max-width: 767px) {
+  .harbor-page { padding-left: max(0.75rem, env(safe-area-inset-left)); padding-right: max(0.75rem, env(safe-area-inset-right)); }
+  .harbor-bottom-nav { padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right); }
+}
