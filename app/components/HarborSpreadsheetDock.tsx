@@ -1,5 +1,8 @@
 "use client";
 
+import { FinancialInput } from "./FinancialInput";
+
+
 import { useMemo, useRef, useState } from "react";
 import type { useHarborMonth } from "../lib/use-harbor-month";
 import type { BudgetItem, CreditCardPayment, PaymentAccountType } from "../lib/types";
@@ -235,7 +238,7 @@ export function HarborSpreadsheetDock({ harbor }: { harbor: HarborMonth }) {
             <div className="flex flex-wrap items-end gap-2">
               <label className="grid gap-1">
                 <span className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">Current Checking Balance</span>
-                <input
+                <FinancialInput
                   type="number"
                   value={balanceDraft}
                   onChange={(event) => setBalanceDraft(event.target.value)}
@@ -272,7 +275,7 @@ export function HarborSpreadsheetDock({ harbor }: { harbor: HarborMonth }) {
               <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={spendDraft.itemId || (firstSpendItem?.id ?? "")} onChange={(event) => setSpendDraft((draft) => ({ ...draft, itemId: event.target.value }))}>
                 {plannedRows.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
               </select>
-              <input className="rounded-lg border border-slate-200 px-3 py-2 text-sm" type="number" min="0" step="0.01" placeholder="Amount" value={spendDraft.amount} onChange={(event) => setSpendDraft((draft) => ({ ...draft, amount: event.target.value }))} />
+              <FinancialInput className="rounded-lg border border-slate-200 px-3 py-2 text-sm" type="number" min="0" step="0.01" placeholder="Amount" value={spendDraft.amount} onChange={(event) => setSpendDraft((draft) => ({ ...draft, amount: event.target.value }))} />
               <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={spendDraft.accountId} onChange={(event) => setSpendDraft((draft) => ({ ...draft, accountId: event.target.value }))}>
                 <option value="">Default method</option>
                 {harbor.paymentAccounts.map((account) => <option key={account.id} value={account.id}>{account.label}</option>)}
@@ -288,7 +291,7 @@ export function HarborSpreadsheetDock({ harbor }: { harbor: HarborMonth }) {
             <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={paymentDraft.cardId || (defaultCard?.id ?? "")} onChange={(event) => setPaymentDraft((draft) => ({ ...draft, cardId: event.target.value }))}>
               {creditCards.map((card) => <option key={card.id} value={card.id}>{card.label}</option>)}
             </select>
-            <input className="rounded-lg border border-slate-200 px-3 py-2 text-sm" type="number" min="0" step="0.01" placeholder="Payment" value={paymentDraft.amount} onChange={(event) => setPaymentDraft((draft) => ({ ...draft, amount: event.target.value }))} />
+            <FinancialInput className="rounded-lg border border-slate-200 px-3 py-2 text-sm" type="number" min="0" step="0.01" placeholder="Payment" value={paymentDraft.amount} onChange={(event) => setPaymentDraft((draft) => ({ ...draft, amount: event.target.value }))} />
             <input className="rounded-lg border border-slate-200 px-3 py-2 text-sm" type="date" value={paymentDraft.date} onChange={(event) => setPaymentDraft((draft) => ({ ...draft, date: event.target.value }))} />
             <button type="button" onClick={() => void schedulePayment()} className="rounded-lg bg-harbor-navy px-4 py-2 text-sm font-medium text-white hover:bg-harbor-navy/90">
               Schedule Card Payment

@@ -1,5 +1,8 @@
 "use client";
 
+import { FinancialInput } from "./FinancialInput";
+
+
 import { useMemo, useState } from "react";
 import type { BudgetItem, PaymentAccount } from "../lib/types";
 
@@ -94,13 +97,13 @@ export function BudgetItemManager({
         <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={draft.categoryId} onChange={(event) => setDraft((current) => ({ ...current, categoryId: event.target.value }))}>
           {categories.map((category) => <option key={category} value={category}>{category}</option>)}
         </select>
-        <input className="rounded-lg border border-slate-200 px-3 py-2 text-sm" type="number" min="0" step="0.01" placeholder="Budget amount" value={draft.amount} onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))} />
+        <FinancialInput className="rounded-lg border border-slate-200 px-3 py-2 text-sm" type="number" min="0" step="0.01" placeholder="Budget amount" value={draft.amount} onChange={(event) => setDraft((current) => ({ ...current, amount: event.target.value }))} />
         <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={draft.recurrenceType} onChange={(event) => setDraft((current) => ({ ...current, recurrenceType: event.target.value }))}>
           <option value="monthly">Monthly</option>
           <option value="weekly">Weekly</option>
           <option value="oneTime">One-time</option>
         </select>
-        <input className="rounded-lg border border-slate-200 px-3 py-2 text-sm" type="number" min="1" max="31" value={draft.dayOfMonth} onChange={(event) => setDraft((current) => ({ ...current, dayOfMonth: event.target.value }))} />
+        <input inputMode="numeric" className="rounded-lg border border-slate-200 px-3 py-2 text-sm" type="number" min="1" max="31" value={draft.dayOfMonth} onChange={(event) => setDraft((current) => ({ ...current, dayOfMonth: event.target.value }))} />
         <select className="rounded-lg border border-slate-200 px-3 py-2 text-sm" value={draft.paymentMethod} onChange={(event) => setDraft((current) => ({ ...current, paymentMethod: event.target.value as BudgetItemDraft["paymentMethod"], defaultPaymentAccountId: "" }))}>
           <option value="checking">Checking</option>
           <option value="cash">Cash</option>

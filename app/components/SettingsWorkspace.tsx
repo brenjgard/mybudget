@@ -1,5 +1,8 @@
 "use client";
 
+import { FinancialInput } from "./FinancialInput";
+
+
 import { AccountActions } from "./AccountActions";
 import { DisclosureHeader } from "./DisclosureHeader";
 import { HarborLoading } from "../components/HarborLoading";
@@ -964,7 +967,7 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
                     <div className="flex flex-wrap items-end gap-2 rounded-lg border border-indigo-100 bg-white/70 p-3">
                       <label className="grid gap-1">
                         <span className="text-xs text-harbor-navy/45">Current Balance</span>
-                        <input
+                        <FinancialInput
                           type="number"
                           min="0"
                           step="0.01"
@@ -976,11 +979,11 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
                       <button type="button" disabled={Boolean(savingActions[`card:${card.id}:balance`])} onClick={() => void updateCardBalance(card.id)} className="rounded-lg bg-harbor-teal px-3 py-2 text-xs font-semibold text-white disabled:opacity-50">{savingActions[`card:${card.id}:balance`] ? "Updating..." : "Update Balance"}</button>
                       <label className="grid gap-1">
                         <span className="text-xs text-harbor-navy/45">Cycle End Day</span>
-                        <input type="number" min="1" max="31" disabled={Boolean(savingActions[`card:${card.id}:settings`])} value={card.statementClosingDay ?? 31} onChange={(event) => updateCard(card.id, (current) => ({ ...current, statementClosingDay: clampDay(event.target.value, 31) }))} className="w-24 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm disabled:opacity-50" />
+                        <input inputMode="numeric" type="number" min="1" max="31" disabled={Boolean(savingActions[`card:${card.id}:settings`])} value={card.statementClosingDay ?? 31} onChange={(event) => updateCard(card.id, (current) => ({ ...current, statementClosingDay: clampDay(event.target.value, 31) }))} className="w-24 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm disabled:opacity-50" />
                       </label>
                       <label className="grid gap-1">
                         <span className="text-xs text-harbor-navy/45">Payment Due Day</span>
-                        <input type="number" min="1" max="31" disabled={Boolean(savingActions[`card:${card.id}:settings`])} value={card.paymentDueDay ?? 15} onChange={(event) => updateCard(card.id, (current) => ({ ...current, paymentDueDay: clampDay(event.target.value, 15) }))} className="w-24 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm disabled:opacity-50" />
+                        <input inputMode="numeric" type="number" min="1" max="31" disabled={Boolean(savingActions[`card:${card.id}:settings`])} value={card.paymentDueDay ?? 15} onChange={(event) => updateCard(card.id, (current) => ({ ...current, paymentDueDay: clampDay(event.target.value, 15) }))} className="w-24 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm disabled:opacity-50" />
                       </label>
                       <button type="button" disabled={Boolean(savingActions[`card:${card.id}:delete`])} onClick={() => removeCard(card.id)} className="rounded-lg border border-harbor-red/20 px-3 py-2 text-xs font-semibold text-harbor-red disabled:opacity-50">{savingActions[`card:${card.id}:delete`] ? "Removing..." : "Remove Card"}</button>
                     </div>
@@ -1001,9 +1004,9 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
               </div>
               <div className="grid gap-2 md:grid-cols-[1fr_140px_120px_120px_auto]">
                 <Field label="Card Name"><input ref={newCardNameRef} className="field" placeholder="Disney Visa" value={newCard.label} onChange={(event) => setNewCard((current) => ({ ...current, label: event.target.value }))} /></Field>
-                <Field label="Current Balance"><input className="field" type="number" min="0" step="0.01" value={newCard.currentBalance} onChange={(event) => setNewCard((current) => ({ ...current, currentBalance: event.target.value }))} /></Field>
-                <Field label="Cycle End Day"><input className="field" type="number" min="1" max="31" value={newCard.closeDay} onChange={(event) => setNewCard((current) => ({ ...current, closeDay: event.target.value }))} /></Field>
-                <Field label="Payment Due Day"><input className="field" type="number" min="1" max="31" value={newCard.dueDay} onChange={(event) => setNewCard((current) => ({ ...current, dueDay: event.target.value }))} /></Field>
+                <Field label="Current Balance"><FinancialInput className="field" type="number" min="0" step="0.01" value={newCard.currentBalance} onChange={(event) => setNewCard((current) => ({ ...current, currentBalance: event.target.value }))} /></Field>
+                <Field label="Cycle End Day"><input inputMode="numeric" className="field" type="number" min="1" max="31" value={newCard.closeDay} onChange={(event) => setNewCard((current) => ({ ...current, closeDay: event.target.value }))} /></Field>
+                <Field label="Payment Due Day"><input inputMode="numeric" className="field" type="number" min="1" max="31" value={newCard.dueDay} onChange={(event) => setNewCard((current) => ({ ...current, dueDay: event.target.value }))} /></Field>
                 <button type="button" disabled={Boolean(savingActions["card:add"])} onClick={() => void addCard()} className="rounded-lg bg-harbor-navy px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{savingActions["card:add"] ? "Adding..." : "Add Card"}</button>
               </div>
               <label className="mt-3 flex items-center gap-2 text-sm font-semibold text-harbor-navy/65">
@@ -1012,7 +1015,7 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
               </label>
               {newCard.hasOpeningStatement && (
                 <div className="mt-3 grid gap-2 md:grid-cols-3">
-                  <Field label="Statement Amount"><input className="field" type="number" min="0" step="0.01" value={newCard.openingAmount} onChange={(event) => setNewCard((current) => ({ ...current, openingAmount: event.target.value }))} /></Field>
+                  <Field label="Statement Amount"><FinancialInput className="field" type="number" min="0" step="0.01" value={newCard.openingAmount} onChange={(event) => setNewCard((current) => ({ ...current, openingAmount: event.target.value }))} /></Field>
                   <Field label="Due Date"><input className="field" type="date" value={newCard.openingDueDate} onChange={(event) => setNewCard((current) => ({ ...current, openingDueDate: event.target.value, openingPaymentDate: current.openingPaymentDate || event.target.value }))} /></Field>
                   <Field label="Planned Payment"><input className="field" type="date" value={newCard.openingPaymentDate} onChange={(event) => setNewCard((current) => ({ ...current, openingPaymentDate: event.target.value }))} /></Field>
                 </div>
@@ -1288,13 +1291,13 @@ function UpcomingStatementPanel({
       {isEditing && (
         <div className="mt-3 rounded-lg border border-harbor-teal-light bg-harbor-offwhite p-3">
           <div className="grid gap-2 md:grid-cols-2">
-            <Field label="Statement Balance"><input className="field" type="number" min="0" step="0.01" value={draft.amount} onChange={(event) => onDraftChange({ ...draft, amount: event.target.value })} /></Field>
+            <Field label="Statement Balance"><FinancialInput className="field" type="number" min="0" step="0.01" value={draft.amount} onChange={(event) => onDraftChange({ ...draft, amount: event.target.value })} /></Field>
             <Field label="Due Date"><input className="field" type="date" value={draft.dueDate} onChange={(event) => onDraftChange({ ...draft, dueDate: event.target.value })} /></Field>
           </div>
           <div className="mt-3 space-y-2">
             {draft.payments.map((payment, index) => (
               <div key={index} className="grid gap-2 md:grid-cols-[1fr_1fr_auto]">
-                <Field label={`Payment ${index + 1}`}><input className="field" type="number" min="0" step="0.01" value={payment.amount} onChange={(event) => updatePayment(index, { amount: event.target.value })} /></Field>
+                <Field label={`Payment ${index + 1}`}><FinancialInput className="field" type="number" min="0" step="0.01" value={payment.amount} onChange={(event) => updatePayment(index, { amount: event.target.value })} /></Field>
                 <Field label="Date"><input className="field" type="date" value={payment.date} onChange={(event) => updatePayment(index, { date: event.target.value })} /></Field>
                 <button type="button" onClick={() => onDraftChange({ ...draft, payments: draft.payments.filter((_, paymentIndex) => paymentIndex !== index) })} className="self-end rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-harbor-navy/55">Remove</button>
               </div>
@@ -1573,7 +1576,7 @@ function ScheduleFields({ form, recurrence, onChange, income }: { form: EditingI
       )}
       {recurrence.type === "custom" && (
         <>
-          <Field label="Every"><input className="field" type="number" min="1" value={recurrence.interval ?? 1} onChange={(event) => setRecurrence({ ...recurrence, interval: Math.max(1, Number(event.target.value) || 1) })} /></Field>
+          <Field label="Every"><input inputMode="numeric" className="field" type="number" min="1" value={recurrence.interval ?? 1} onChange={(event) => setRecurrence({ ...recurrence, interval: Math.max(1, Number(event.target.value) || 1) })} /></Field>
           <Field label="Unit">
             <select className="field" value={recurrence.unit ?? "weeks"} onChange={(event) => setRecurrence({ ...recurrence, unit: event.target.value as RecurrenceUnit })}>
               <option value="days">Days</option>
@@ -1638,7 +1641,7 @@ function MoneyInput({ value, onChange }: { value: number; onChange: (value: numb
   return (
     <div className="relative">
       <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-harbor-navy/35">$</span>
-      <input className="field" style={{ paddingLeft: "2rem" }} type="number" min="0" step="0.01" value={value || ""} onChange={(event) => onChange(Number(event.target.value))} />
+      <FinancialInput className="field" style={{ paddingLeft: "2rem" }} type="number" min="0" step="0.01" value={value || ""} onChange={(event) => onChange(Number(event.target.value))} />
     </div>
   );
 }

@@ -1,5 +1,8 @@
 "use client";
 
+import { FinancialInput } from "../components/FinancialInput";
+
+
 import { useState, type Dispatch, type SetStateAction } from "react";
 import { useRouter } from "next/navigation";
 import { saveSettings } from "../lib/budget-settings";
@@ -190,7 +193,7 @@ function ItemForm({
           <label className="text-xs text-slate-500 block mb-1">Amount</label>
           <div className="relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
-            <input
+            <FinancialInput
               type="number"
               className="w-full border-2 border-white focus:border-harbor-teal rounded-xl pl-7 pr-3 py-2.5 focus:outline-none bg-white transition-colors"
               placeholder="0.00"
@@ -372,7 +375,7 @@ function ItemForm({
           <>
             <div>
               <label className="text-xs text-slate-500 block mb-1">Every</label>
-              <input
+              <input inputMode="numeric"
                 type="number"
                 min="1"
                 className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
@@ -600,7 +603,7 @@ export default function Setup() {
                 </div>
                 <div className="relative">
                   <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-lg font-medium">$</span>
-                  <input
+                  <FinancialInput
                     type="number"
                     autoFocus
                     placeholder="3,901.00"

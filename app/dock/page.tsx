@@ -1,5 +1,8 @@
 "use client";
 
+import { FinancialInput } from "../components/FinancialInput";
+
+
 import { DisclosureHeader } from "../components/DisclosureHeader";
 import { HarborLoading } from "../components/HarborLoading";
 
@@ -421,7 +424,7 @@ export default function DockPage() {
               </div>
               <label className="grid min-w-0 gap-1">
                 <span className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/45">Balance</span>
-                <input ref={checkingInputRef} type="number" value={checkingBalance} disabled={savingChecking} onChange={(event) => setCheckingBalance(event.target.value)} className="w-full min-w-0 rounded-md border border-slate-200 bg-white px-3 py-2 text-right text-sm font-semibold disabled:opacity-50" />
+                <FinancialInput ref={checkingInputRef} type="number" value={checkingBalance} disabled={savingChecking} onChange={(event) => setCheckingBalance(event.target.value)} className="w-full min-w-0 rounded-md border border-slate-200 bg-white px-3 py-2 text-right text-sm font-semibold disabled:opacity-50" />
               </label>
               <button type="button" disabled={savingChecking} onClick={() => void saveCheckingBalance()} className="rounded-md bg-harbor-teal px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{savingChecking ? "Saving..." : "Save"}</button>
               <button type="button" disabled={savingChecking} onClick={() => setShowCheckingForm(false)} className="rounded-md px-3 py-2 text-sm font-semibold text-harbor-navy/45 disabled:opacity-50">Cancel</button>
@@ -441,7 +444,7 @@ export default function DockPage() {
                 <option value="income">Cash In</option>
               </select>
               <input className="rounded-md border border-slate-200 px-3 py-2 text-sm" type="text" placeholder="Description" value={eventDraft.label} onChange={(event) => setEventDraft((draft) => ({ ...draft, label: event.target.value }))} />
-              <input className="rounded-md border border-slate-200 px-3 py-2 text-sm" type="number" min="0" step="0.01" placeholder="Amount" value={eventDraft.amount} onChange={(event) => setEventDraft((draft) => ({ ...draft, amount: event.target.value }))} />
+              <FinancialInput className="rounded-md border border-slate-200 px-3 py-2 text-sm" type="number" min="0" step="0.01" placeholder="Amount" value={eventDraft.amount} onChange={(event) => setEventDraft((draft) => ({ ...draft, amount: event.target.value }))} />
               <input className="rounded-md border border-slate-200 px-3 py-2 text-sm" type="date" value={eventDraft.date} onChange={(event) => setEventDraft((draft) => ({ ...draft, date: event.target.value }))} />
               <button type="button" disabled={savingCashEvent} onClick={() => void addOneTimeEvent()} className="rounded-md bg-harbor-teal px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{savingCashEvent ? "Adding..." : "Add Event"}</button>
             </div>
@@ -680,7 +683,7 @@ function EventRows({ events, onSetDone, onSkip, onUpdateAmount, savingEventIds, 
             {isEditing && (
               <div className="rounded-md border border-teal-200 bg-teal-50 p-2 sm:col-span-2">
                 <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-                  <input type="number" min="0" step="0.01" inputMode="decimal" value={amountDraft} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setAmountDraft(event.target.value)} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" />
+                  <FinancialInput type="number" min="0" step="0.01" inputMode="decimal" value={amountDraft} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setAmountDraft(event.target.value)} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" />
                   <button type="button" disabled={saving} onClick={() => {
                     void onUpdateAmount(event, Number(amountDraft));
                     setEditingEventId(null);

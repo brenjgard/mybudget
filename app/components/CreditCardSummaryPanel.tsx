@@ -1,5 +1,8 @@
 "use client";
 
+import { FinancialInput } from "./FinancialInput";
+
+
 import { useState } from "react";
 import type { ActualTransaction, CreditCardPayment, PaymentAccount } from "../lib/types";
 import { ScheduleCardPaymentForm } from "./ScheduleCardPaymentForm";
@@ -128,7 +131,7 @@ export function CreditCardSummaryPanel({
                         </div>
                         {editingPayment?.id === payment.id ? (
                           <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_1fr]">
-                            <input type="number" min="0" step="0.01" inputMode="decimal" value={editDraft.amount} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setEditDraft((current) => ({ ...current, amount: event.target.value }))} className="rounded-md border border-slate-200 px-3 py-2 text-sm" />
+                            <FinancialInput type="number" min="0" step="0.01" inputMode="decimal" value={editDraft.amount} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setEditDraft((current) => ({ ...current, amount: event.target.value }))} className="rounded-md border border-slate-200 px-3 py-2 text-sm" />
                             <input type="date" value={editDraft.scheduledDate} onChange={(event) => setEditDraft((current) => ({ ...current, scheduledDate: event.target.value }))} className="rounded-md border border-slate-200 px-3 py-2 text-sm" />
                             <input value={editDraft.notes} onChange={(event) => setEditDraft((current) => ({ ...current, notes: event.target.value }))} placeholder="Notes" className="rounded-md border border-slate-200 px-3 py-2 text-sm sm:col-span-2" />
                             <div className="flex gap-2 sm:col-span-2">

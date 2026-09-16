@@ -1,5 +1,8 @@
 "use client";
 
+import { FinancialInput } from "./FinancialInput";
+
+
 import { useMemo, useState } from "react";
 import type { CreditCardPayment, PaymentAccount } from "../lib/types";
 
@@ -95,7 +98,7 @@ export function ScheduleCardPaymentForm({
             <option key={account.id} value={account.id}>{account.label}</option>
           ))}
         </select>
-        <input
+        <FinancialInput
           type="number"
           min="0"
           step="0.01"

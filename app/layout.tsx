@@ -18,7 +18,11 @@ export const metadata: Metadata = {
   appleWebApp: { capable: true, title: "Harbor", statusBarStyle: "default" },
   icons: {
     apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
-    icon: "/harbor-logo.svg",
+    icon: [
+      { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/harbor-favicon-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/harbor-favicon-48.png", sizes: "48x48", type: "image/png" },
+    ],
   },
 };
 

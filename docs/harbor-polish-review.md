@@ -65,3 +65,39 @@ No database/schema changes, dependency changes, or new persistence models. db/00
 - Icon container sweep: squared the help icon and feedback success icon containers to Harbor's rounded-square treatment. Existing status badges and consistent icon shapes were retained.
 - Checks passed: TypeScript, ESLint, production build, git diff whitespace check, and direct shared-component rendering/callback checks for Feedback dispatch, Sign Out POST, matching account styles, full-header button coverage and aria-expanded state. No financial logic, schema, PWA configuration or bottom-navigation destinations changed in this follow-up.
 - Browser/device limitation: no authenticated mobile/desktop browser session or physical iPhone was exercised. Actual feedback submission/sign-out, touch behavior and safe-area rendering still need a live browser/device smoke check; component checks confirm wiring and markup rather than those end-to-end flows.
+
+
+## Follow-up: iPhone keyboards, focus zoom and Safari icons
+
+### Financial inputs
+
+Added FinancialInput, a native input wrapper that defaults to inputMode="decimal" and forwards every existing prop, ref, value, handler and constraint. Nineteen financial input sites now use it across Budget, Dock, Setup, BudgetItemManager, HarborSpreadsheetDock, CreditCardSummaryPanel, ScheduleCardPaymentForm, and SettingsWorkspace (including its MoneyInput used for allowances, expenses and income). Date/recurrence integer fields use inputMode="numeric". No number/text types, parsing, save handlers, persistence calls or negative-value constraints were changed.
+
+### Focus zoom
+
+The existing .field class uses 0.875rem (14px), and many inline inputs/selects/textareas use text-sm. That is a focus-zoom risk on iOS. A shared unlayered CSS rule now sets only form controls to max(16px, 1rem) on narrow screens or coarse-pointer devices, including landscape phones. It overrides the smaller utility/.field fonts while leaving desktop typography and non-control text alone. The viewport still permits intentional pinch zoom; no maximum-scale or user-scalable restriction was added.
+
+### Active icon sources
+
+| URL/source | Purpose |
+| --- | --- |
+| /favicon.ico (app/favicon.ico) | Harbor ICO containing 16, 32 and 48px images. Next.js automatically emits the rel=icon link with a content-hashed query. |
+| /favicon.svg | Explicit SVG favicon, replaced with the existing square Harbor artwork. |
+| /harbor-favicon-32.png | Explicit 32px PNG favicon. |
+| /harbor-favicon-48.png | Explicit 48px PNG favicon. |
+| /apple-touch-icon.png | Existing 180px Apple home-screen icon, unchanged. |
+| /manifest.webmanifest | Existing manifest, unchanged; references /harbor-icon-192.png and /harbor-icon-512.png, with 512px also used for maskable display. |
+
+The existing /harbor-app-icon.svg remains the square artwork source; /harbor-logo.svg remains the in-app logo, but is no longer a separate favicon declaration. There are no app/icon.* or app/apple-icon.* files introducing extra declarations.
+
+Confirmed root cause: the old app/favicon.ico visually contained the starter triangle, while layout metadata separately pointed to Harbor SVG artwork. Replaced that ICO instead of relying on browser icon preference. Replaced the unused legacy public/favicon.svg content and removed unreferenced public/vercel.svg and public/next.svg starter assets. All active icon declarations now agree on Harbor artwork. Next.js icon conventions: https://nextjs.org/docs/app/getting-started/metadata-and-og-images.
+
+### Verification and Safari cache
+
+- TypeScript, ESLint and production build passed. The build used network access for the existing Geist font; the pre-existing middleware deprecation warning remains.
+- HTTP checks matched all seven served icon files byte-for-byte against their local assets and verified the rendered ICO/SVG/PNG/Apple link declarations, ICO image sizes and generated mobile CSS.
+- FinancialInput passthrough checks covered 123, 123.45, 0.99 and -12.34, unchanged refs/callbacks and absence of an added minimum constraint. All 30 existing domain/local-repository regression checks passed. Actual live account saves were not performed.
+- Existing manifest and PWA icon artwork were not modified.
+- Physical iPhone keyboard layout, Safari focus/dismiss scale and horizontal position, and browser icon presentation still require a real device/browser check. Served assets and markup were verified; these are not claims of on-device testing.
+
+After deployment, first revisit Harbor and close/reopen its Safari tab. Old history/bookmark suggestions may retain the previous cached icon even when the served files are correct. If it persists, Safari's cache/website-data controls are under Settings > Apps > Safari > Advanced > Website Data; clearing history is a separate, broader option. Clearing site data can sign you out and remove locally stored fallback data, so ensure any local-only data is backed up before doing that. Do not clear all browsing data as a first step or keep restructuring the correct icon configuration. Apple guidance: https://support.apple.com/en-us/105082.

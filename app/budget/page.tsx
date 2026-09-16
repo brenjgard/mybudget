@@ -1,5 +1,8 @@
 "use client";
 
+import { FinancialInput } from "../components/FinancialInput";
+
+
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { budgetActions } from "../lib/budget-actions";
@@ -972,7 +975,7 @@ function ChartRows({ chart, rows, weekIndex, onOpenSpend, onMarkRow, onAdjustRow
             {isEditing && (
               <div className="rounded-md border border-teal-200 bg-teal-50 p-2 sm:col-span-2">
                 <div className="grid gap-2 sm:grid-cols-[1fr_auto_auto]">
-                  <input aria-label={`Amount for ${row.item.name}`} type="number" min="0" step="0.01" inputMode="decimal" value={amountDraft} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setAmountDraft(event.target.value)} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" />
+                  <FinancialInput aria-label={`Amount for ${row.item.name}`} type="number" min="0" step="0.01" inputMode="decimal" value={amountDraft} onFocus={(event) => event.currentTarget.select()} onChange={(event) => setAmountDraft(event.target.value)} className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" />
                   <button type="button" disabled={saving || amountDraft.trim() === "" || !Number.isFinite(Number(amountDraft)) || Number(amountDraft) < 0} onClick={() => {
                     void onAdjustRow(row.item, weekIndex, Number(amountDraft));
                     setEditingItemId(null);
@@ -1148,7 +1151,7 @@ function SpendForm({
             {items.map((item) => <option key={item.id} value={item.id}>{item.category} | {item.name}</option>)}
           </select>
         )}
-        <input data-spend-amount className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" type="number" min="0" step="0.01" inputMode="decimal" placeholder="Amount" value={draft.amount} onFocus={(event) => event.currentTarget.select()} onChange={(event) => onChange((current) => ({ ...current, amount: event.target.value }))} />
+        <FinancialInput data-spend-amount className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" type="number" min="0" step="0.01" inputMode="decimal" placeholder="Amount" value={draft.amount} onFocus={(event) => event.currentTarget.select()} onChange={(event) => onChange((current) => ({ ...current, amount: event.target.value }))} />
         <select className="rounded-md border border-slate-200 bg-white px-3 py-2 text-sm" value={draft.paymentMethod} onChange={(event) => onChange((current) => ({ ...current, paymentMethod: event.target.value as PaymentMethod }))}>
           <option value="checking">Checking</option>
           {settings.creditCards.map((card) => <option key={card.id} value={card.id}>{card.label}</option>)}
