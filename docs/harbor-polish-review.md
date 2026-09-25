@@ -108,3 +108,17 @@ After deployment, first revisit Harbor and close/reopen its Safari tab. Old hist
 The shared financial-input and form-focus treatment applies to iOS Safari, Chrome on iPhone, and Chrome on Android. It uses native HTML input types, inputMode="decimal" for currency, inputMode="numeric" for integer fields, and a minimum 16px form-control font on narrow screens or coarse-pointer devices. There is no user-agent detection, Safari-specific JavaScript, scripted zoom reset, or restriction on intentional pinch zoom.
 
 The browser/OS chooses the exact keyboard layout; inputMode is a standards-based hint. Existing parsing, validation and persistence remain unchanged. Before calling device verification complete, check each supported browser for decimal entry (123, 123.45, 0.99), negative balances where allowed, focus/dismiss scale and horizontal position, and saving then refreshing. These physical-device checks remain pending; source/markup checks do not substitute for them.
+
+
+## Follow-up: Budget and Dock hierarchy cleanup
+
+This supersedes the original Budget action matrix above. Fixed and one-time obligations now show **Mark Paid**; allowances show **Log Spend**; income receipt actions use **Mark Received**. Paid, Spent, Received and Skipped labels follow item semantics. Explicit scheduled-expense/allowance settings take priority; older definitions retain the existing behavior inference. No new category-name checks were introduced.
+
+- Checking bills use the existing occurrence completion operation. Card-funded bills and partially recorded bills use the existing dated transaction form under the Mark Paid label, preserving card liability and remaining-payment behavior. Completed/skipped rows retain their existing restrictions; allowances can record multiple purchases.
+- Budget month navigation is previous arrow / tappable month-year / next arrow, with a This month shortcut when needed. The native month input remains keyboard accessible. Global Log Spend is a secondary action and opens with a blank amount. Income and card-payment links use user-facing labels.
+- Dock has a compact Cash forecast heading followed by Current Balance, Projected End and Lowest Point. Collapsed weeks show dates, This week when applicable, Low and Ends. Expanded weeks retain Start/In/Out/Net, the low-point date and chronological events. Existing sub-$500 risk uses amber; negative balances use red; healthy balances remain neutral.
+- Budget/Dock row actions wrap on narrow screens and have at least 44px target height. No forecast calculations, schema, repositories or dependencies changed.
+
+Validation: 31 regression checks pass, including checking/card allowances, fixed/one-time bills, income labels, partial payments, completed/skipped action restrictions and existing forecast scenarios. TypeScript, lint and the production build pass; Next.js retains its existing middleware deprecation notice.
+
+Browser validation used headless Chrome with the production assets, synthetic fixture data and locally mocked authentication/API responses at 320px, 390px and 1280px. Checked horizontal overflow, individual bill/allowance action exclusivity, month navigation and This month reset, global Log Spend opening, and collapsed/expanded Dock contents. Inspected screenshots of mobile rows and weekly tiles. The temporary browser fixture was removed. These checks do not exercise live Supabase writes or physical iPhone/Safari behavior.

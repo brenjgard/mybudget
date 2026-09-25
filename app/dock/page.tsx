@@ -6,10 +6,11 @@ import { FinancialInput } from "../components/FinancialInput";
 import { DisclosureHeader } from "../components/DisclosureHeader";
 import { HarborLoading } from "../components/HarborLoading";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { loadSettingsWithSupabaseFallback } from "../lib/budget-settings";
 import { budgetRepo } from "../lib/repositories/budget-repo";
+import { budgetActions } from "../lib/budget-actions";
 import { buildProjectedAmounts } from "../lib/schedule";
 import type { AppSettings, DockItemState, SpendLogEntry } from "../lib/types";
 import type { Buoy } from "../lib/local-repo";
@@ -28,6 +29,8 @@ import {
   weekIndexForDate,
 } from "../lib/harbor-domain";
 import type { HarborCashEvent, HarborWeekForecast } from "../lib/harbor-domain";
+
+const DockItemsContext = createContext<AppSettings["lineItems"]>([]);
 
 type CashEventDraft = {
   type: "payment" | "income";
@@ -384,14 +387,14 @@ export default function DockPage() {
   }
 
   return (
+    <DockItemsContext.Provider value={settings.lineItems}>
     <main className="harbor-page flex-1 p-3 text-harbor-navy sm:p-4">
       <div className="mx-auto max-w-[1180px] space-y-4 sm:space-y-6">
-        <header className="harbor-hero rounded-xl px-4 py-4 sm:px-5">
+        <header className="py-1">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-white/70">Dock</p>
-              <h1 className="mt-1 text-2xl font-bold sm:text-3xl">Cash forecast</h1>
-              <p className="mt-1 text-sm text-white/70">What hits checking, when it hits, and where cash lands.</p>
+              <p className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/60">Dock</p>
+              <h1 className="mt-1 text-base font-semibold">Cash forecast</h1>
             </div>
             <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
               <button type="button" onClick={() => setShowAddEvent((current) => !current)} className="harbor-action px-4 py-2 text-sm">+ Add Cash Event</button>
@@ -401,16 +404,16 @@ export default function DockPage() {
         </header>
 
         <section className="grid gap-2 sm:gap-3 md:grid-cols-3">
-          <Metric label="Checking Now" value={startingChecking} detail={`As of ${anchorDateLabel}`} />
+          <Metric label="Current Balance" value={startingChecking} detail={`As of ${anchorDateLabel}`} />
           {timelineLoaded ? (
             <>
-              <Metric label={`Projected ${formatShortDate(projectedPoint.date)}`} value={projectedPoint.balance} detail="Next 30 days" tone={projectedPoint.balance < 0 ? "red" : "navy"} />
-              <Metric label="Lowest Next 30 Days" value={lowestPoint.balance} detail={formatShortDate(lowestPoint.date)} tone={lowestPoint.balance < 0 ? "red" : lowestPoint.balance < 500 ? "red" : "navy"} />
+              <Metric label="Projected End" value={projectedPoint.balance} detail={`Next 30 days | ${formatShortDate(projectedPoint.date)}`} tone={projectedPoint.balance < 0 ? "red" : "navy"} />
+              <Metric label="Lowest Point" value={lowestPoint.balance} detail={formatShortDate(lowestPoint.date)} tone={lowestPoint.balance < 0 ? "red" : lowestPoint.balance < 500 ? "warning" : "navy"} />
             </>
           ) : (
             <>
               <LoadingMetric label="Projected" detail="Loading forecast" />
-              <LoadingMetric label="Lowest Next 30 Days" detail="Loading forecast" />
+              <LoadingMetric label="Lowest Point" detail="Loading forecast" />
             </>
           )}
         </section>
@@ -459,7 +462,7 @@ export default function DockPage() {
                 <div>
                   <h2 className="text-lg font-bold">Check these off</h2>
                   <p className="mt-1 text-sm text-harbor-navy/60">
-                    These were planned for earlier dates. Mark them paid if they happened, or skip them if they should not affect Dock.
+                    These were planned for earlier dates. Record what happened, or skip events that should no longer affect the forecast.
                   </p>
                 </div>
                 <div className="text-sm font-bold text-harbor-red">
@@ -542,11 +545,12 @@ export default function DockPage() {
         )}
       </div>
     </main>
+    </DockItemsContext.Provider>
   );
 }
 
-function Metric({ label, value, tone = "navy", detail, action }: { label: string; value: number; tone?: "navy" | "red"; detail?: string; action?: React.ReactNode }) {
-  const toneClass = tone === "red" ? "text-harbor-red" : "text-harbor-navy";
+function Metric({ label, value, tone = "navy", detail, action }: { label: string; value: number; tone?: "navy" | "red" | "warning"; detail?: string; action?: React.ReactNode }) {
+  const toneClass = tone === "red" ? "text-harbor-red" : tone === "warning" ? "text-amber-700" : "text-harbor-navy";
   const accentClass = tone === "red" ? "from-red-50 to-white border-red-100" : "from-teal-50 to-white border-teal-100";
   return (
     <div className={`rounded-lg border bg-gradient-to-br px-4 py-3 shadow-sm ${accentClass}`}>
@@ -581,39 +585,30 @@ function TimelineWeek({ week, isCurrent, isExpanded, onToggle, onSetDone, onSkip
   savingEventIds: Record<string, boolean>;
 }) {
   const net = week.inflows - week.outflows;
-  const risk = week.lowest < 0 ? "text-harbor-red" : week.lowest < 500 ? "text-harbor-red" : "text-harbor-navy";
+  const risk = week.lowest < 0 ? "text-harbor-red" : week.lowest < 500 ? "text-amber-700" : "text-harbor-navy";
   const endingRisk = week.ending < 0 ? "text-harbor-red" : "text-harbor-navy";
 
   return (
     <section className={`${isCurrent ? "rounded-xl border border-harbor-teal bg-white shadow-sm" : "rounded-xl border border-white bg-white/75 shadow-sm"} overflow-hidden`}>
       <DisclosureHeader expanded={isExpanded} onToggle={onToggle} label={week.week.label} className="px-3 py-3 sm:px-4">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className={`${isCurrent ? "text-xl" : "text-base"} font-bold`}>{isCurrent ? "This Week" : week.week.label}</h2>
-            {isCurrent && <span className="rounded-full bg-harbor-teal/10 px-2 py-0.5 text-xs font-semibold text-harbor-teal">{week.week.label}</span>}
-            </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold text-harbor-navy/45">
-              <span>Start <span className="text-harbor-navy">{formatMoney(week.starting)}</span></span>
-              <span className="text-harbor-green">In {formatMoney(week.inflows)}</span>
-              <span className={week.outflows > 0 ? "text-harbor-red" : "text-harbor-navy/55"}>Out {formatMoney(week.outflows)}</span>
-              <span className={risk}>Low {formatMoney(week.lowest)} {formatShortDate(week.lowestDate)}</span>
-            </div>
-          </div>
-          <div className="shrink-0 text-right">
-            <div className={`text-lg font-bold tabular-nums ${endingRisk}`}>{formatMoney(week.ending)}</div>
-            <div className={`text-xs font-bold ${net < 0 ? "text-harbor-red" : "text-harbor-green"}`}>{net < 0 ? "-" : "+"}{formatMoney(Math.abs(net))}</div>
-          </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-base font-bold">{week.week.label}</h2>
+          {isCurrent && <span className="rounded-full bg-harbor-teal/10 px-2 py-0.5 text-xs font-semibold text-harbor-teal">This week</span>}
         </div>
-        <div className="mt-2 flex items-center justify-between gap-3 border-t border-slate-100 pt-2">
-          <div className="text-xs font-semibold text-harbor-navy/40">
-            Ending balance | net change
-          </div>
-
+        <div className="mt-2 grid grid-cols-2 gap-3 tabular-nums">
+          <div className={risk}><span className="text-xs font-semibold">Low</span><div className="text-lg font-bold">{formatMoney(week.lowest)}</div></div>
+          <div className={endingRisk}><span className="text-xs font-semibold">Ends</span><div className="text-lg font-bold">{formatMoney(week.ending)}</div></div>
         </div>
       </DisclosureHeader>
       {isExpanded && (
         <div className="border-t border-slate-100 px-3 py-3 sm:px-4">
+          <div className="mb-3 flex flex-wrap gap-x-4 gap-y-2 text-xs tabular-nums text-harbor-navy/65">
+            <span>Start <strong>{formatMoney(week.starting)}</strong></span>
+            <span className="text-harbor-green">In <strong>+{formatMoney(week.inflows)}</strong></span>
+            <span className="text-harbor-red">Out <strong>&minus;{formatMoney(week.outflows)}</strong></span>
+            <span>Net <strong>{net < 0 ? "-" : "+"}{formatMoney(Math.abs(net))}</strong></span>
+            <span>Lowest point {formatShortDate(week.lowestDate)}</span>
+          </div>
           {week.events.length === 0 ? (
             <p className="text-sm text-harbor-navy/45">No unresolved cash events in this week.</p>
           ) : (
@@ -651,12 +646,15 @@ function DayEventGroups({ week, onSetDone, onSkip, onUpdateAmount, savingEventId
 }
 
 function EventRows({ events, onSetDone, onSkip, onUpdateAmount, savingEventIds, quiet = false, overdue = false }: { events: HarborCashEvent[]; onSetDone: (event: HarborCashEvent, done: boolean) => void | Promise<void>; onSkip: (event: HarborCashEvent) => void | Promise<void>; onUpdateAmount: (event: HarborCashEvent, amount: number) => void | Promise<void>; savingEventIds: Record<string, boolean>; quiet?: boolean; overdue?: boolean }) {
+  const items = useContext(DockItemsContext);
   const [editingEventId, setEditingEventId] = useState<string | null>(null);
   const [amountDraft, setAmountDraft] = useState("");
   return (
     <div className="divide-y divide-slate-100 px-4">
       {events.map((event) => {
         const impact = eventImpact(event);
+        const item = items.find((candidate) => candidate.id === event.itemId);
+        const recordedLabel = event.kind === "income" ? "Received" : event.kind === "transfer" ? "Transferred" : event.kind === "cardPayment" ? "Paid" : item ? budgetActions(item, event.state, 0).recordedLabel : event.state?.behaviorType === "flexible_spend" ? "Spent" : "Paid";
         const saving = Boolean(savingEventIds[event.id]);
         const isEditing = editingEventId === event.id;
         return (
@@ -664,20 +662,20 @@ function EventRows({ events, onSetDone, onSkip, onUpdateAmount, savingEventIds, 
             <div className="min-w-0 sm:pr-4">
               <div className="truncate text-base font-semibold sm:text-sm">{event.label}</div>
               <div className="mt-0.5 text-xs text-harbor-navy/55">{eventContext(event)}</div>
-              <div className="mt-0.5 text-xs font-medium text-harbor-navy/45 sm:hidden">{formatShortDate(event.date)} | {eventStatusLabel(event, overdue)}</div>
+              <div className="mt-0.5 text-xs font-medium text-harbor-navy/45 sm:hidden">{formatShortDate(event.date)} | {eventStatusLabel(event, overdue, recordedLabel)}</div>
             </div>
-            <div className="flex items-center justify-between gap-3 sm:justify-end">
+            <div className="flex flex-wrap items-center justify-between gap-3 sm:justify-end">
               <div className="text-right">
                 <div className={`font-bold tabular-nums ${impact >= 0 ? "text-harbor-green" : "text-harbor-red"}`}>{formatMoney(impact)}</div>
-                <div className="hidden text-xs font-medium text-harbor-navy/45 sm:block">{eventStatusLabel(event, overdue)}</div>
+                <div className="hidden text-xs font-medium text-harbor-navy/45 sm:block">{eventStatusLabel(event, overdue, recordedLabel)}</div>
               </div>
-              <div className="flex shrink-0 gap-2">
+              <div className="flex flex-wrap gap-2">
                 {event.status !== "done" && <button type="button" disabled={saving} onClick={() => {
                   setEditingEventId(event.id);
                   setAmountDraft(event.amount.toFixed(2));
-                }} className="min-h-10 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/55 hover:border-harbor-teal-light hover:text-harbor-teal disabled:opacity-50">Edit</button>}
-                <button type="button" disabled={saving} onClick={() => void onSetDone(event, event.status !== "done")} className="min-h-10 rounded-md border border-harbor-teal-light bg-white px-3 py-1.5 text-xs font-semibold text-harbor-teal hover:bg-harbor-teal-light/45 disabled:opacity-50">{saving ? "Saving" : event.status === "done" ? "Undo" : event.kind === "income" ? "Received" : "Paid"}</button>
-                {event.status !== "done" && <button type="button" disabled={saving} onClick={() => void onSkip(event)} className="min-h-10 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/55 hover:border-harbor-red/30 hover:text-harbor-red disabled:opacity-50">Skip</button>}
+                }} className="min-h-11 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/55 hover:border-harbor-teal-light hover:text-harbor-teal disabled:opacity-50">Edit</button>}
+                <button type="button" disabled={saving} onClick={() => void onSetDone(event, event.status !== "done")} className="min-h-11 rounded-md border border-harbor-teal-light bg-white px-3 py-1.5 text-xs font-semibold text-harbor-teal hover:bg-harbor-teal-light/45 disabled:opacity-50">{saving ? "Saving" : event.status === "done" ? "Undo" : `Mark ${recordedLabel}`}</button>
+                {event.status !== "done" && <button type="button" disabled={saving} onClick={() => void onSkip(event)} className="min-h-11 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/55 hover:border-harbor-red/30 hover:text-harbor-red disabled:opacity-50">Skip</button>}
               </div>
             </div>
             {isEditing && (
@@ -703,8 +701,8 @@ function eventContext(event: HarborCashEvent) {
   return [event.chart, event.sourceLabel].filter(Boolean).join(" | ") || (event.kind === "income" ? "Checking" : "Checking");
 }
 
-function eventStatusLabel(event: HarborCashEvent, overdue = false) {
-  if (event.status === "done") return event.kind === "income" ? "Received" : "Paid";
+function eventStatusLabel(event: HarborCashEvent, overdue = false, recordedLabel = "Paid") {
+  if (event.status === "done") return recordedLabel;
   if (overdue) return `Past due | Scheduled ${formatShortDate(event.date)}`;
   if (event.kind === "cardPayment" || event.kind === "checkingPayment") return event.state?.pendingUntil ? "Scheduled" : "Expected";
   return "Expected";

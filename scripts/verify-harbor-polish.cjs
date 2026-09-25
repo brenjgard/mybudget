@@ -26,7 +26,13 @@ for (const planType of ['weekly_allowance','monthly_allowance','scheduled_expens
   test(`${planType}/${paymentMethod}: category and source independent actions`, () => {
    const planned = { ...item, planType, paymentMethod };
    const expected = budgetActions(planned, undefined, 0);
-   assert.equal(expected.edit,true); assert.equal(expected.skip,true); assert.equal(expected.spend,true);
+   assert.equal(expected.edit,true); assert.equal(expected.skip,true);
+   const flexible = planType !== "scheduled_expense";
+   assert.equal(expected.primaryLabel, flexible ? "Log Spend" : "Mark Paid");
+   assert.equal(expected.recordedLabel, flexible ? "Spent" : "Paid");
+   assert.equal(expected.done, !flexible && paymentMethod === "checking");
+   assert.equal(expected.spend, flexible || paymentMethod !== "checking");
+   assert.notEqual(expected.done, expected.spend);
    assert.deepEqual(budgetActions({ ...planned, category: 'Other', name: 'Manual', waveType: 'oneTime' }, undefined,0), expected);
    assert.equal(budgetActions(planned,state,0).restore,true);
    assert.equal(budgetActions(planned,state,0).spend,false);
@@ -35,6 +41,28 @@ for (const planType of ['weekly_allowance','monthly_allowance','scheduled_expens
   });
  }
 }
+test('Fixed and one-time bills, income, and completed actions use contextual labels', () => {
+ for (const paymentMethod of ['checking', 'card']) {
+  for (const waveType of ['recurring', 'oneTime']) {
+   const bill = {...item, planType:'scheduled_expense', paymentMethod, waveType};
+   const actions = budgetActions(bill, undefined, 0);
+   assert.equal(actions.primaryLabel, 'Mark Paid');
+   assert.equal(actions.recordedLabel, 'Paid');
+   for (const status of ['cleared', 'skipped']) {
+    const completed = budgetActions(bill, {...state,status}, 0);
+    assert.equal(completed.done, false); assert.equal(completed.spend, false);
+   }
+   const logged = budgetActions(bill, undefined, 100, 0);
+   assert.equal(logged.done, false); assert.equal(logged.spend, false);
+   const partial = budgetActions(bill, undefined, 25, 75);
+   assert.equal(partial.done, false); assert.equal(partial.spend, true);
+   assert.equal(partial.primaryLabel, 'Mark Paid');
+  }
+ }
+ assert.equal(budgetActions({...item,isIncome:true},undefined,0).primaryLabel,'Mark Received');
+ assert.equal(budgetActions({...item,isIncome:true},undefined,0).recordedLabel,'Received');
+ assert.equal(budgetActions(item,undefined,25).spend,true);
+});
 test('Explicit allowances remain Budget items in any category', () => {
  const { getItemBehavior } = require('../app/lib/ripple-type.ts');
  for (const category of ['Credit Cards', 'Food', 'Other']) {

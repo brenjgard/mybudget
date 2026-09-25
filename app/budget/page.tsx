@@ -299,10 +299,9 @@ export default function BudgetPage() {
     if (!item) return;
     setSpendError(null);
     const date = defaultSpendDate;
-    const dateWeekIndex = weekIndexForDate(weeks, new Date(`${date}T00:00:00`));
     setSpendDraft({
       itemId: item.id,
-      amount: defaultAmountForItem(item, dateWeekIndex >= 0 ? dateWeekIndex : undefined),
+      amount: "",
       paymentMethod: item.paymentMethod,
       date,
       note: "",
@@ -388,7 +387,7 @@ export default function BudgetPage() {
     const sourceWeekIndex = Math.max(0, weekIndexForDate(sourceWeeks, parsedDate));
     const row = weekRows(targetWeekIndex).find((candidate) => candidate.item.id === item.id)
       ?? { item, budgeted: item.defaultAmount, spent: 0, remaining: item.defaultAmount, planned: item.defaultAmount, dockState: undefined };
-    const actions = budgetActions(item, row.dockState, row.spent);
+    const actions = budgetActions(item, row.dockState, row.spent, row.remaining);
     if (savingRowIds[rowKey] || (status === "skipped" && !actions.skip) || (status === "cleared" && !actions.done) || (status === "upcoming" && !actions.restore)) return;
     const amount = Math.max(row?.remaining ?? row?.budgeted ?? item.defaultAmount, 0);
     setActionError(null);
@@ -511,21 +510,29 @@ export default function BudgetPage() {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-white/70">Budget</p>
-              <h1 className="mt-1 text-2xl font-bold sm:text-3xl">{monthName}</h1>
-              <p className="mt-1 text-sm text-white/70">Planned spending, real spend, and what is left.</p>
+              <h1 className="mt-1 text-2xl font-bold sm:text-3xl">Spending plan</h1>
             </div>
-            <div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:items-center">
-              <button type="button" disabled={monthLoading} onClick={() => nudgeMonth(-1)} className="rounded-md border border-white/20 bg-white/10 px-3 py-2 text-sm font-semibold text-white disabled:opacity-45">Previous</button>
-              <input type="month" disabled={monthLoading} value={monthKey} onChange={(event) => changeMonth(event.target.value)} className="rounded-md border border-white/20 bg-white px-3 py-2 text-sm font-semibold text-harbor-navy disabled:opacity-45" />
-              <button type="button" disabled={monthLoading} onClick={() => nudgeMonth(1)} className="rounded-md border border-white/20 bg-white/10 px-3 py-2 text-sm font-semibold text-white disabled:opacity-45">Next</button>
-              <button type="button" onClick={openGlobalSpend} className="harbor-action px-4 py-2 text-sm">+ Log Spending</button>
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex w-full items-center justify-between gap-1 sm:w-auto">
+                <button type="button" aria-label="Previous month" disabled={monthLoading} onClick={() => nudgeMonth(-1)} className="min-h-11 min-w-11 rounded-md text-2xl hover:bg-white/10 disabled:opacity-45">&lsaquo;</button>
+                <label className="relative flex min-h-11 min-w-0 items-center rounded-md px-2 text-lg font-semibold focus-within:outline-2 focus-within:outline-white">
+                  <span aria-hidden="true">{monthName}</span>
+                  <input aria-label="Choose budget month" type="month" disabled={monthLoading} value={monthKey} onClick={(event) => { try { event.currentTarget.showPicker(); } catch { /* Native month input remains available. */ } }} onChange={(event) => changeMonth(event.target.value)} className="absolute inset-0 h-full w-full cursor-pointer opacity-0 focus:opacity-100 focus:bg-white focus:text-harbor-navy" />
+                </label>
+                <button type="button" aria-label="Next month" disabled={monthLoading} onClick={() => nudgeMonth(1)} className="min-h-11 min-w-11 rounded-md text-2xl hover:bg-white/10 disabled:opacity-45">&rsaquo;</button>
+              </div>
+              {monthKey !== monthKeyFor(now.getFullYear(), now.getMonth()) && <button type="button" disabled={monthLoading} onClick={() => changeMonth(monthKeyFor(now.getFullYear(), now.getMonth()))} className="min-h-11 px-2 text-sm text-white/80">This month</button>}
             </div>
           </div>
         </header>
 
         {actionError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-harbor-red">{actionError}</p>}
-        <Link href="/settings#ripples" className="inline-block text-sm font-semibold text-harbor-teal">Manage plans: edit details or delete</Link>
-        <span className="ml-3 text-sm text-harbor-navy/60">Payments in <Link href="/fleet" className="font-semibold text-harbor-teal">Fleet</Link> | Income in <Link href="/dock" className="font-semibold text-harbor-teal">Dock</Link></span>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+          <button type="button" disabled={monthLoading} onClick={openGlobalSpend} className="min-h-11 rounded-md border border-slate-200 bg-white px-3 font-semibold text-harbor-teal disabled:opacity-50">+ Log Spend</button>
+          <Link href="/settings#ripples" className="inline-flex min-h-11 items-center font-semibold text-harbor-teal">Manage budget items</Link>
+          <Link href="/fleet" className="inline-flex min-h-11 items-center text-harbor-teal">Card payments</Link>
+          <Link href="/dock" className="inline-flex min-h-11 items-center text-harbor-teal">Income</Link>
+        </div>
         {monthLoading && (
           <div className="rounded-lg border border-harbor-teal-light bg-white px-4 py-3 text-sm font-semibold text-harbor-navy/50 shadow-sm">
             Loading month...
@@ -541,14 +548,14 @@ export default function BudgetPage() {
             {summaryScope === "week" ? (
               <section className="grid gap-2 sm:gap-3 md:grid-cols-3">
                 <Metric label="Planned" value={currentForward.thisWeek.budgeted} detail="Budget for this week" />
-                <Metric label="Done" value={currentForward.thisWeek.spent} tone="red" detail="Already recorded" />
-                <Metric label="Still Available" value={currentForward.thisWeek.remaining} tone={currentForward.thisWeek.remaining >= 0 ? "green" : "red"} detail="Planned minus done" />
+                <Metric label="Spent" value={currentForward.thisWeek.spent} tone="red" detail="Already recorded" />
+                <Metric label="Still Available" value={currentForward.thisWeek.remaining} tone={currentForward.thisWeek.remaining >= 0 ? "green" : "red"} detail="Planned minus spent" />
               </section>
             ) : (
               <section className="grid gap-2 sm:gap-3 md:grid-cols-3">
                 <Metric label="Planned Left" value={currentForward.restOfMonth.remainingPlannedSpending} detail="Today through month end" />
-                <Metric label="Done So Far" value={currentForward.restOfMonth.spent} tone="red" detail="Recorded from today forward" />
-                <Metric label="Still Available" value={currentForward.restOfMonth.availablePosition} tone={currentForward.restOfMonth.availablePosition >= 0 ? "green" : "red"} detail="Planned left minus done" />
+                <Metric label="Spent So Far" value={currentForward.restOfMonth.spent} tone="red" detail="Recorded from today forward" />
+                <Metric label="Still Available" value={currentForward.restOfMonth.availablePosition} tone={currentForward.restOfMonth.availablePosition >= 0 ? "green" : "red"} detail="Planned left minus spent" />
               </section>
             )}
           </section>
@@ -562,7 +569,7 @@ export default function BudgetPage() {
 
         {activeSpend === "global" && (
           <SpendForm
-            title="Log Spending"
+            title="Log Spend"
             draft={spendDraft}
             items={budgetRows}
             settings={settings}
@@ -884,7 +891,7 @@ function WeekSection({
           )}
           {activeInlineSpend && (
             <SpendForm
-              title={`Log ${rowsById.get(activeInlineSpend.itemId)?.name ?? "Spending"}`}
+              title={`${(rowsById.get(activeInlineSpend.itemId) ? budgetActions(rowsById.get(activeInlineSpend.itemId)!, undefined, 0).primaryLabel : "Log Spend")}: ${rowsById.get(activeInlineSpend.itemId)?.name ?? "Spending"}`}
               draft={spendDraft}
               items={[]}
               settings={settings}
@@ -927,7 +934,7 @@ function ChartRows({ chart, rows, weekIndex, onOpenSpend, onMarkRow, onAdjustRow
           <div className="min-w-0">
             <h3 className="truncate text-sm font-bold uppercase tracking-wide text-harbor-navy">{chart}</h3>
             <p className="mt-0.5 text-xs font-medium text-harbor-navy/55">
-              {rows.length} item{rows.length === 1 ? "" : "s"} | {formatMoney(subtotal.budgeted)} planned | {formatMoney(subtotal.spent)} done
+              {rows.length} item{rows.length === 1 ? "" : "s"} | {formatMoney(subtotal.budgeted)} planned | {formatMoney(subtotal.spent)} spent
             </p>
           </div>
           <div className="flex shrink-0 items-start gap-3">
@@ -941,7 +948,7 @@ function ChartRows({ chart, rows, weekIndex, onOpenSpend, onMarkRow, onAdjustRow
       </DisclosureHeader>
       {expanded && <div className="divide-y divide-slate-100 px-4">
         {rows.map((row) => {
-          const actions = budgetActions(row.item, row.dockState, row.spent);
+          const actions = budgetActions(row.item, row.dockState, row.spent, row.remaining);
           const isEditing = editingItemId === row.item.id;
           const saving = Boolean(savingRowIds[`${row.item.id}:${weekIndex ?? "month"}`]);
           return (
@@ -953,23 +960,23 @@ function ChartRows({ chart, rows, weekIndex, onOpenSpend, onMarkRow, onAdjustRow
                   ? "Skipped"
                   : row.dockState?.status === "adjusted"
                     ? `${formatMoney(row.planned)} planned | ${formatMoney(row.budgeted)} current`
-                    : `${formatMoney(row.planned)} planned | ${formatMoney(row.spent)} done`}
+                    : `${formatMoney(row.planned)} planned | ${formatMoney(row.spent)} ${actions.recordedLabel.toLowerCase()}`}
               </div>
             </div>
-            <div className="flex items-center justify-between gap-3 sm:justify-end">
+            <div className="flex flex-wrap items-center justify-between gap-3 sm:justify-end">
               <div className={`text-right text-base font-bold tabular-nums ${row.remaining < 0 ? "text-harbor-red" : "text-harbor-navy"}`}>
                 {formatMoney(row.remaining)}
                 <span className="ml-1 text-xs font-semibold text-harbor-navy/45">left</span>
               </div>
-              <div className="flex shrink-0 flex-wrap justify-end gap-2">
+              <div className="flex flex-wrap justify-end gap-2">
+                {actions.done && <button type="button" disabled={saving} onClick={() => void onMarkRow(row.item, weekIndex, "cleared")} className="min-h-11 rounded-md bg-harbor-teal px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">{saving ? "Saving..." : actions.primaryLabel}</button>}
+                {actions.spend && <button type="button" disabled={saving} onClick={() => onOpenSpend(row.item, weekIndex)} className="min-h-11 rounded-md bg-harbor-teal px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">{actions.primaryLabel}</button>}
                 {actions.edit && <button type="button" disabled={saving} onClick={() => {
                   setEditingItemId(row.item.id);
                   setAmountDraft(row.budgeted.toFixed(2));
-                }} className="min-h-10 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/55 disabled:opacity-50">Edit</button>}
-                {actions.done && <button type="button" disabled={saving} onClick={() => void onMarkRow(row.item, weekIndex, "cleared")} className="min-h-10 rounded-md border border-harbor-teal-light bg-white px-3 py-1.5 text-xs font-semibold text-harbor-teal disabled:opacity-50">{saving ? "Saving..." : "Done"}</button>}
-                {actions.skip && <button type="button" disabled={saving} onClick={() => void onMarkRow(row.item, weekIndex, "skipped")} className="min-h-10 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/55 disabled:opacity-50">{saving ? "Saving..." : "Skip"}</button>}
-                {actions.restore && <button type="button" disabled={saving} onClick={() => void onMarkRow(row.item, weekIndex, "upcoming")} className="min-h-10 rounded-md border border-slate-200 px-3 text-xs font-semibold">Restore</button>}
-                {actions.spend && <button type="button" disabled={saving} onClick={() => onOpenSpend(row.item, weekIndex)} className={`min-h-10 rounded-md border bg-white px-3 py-1.5 text-xs font-semibold hover:text-white disabled:opacity-50 ${accent.button}`}>Log Spend</button>}
+                }} className="min-h-11 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/55 disabled:opacity-50">Edit</button>}
+                {actions.skip && <button type="button" disabled={saving} onClick={() => void onMarkRow(row.item, weekIndex, "skipped")} className="min-h-11 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/55 disabled:opacity-50">{saving ? "Saving..." : "Skip"}</button>}
+                {actions.restore && <button type="button" disabled={saving} onClick={() => void onMarkRow(row.item, weekIndex, "upcoming")} className="min-h-11 rounded-md border border-slate-200 px-3 text-xs font-semibold">Restore</button>}
               </div>
             </div>
             {isEditing && (
@@ -1162,7 +1169,7 @@ function SpendForm({
       {error && <p className="mt-3 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-harbor-red">{error}</p>}
       <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
         <p className="text-xs text-harbor-navy/50">{selected && (isCardMethod(draft.paymentMethod) ? "Budget updates now. Dock sees the future card payment." : `Budget updates now. Dock uses ${paymentMethodLabel(draft.paymentMethod, settings)} cash timing.`)}</p>
-        <button type="button" disabled={saving} onClick={() => void onSave()} className="rounded-md bg-harbor-teal px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Saving..." : "Log"}</button>
+        <button type="button" disabled={saving} onClick={() => void onSave()} className="rounded-md bg-harbor-teal px-4 py-2 text-sm font-semibold text-white disabled:opacity-50">{saving ? "Saving..." : "Save"}</button>
       </div>
     </div>
   );
