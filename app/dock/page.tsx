@@ -115,6 +115,7 @@ export default function DockPage() {
   const [buoys, setBuoys] = useState<Buoy[]>([]);
   const [checkingBalance, setCheckingBalance] = useState("");
   const [checkingUpdatedAt, setCheckingUpdatedAt] = useState<string | undefined>();
+  const [actionError, setActionError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [loadingTimeline, setLoadingTimeline] = useState(false);
   const [timelineLoaded, setTimelineLoaded] = useState(false);
@@ -228,6 +229,8 @@ export default function DockPage() {
         setDockStates(monthResults.flatMap((result) => result.dockStates));
         setBuoys(savedBuoys);
         setTimelineLoaded(true);
+      } catch (error) {
+        setActionError(error instanceof Error ? error.message : "The forecast could not be loaded.");
       } finally {
         if (!cancelled) setLoadingTimeline(false);
       }
@@ -313,13 +316,12 @@ export default function DockPage() {
       clearedAt: done ? new Date().toISOString() : undefined,
       note: event.label,
     } satisfies DockItemState;
-    setDockStates((current) => {
-      const without = current.filter((item) => !(item.itemId === nextState.itemId && item.itemKind === nextState.itemKind && item.weekIndex === nextState.weekIndex && item.monthKey === nextState.monthKey));
-      return [...without, nextState];
-    });
     setSavingEventIds((current) => ({ ...current, [event.id]: true }));
+    setActionError(null);
     try {
       await saveDockState(nextState);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "The change could not be saved. Please try again.");
     } finally {
       setSavingEventIds((current) => ({ ...current, [event.id]: false }));
     }
@@ -339,13 +341,12 @@ export default function DockPage() {
       pendingUntil: isoDate(event.date),
       note: event.label,
     } satisfies DockItemState;
-    setDockStates((current) => {
-      const without = current.filter((item) => !(item.itemId === nextState.itemId && item.itemKind === nextState.itemKind && item.weekIndex === nextState.weekIndex && item.monthKey === nextState.monthKey));
-      return [...without, nextState];
-    });
     setSavingEventIds((current) => ({ ...current, [event.id]: true }));
+    setActionError(null);
     try {
       await saveDockState(nextState);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "The change could not be saved. Please try again.");
     } finally {
       setSavingEventIds((current) => ({ ...current, [event.id]: false }));
     }
@@ -366,13 +367,12 @@ export default function DockPage() {
       pendingUntil: isoDate(event.date),
       note: event.label,
     } satisfies DockItemState;
-    setDockStates((current) => {
-      const without = current.filter((item) => !(item.itemId === nextState.itemId && item.itemKind === nextState.itemKind && item.weekIndex === nextState.weekIndex && item.monthKey === nextState.monthKey));
-      return [...without, nextState];
-    });
     setSavingEventIds((current) => ({ ...current, [event.id]: true }));
+    setActionError(null);
     try {
       await saveDockState(nextState);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "The change could not be saved. Please try again.");
     } finally {
       setSavingEventIds((current) => ({ ...current, [event.id]: false }));
     }
@@ -390,6 +390,7 @@ export default function DockPage() {
     <DockItemsContext.Provider value={settings.lineItems}>
     <main className="harbor-page flex-1 p-3 text-harbor-navy sm:p-4">
       <div className="mx-auto max-w-[1180px] space-y-4 sm:space-y-6">
+        {actionError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-harbor-red">{actionError}</p>}
         <header className="py-1">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>

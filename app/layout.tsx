@@ -3,6 +3,7 @@ import { Geist } from "next/font/google";
 import "./globals.css";
 import NavBar from "./components/NavBar";
 import FeedbackButton from "./components/FeedbackButton";
+import appleStartupSizes from "./data/apple-startup-sizes.json";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -15,7 +16,13 @@ export const metadata: Metadata = {
   applicationName: "Harbor",
   other: { "apple-mobile-web-app-capable": "yes" },
   manifest: "/manifest.webmanifest",
-  appleWebApp: { capable: true, title: "Harbor", statusBarStyle: "default" },
+  appleWebApp: {
+    capable: true, title: "Harbor", statusBarStyle: "default",
+    startupImage: appleStartupSizes.flatMap(([width, height, scale]) => ["portrait", "landscape"].map((orientation) => ({
+      url: `/apple-startup/${(orientation === "portrait" ? width : height) * scale}x${(orientation === "portrait" ? height : width) * scale}.png`,
+      media: `(device-width: ${width}px) and (device-height: ${height}px) and (-webkit-device-pixel-ratio: ${scale}) and (orientation: ${orientation})`,
+    }))),
+  },
   icons: {
     apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
     icon: [
@@ -35,7 +42,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${geistSans.variable} antialiased flex flex-col min-h-screen`}>
+      <body style={{ backgroundColor: "#F8FAFC" }} className={`${geistSans.variable} antialiased flex flex-col min-h-screen`}>
         <NavBar />
         {children}
         <FeedbackButton />

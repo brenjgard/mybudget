@@ -464,54 +464,24 @@ async function getSpendLogs(monthKey: string): Promise<SpendLogEntry[]> {
   return localBudgetRepo.getSpendLogs(monthKey);
 }
 
+// Financial occurrence failures must stay visible. A failed authenticated request
+// must never look like a successful local-only payment or an empty remote ledger.
 async function getDockItemStates(monthKey: string): Promise<DockItemState[]> {
-  try {
-    const user = await supabaseBudgetRepo.getUser();
-    if (user) {
-      return await supabaseBudgetRepo.getDockItemStates(monthKey);
-    }
-  } catch {
-    // Fall through to local persistence if auth/Supabase is unavailable.
-  }
-
-  return localBudgetRepo.getDockItemStates(monthKey);
+  const user = await supabaseBudgetRepo.getUser();
+  return user ? supabaseBudgetRepo.getDockItemStates(monthKey) : localBudgetRepo.getDockItemStates(monthKey);
 }
 
 async function saveDockItemState(state: DockItemState): Promise<DockItemState> {
-  let supabaseUserChecked = false;
-  try {
-    const user = await supabaseBudgetRepo.getUser();
-    supabaseUserChecked = true;
-    if (user) {
-      const savedState = await supabaseBudgetRepo.saveDockItemState(state);
-      localBudgetRepo.saveDockItemState(savedState);
-      return savedState;
-    }
-  } catch (error) {
-    console.error("[BudgetRepo] Supabase Dock state save failed", readableError(error));
-    if (supabaseUserChecked) throw error;
-  }
-
-  return localBudgetRepo.saveDockItemState(state);
+  const user = await supabaseBudgetRepo.getUser();
+  if (!user) return localBudgetRepo.saveDockItemState(state);
+  const savedState = await supabaseBudgetRepo.saveDockItemState(state);
+  localBudgetRepo.saveDockItemState(savedState);
+  return savedState;
 }
 
-async function deleteDockItemState(
-  monthKey: string,
-  itemId: string,
-  itemKind: DockItemState["itemKind"],
-  weekIndex: number,
-) {
-  try {
-    const user = await supabaseBudgetRepo.getUser();
-    if (user) {
-      await supabaseBudgetRepo.deleteDockItemState(monthKey, itemId, itemKind, weekIndex);
-      localBudgetRepo.deleteDockItemState(monthKey, itemId, itemKind, weekIndex);
-      return;
-    }
-  } catch {
-    // Fall through to local persistence if auth/Supabase is unavailable.
-  }
-
+async function deleteDockItemState(monthKey: string, itemId: string, itemKind: DockItemState["itemKind"], weekIndex: number) {
+  const user = await supabaseBudgetRepo.getUser();
+  if (user) await supabaseBudgetRepo.deleteDockItemState(monthKey, itemId, itemKind, weekIndex);
   localBudgetRepo.deleteDockItemState(monthKey, itemId, itemKind, weekIndex);
 }
 

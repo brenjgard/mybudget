@@ -12,12 +12,13 @@ import { useRouter } from "next/navigation";
 import { EmptyState } from "../components/EmptyState";
 import { loadSettingsWithSupabaseFallback, saveSettings } from "../lib/budget-settings";
 import { budgetRepo } from "../lib/repositories/budget-repo";
+import { expectedCardBalance, statementPayments, statementProgress } from "../lib/card-payments";
 import { localRepo } from "../lib/local-repo";
 import { getRipplePlanType } from "../lib/ripple-type";
 import { getDefaultRecurrence, recurrenceFromLegacyFrequency, recurrenceLabel } from "../lib/schedule";
 import { cardCycleForDate, formatMoney, formatShortDate, getCalendarWeeksForMonth, monthKeyFor, weekIndexForDate } from "../lib/harbor-domain";
 import { SEED_DATA } from "../data/seedData";
-import type { AppSettings, CreditCardAccount, DayOfMonth, DockItemState, FrequencyType, LineItem, PaymentMethod, Recurrence, RecurrenceUnit, RipplePlanType, RippleType, SpendLogEntry } from "../lib/types";
+import type { AppSettings, CreditCardAccount, DayOfMonth, DockItemState, FrequencyType, LineItem, PaymentMethod, Recurrence, RecurrenceUnit, RipplePlanType, RippleType } from "../lib/types";
 
 const SHOW_DEV_TOOLS = process.env.NEXT_PUBLIC_SHOW_DEV_TOOLS === "true";
 const DEFAULT_CHARTS = ["Home", "Food & Household", "Transportation", "Kids & Family", "Fun", "Subscriptions", "Savings", "Gifts", "Other"];
@@ -27,7 +28,7 @@ const MONTH_DAY_OPTIONS: DayOfMonth[] = [...Array.from({ length: 31 }, (_, index
 
 type SettingsSection = "ripples" | "waves" | "fleet" | "charts";
 type EditingItem = Omit<LineItem, "id"> & { id?: string };
-type PaymentDraft = { amount: string; date: string };
+type PaymentDraft = { amount: string; date: string; itemId?: string };
 type StatementDraft = {
   amount: string;
   dueDate: string;
@@ -133,30 +134,13 @@ function parseDate(value?: string) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function statePaymentDate(state: DockItemState) {
-  return parseDate(state.pendingUntil) ?? parseDate(state.clearedAt);
-}
-
-function statementPayments(statement: DockItemState, dockStates: DockItemState[]) {
-  const dueDate = statement.pendingUntil?.slice(0, 10) ?? "";
-  const cardId = statement.itemId.split(":")[1] as PaymentMethod | undefined;
-  if (!cardId || !dueDate) return [];
-  return dockStates
-    .filter((state) => (
-      state.itemKind === "credit_card_payment"
-      && state.itemId.startsWith(scheduledStatementPaymentPrefix(cardId, dueDate))
-      && state.status !== "skipped"
-    ))
-    .sort((a, b) => (a.pendingUntil ?? "").localeCompare(b.pendingUntil ?? ""));
-}
-
 function upcomingStatementForCard(card: CreditCardAccount, dockStates: DockItemState[]) {
   const statement = dockStates
     .filter((state) => (
       state.itemKind === "credit_card_payment"
       && state.itemId.startsWith(cardStatementPrefix(card.id))
       && state.status !== "skipped"
-      && state.status !== "cleared"
+      && !statementProgress(state, dockStates).isPaid
     ))
     .sort((a, b) => (a.pendingUntil ?? "").localeCompare(b.pendingUntil ?? ""))[0];
   if (statement) return statement;
@@ -166,7 +150,7 @@ function upcomingStatementForCard(card: CreditCardAccount, dockStates: DockItemS
       state.itemKind === "credit_card_payment"
       && state.itemId.startsWith(`opening-card-payment:${card.id}:`)
       && state.status !== "skipped"
-      && state.status !== "cleared"
+      && !statementProgress(state, dockStates).isPaid
     ))
     .sort((a, b) => (a.pendingUntil ?? "").localeCompare(b.pendingUntil ?? ""))[0];
 }
@@ -328,7 +312,6 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
   const [cardBalanceDrafts, setCardBalanceDrafts] = useState<Record<string, string>>({});
   const [cardBalanceMessages, setCardBalanceMessages] = useState<Record<string, BalanceMessage | undefined>>({});
   const [fleetDockStates, setFleetDockStates] = useState<DockItemState[]>([]);
-  const [fleetSpendLogs, setFleetSpendLogs] = useState<SpendLogEntry[]>([]);
   const [statementDrafts, setStatementDrafts] = useState<Record<string, StatementDraft>>({});
   const [activeStatementCardId, setActiveStatementCardId] = useState<PaymentMethod | null>(null);
   const [showAddCardForm, setShowAddCardForm] = useState(false);
@@ -357,15 +340,13 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
       setSettings(loadedSettings);
       setCardBalanceDrafts(Object.fromEntries(loadedSettings.creditCards.map((card) => [card.id, String(card.currentBalance ?? 0)])));
       const today = new Date();
-      const monthKeys = monthKeysFrom(today, 4);
+      const monthKeys = monthKeysFrom(new Date(today.getFullYear(), today.getMonth() - 2, 1), 6);
       setFleetLoading(true);
-      void Promise.all([
-        Promise.all(monthKeys.map((monthKey) => budgetRepo.getDockItemStates(monthKey))),
-        Promise.all(monthKeys.map((monthKey) => budgetRepo.getSpendLogs(monthKey))),
-      ]).then(([statesByMonth, spendByMonth]) => {
+      void Promise.all(monthKeys.map((monthKey) => budgetRepo.getDockItemStates(monthKey))).then((statesByMonth) => {
         if (cancelled) return;
         setFleetDockStates(statesByMonth.flat());
-        setFleetSpendLogs(spendByMonth.flat());
+      }).catch((error) => {
+        if (!cancelled) setSaveError(error instanceof Error ? error.message : "Card activity could not be loaded.");
       }).finally(() => {
         if (!cancelled) setFleetLoading(false);
       });
@@ -514,26 +495,16 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
     const actionKey = `statement:${card.id}:save`;
 
     await withSaving(actionKey, async () => {
-      const existingStatementRows = fleetDockStates.filter((state) => (
-        state.itemKind === "credit_card_payment"
-        && state.itemId.startsWith(cardStatementPrefix(card.id))
-      ));
-      const existingStatementPayments = fleetDockStates.filter((state) => {
-        if (state.itemKind !== "credit_card_payment") return false;
-        if (state.itemId.startsWith(`opening-card-payment:${card.id}:`)) return true;
-        if (!state.itemId.startsWith(`scheduled-card-payment:${card.id}:`)) return false;
-        const existingDueDates = existingStatementRows
-          .map((row) => row.pendingUntil?.slice(0, 10))
-          .filter((date): date is string => Boolean(date));
-        return (
-          state.itemId.startsWith(scheduledStatementPaymentPrefix(card.id, dueDate))
-          || existingDueDates.some((existingDueDate) => state.itemId.startsWith(scheduledStatementPaymentPrefix(card.id, existingDueDate)))
-          || state.note === `${card.label} statement payment`
-        );
-      });
-      await Promise.all([...existingStatementRows, ...existingStatementPayments].map((state) => (
-        budgetRepo.deleteDockItemState(state.monthKey, state.itemId, state.itemKind, state.weekIndex)
-      )));
+      const existingStatement = upcomingStatementForCard(card, fleetDockStates);
+      const existingStatementRows = existingStatement ? [existingStatement] : [];
+      const linkedPayments = existingStatement ? rowsForStatement(existingStatement).filter((row) => row !== existingStatement || row.itemId.startsWith("opening-card-payment:")) : [];
+      const paidPayments = linkedPayments.filter((row) => row.status === "cleared");
+      if (paidPayments.length && existingStatement?.pendingUntil?.slice(0, 10) !== dueDate) {
+        throw new Error("This statement has recorded payments. Keep its due date so payment history remains linked.");
+      }
+      const existingStatementPayments = linkedPayments.filter((row) => row.status !== "cleared");
+      const paymentDrafts = draft.payments.map((payment) => ({ ...payment, itemId: payment.itemId?.startsWith(scheduledStatementPaymentPrefix(card.id, dueDate)) ? payment.itemId : paymentStateId(card.id, dueDate) }));
+      setStatementDrafts((current) => ({ ...current, [card.id]: { ...draft, payments: paymentDrafts } }));
 
       const sourceMonthKey = monthKeyFor(due.getFullYear(), due.getMonth());
       const sourceWeeks = getCalendarWeeksForMonth(due.getFullYear(), due.getMonth());
@@ -550,7 +521,7 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
         note: `${card.label} upcoming statement`,
       });
 
-      const paymentRows = draft.payments.flatMap((payment) => {
+      const paymentRows = paymentDrafts.flatMap((payment) => {
         const paymentAmount = Number(payment.amount);
         const paymentDate = parseDate(payment.date);
         if (!Number.isFinite(paymentAmount) || paymentAmount <= 0 || !paymentDate) return [];
@@ -559,7 +530,7 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
         return [{
           monthKey: paymentMonthKey,
           weekIndex: Math.max(0, weekIndexForDate(paymentWeeks, paymentDate)),
-          itemId: paymentStateId(card.id, dueDate),
+          itemId: payment.itemId,
           itemKind: "credit_card_payment",
           behaviorType: "credit_card_payment",
           status: "upcoming",
@@ -571,6 +542,9 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
       });
 
       const savedPayments = await Promise.all(paymentRows.map((payment) => budgetRepo.saveDockItemState(payment)));
+      const retainedKeys = new Set([savedStatement, ...savedPayments].map((row) => `${row.monthKey}:${row.weekIndex}:${row.itemId}`));
+      const retiredRows = [...existingStatementRows, ...existingStatementPayments].filter((row) => !retainedKeys.has(`${row.monthKey}:${row.weekIndex}:${row.itemId}`));
+      await Promise.all(retiredRows.map((state) => budgetRepo.deleteDockItemState(state.monthKey, state.itemId, state.itemKind, state.weekIndex)));
       setFleetDockStates((current) => {
         const removedIds = new Set([
           savedStatement.itemId,
@@ -628,41 +602,22 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
         clearedAt: payment.clearedAt ?? closedAt,
         statusUpdatedAt: closedAt,
       });
-      const dueDate = statement.pendingUntil?.slice(0, 10) ?? "";
-      const cardId = statement.itemId.split(":")[1] as PaymentMethod | undefined;
-      const duePayments = cardId && dueDate
-        ? fleetDockStates.filter((state) => (
-          state.itemKind === "credit_card_payment"
-          && state.itemId.startsWith(scheduledStatementPaymentPrefix(cardId, dueDate))
-          && state.status !== "skipped"
-        ))
-        : [];
-      const paidAmount = duePayments
-        .map((row) => row.itemId === savedPayment.itemId ? savedPayment : row)
-        .filter((row) => row.status === "cleared")
-        .reduce((sum, row) => sum + Number(row.actualAmount ?? row.plannedAmount ?? 0), 0);
-      const statementAmount = Number(statement.actualAmount ?? statement.plannedAmount ?? 0);
-      const paymentAmount = Number(savedPayment.actualAmount ?? savedPayment.plannedAmount ?? 0);
-      const statementIsPaid = Math.round(Math.max(paymentAmount, paidAmount) * 100) >= Math.round(statementAmount * 100);
-      const savedStatement = statementIsPaid ? await budgetRepo.saveDockItemState({
-        ...statement,
-        status: "cleared",
-        actualAmount: statement.actualAmount ?? statement.plannedAmount,
-        clearedAt: statement.clearedAt ?? closedAt,
-        statusUpdatedAt: closedAt,
-      }) : statement;
-
-      setFleetDockStates((current) => current.map((state) => {
-        if (state.monthKey === savedPayment.monthKey && state.weekIndex === savedPayment.weekIndex && state.itemId === savedPayment.itemId && state.itemKind === savedPayment.itemKind) return savedPayment;
-        if (savedStatement !== statement && state.monthKey === savedStatement.monthKey && state.weekIndex === savedStatement.weekIndex && state.itemId === savedStatement.itemId && state.itemKind === savedStatement.itemKind) return savedStatement;
-        return state;
-      }));
+      // Statement completion is derived from its receipts, just as it is in Dock.
+      // A second header write must not turn a successful payment into a failed action.
+      setFleetDockStates((current) => current.map((state) => (
+        state.monthKey === savedPayment.monthKey && state.weekIndex === savedPayment.weekIndex
+          && state.itemId === savedPayment.itemId && state.itemKind === savedPayment.itemKind ? savedPayment : state
+      )));
       setActiveStatementCardId(null);
     });
   }
 
   async function deleteStatement(statement: DockItemState) {
-    const rows = rowsForStatement(statement);
+    const rows = rowsForStatement(statement).filter((row) => row.status !== "cleared");
+    if (statementProgress(statement, fleetDockStates).paid > 0) {
+      setSaveError("This statement has recorded payments. Edit its unpaid schedule instead of deleting its history.");
+      return;
+    }
     await withSaving(`statement:${statement.itemId}:delete`, async () => {
       await Promise.all(rows.map((state) => budgetRepo.deleteDockItemState(state.monthKey, state.itemId, state.itemKind, state.weekIndex)));
       const removed = new Set(rows.map((state) => `${state.monthKey}:${state.itemKind}:${state.weekIndex}:${state.itemId}`));
@@ -673,13 +628,9 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
 
   async function refreshFleetActivity() {
     const today = new Date();
-    const monthKeys = monthKeysFrom(today, 4);
-    const [statesByMonth, spendByMonth] = await Promise.all([
-      Promise.all(monthKeys.map((monthKey) => budgetRepo.getDockItemStates(monthKey))),
-      Promise.all(monthKeys.map((monthKey) => budgetRepo.getSpendLogs(monthKey))),
-    ]);
+    const monthKeys = monthKeysFrom(new Date(today.getFullYear(), today.getMonth() - 2, 1), 6);
+    const statesByMonth = await Promise.all(monthKeys.map((monthKey) => budgetRepo.getDockItemStates(monthKey)));
     setFleetDockStates(statesByMonth.flat());
-    setFleetSpendLogs(spendByMonth.flat());
   }
 
   function updateCard(id: PaymentMethod, updater: (card: CreditCardAccount) => CreditCardAccount) {
@@ -697,26 +648,6 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
       creditCards: settings.creditCards.filter((candidate) => candidate.id !== id),
       lineItems: settings.lineItems.map((item) => item.paymentMethod === id ? { ...item, paymentMethod: "checking" as PaymentMethod } : item),
     }));
-  }
-
-  function expectedCardBalance(card: CreditCardAccount, spendLogs = fleetSpendLogs, dockStates = fleetDockStates) {
-    const snapshotDate = parseDate(card.currentBalanceUpdatedAt) ?? new Date(0);
-    const spending = spendLogs
-      .filter((entry) => entry.paymentMethod === card.id)
-      .filter((entry) => {
-        const date = parseDate(entry.date);
-        return date ? date > snapshotDate : false;
-      })
-      .reduce((sum, entry) => sum + entry.amount, 0);
-    const payments = dockStates
-      .filter((state) => state.itemKind === "credit_card_payment" && state.status === "cleared")
-      .filter((state) => state.itemId.includes(`:${card.id}:`))
-      .filter((state) => {
-        const date = statePaymentDate(state);
-        return date ? date > snapshotDate : false;
-      })
-      .reduce((sum, state) => sum + Number(state.actualAmount ?? state.plannedAmount ?? 0), 0);
-    return Number(card.currentBalance ?? 0) + spending - payments;
   }
 
   async function loadCardActivitySince(card: CreditCardAccount) {
@@ -1198,9 +1129,8 @@ function UpcomingStatementPanel({
   onDeleteStatement?: () => void;
   savingActions: Record<string, boolean>;
 }) {
-  const statementAmount = Number(statement?.plannedAmount ?? statement?.actualAmount ?? 0);
-  const scheduled = payments.reduce((sum, payment) => sum + Number(payment.actualAmount ?? payment.plannedAmount ?? 0), 0);
-  const remaining = Math.max(0, statementAmount - scheduled);
+  const progress = statement ? statementProgress(statement, payments) : { amount: 0, paid: 0, scheduled: 0, outstanding: 0, unscheduled: 0 };
+  const statementAmount = progress.amount;
   const savingStatement = Boolean(savingActions[`statement:${card.id}:save`]);
   const deletingStatement = statement ? Boolean(savingActions[`statement:${statement.itemId}:delete`]) : false;
   const closingStatement = statement ? Boolean(savingActions[`statement:${statement.itemId}:close`]) : false;
@@ -1218,7 +1148,8 @@ function UpcomingStatementPanel({
         amount: String(statementAmount || ""),
         dueDate: statement.pendingUntil?.slice(0, 10) ?? todayISODate(),
         payments: payments.length > 0
-          ? payments.map((payment) => ({
+          ? payments.filter((payment) => payment.status !== "cleared").map((payment) => ({
+            itemId: payment.itemId,
             amount: String(payment.actualAmount ?? payment.plannedAmount ?? ""),
             date: payment.pendingUntil?.slice(0, 10) ?? todayISODate(),
           }))
@@ -1265,6 +1196,7 @@ function UpcomingStatementPanel({
                   <div key={payment.itemId} className="flex flex-wrap items-center justify-between gap-3 text-sm">
                     <span className="text-harbor-navy/60">{date ? formatShortDate(date) : "Unscheduled"}</span>
                     <span className="font-bold">{formatMoney(Number(payment.actualAmount ?? payment.plannedAmount ?? 0))}</span>
+                    {payment.status === "cleared" && <span className="text-xs font-semibold text-harbor-green">Paid</span>}
                     {onMarkPaymentPaid && payment.status !== "cleared" && (
                       <button type="button" disabled={Boolean(savingActions[`payment:${payment.itemId}:close`])} onClick={() => onMarkPaymentPaid(payment)} className="rounded-md border border-emerald-200 bg-white px-2 py-1 text-xs font-semibold text-harbor-green disabled:opacity-50">
                         {savingActions[`payment:${payment.itemId}:close`] ? "Saving..." : "Mark Payment Paid"}
@@ -1284,7 +1216,7 @@ function UpcomingStatementPanel({
               )}
             </div>
           )}
-          <p className="mt-2 text-xs font-semibold text-harbor-navy/55">Scheduled {formatMoney(scheduled)} | Remaining {formatMoney(remaining)}</p>
+          <p className="mt-2 text-xs font-semibold text-harbor-navy/55">Paid {formatMoney(progress.paid)} | Still owed {formatMoney(progress.outstanding)}<br />Scheduled {formatMoney(progress.scheduled)} | Unscheduled {formatMoney(progress.unscheduled)}</p>
         </div>
       )}
 
@@ -1292,7 +1224,7 @@ function UpcomingStatementPanel({
         <div className="mt-3 rounded-lg border border-harbor-teal-light bg-harbor-offwhite p-3">
           <div className="grid gap-2 md:grid-cols-2">
             <Field label="Statement Balance"><FinancialInput className="field" type="number" min="0" step="0.01" value={draft.amount} onChange={(event) => onDraftChange({ ...draft, amount: event.target.value })} /></Field>
-            <Field label="Due Date"><input className="field" type="date" value={draft.dueDate} onChange={(event) => onDraftChange({ ...draft, dueDate: event.target.value })} /></Field>
+            <Field label="Due Date"><input className="field" type="date" disabled={progress.paid > 0} value={draft.dueDate} onChange={(event) => onDraftChange({ ...draft, dueDate: event.target.value })} /></Field>
           </div>
           <div className="mt-3 space-y-2">
             {draft.payments.map((payment, index) => (

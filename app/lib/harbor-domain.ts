@@ -1,3 +1,4 @@
+import { allocatedCardBalance, cardPaymentRecords } from "./card-payments";
 import type { Buoy } from "./local-repo";
 import { getItemBehavior, getRipplePlanType } from "./ripple-type";
 import { lineItemAppliesToWeek, lineItemOccurrenceDatesForWeek } from "./schedule";
@@ -267,7 +268,7 @@ function eventSortValue(event: HarborCashEvent) {
 }
 
 function scheduledCardIdFromState(state: DockItemState, cards: CreditCardAccount[]) {
-  const [, cardId] = state.itemId.match(/^(?:scheduled-card-payment|opening-card-payment):([^:]+):/) ?? [];
+  const [, cardId] = state.itemId.match(/^(?:scheduled-card-payment|opening-card-payment|card-statement):([^:]+):/) ?? [];
   if (cardId) return cardId as PaymentMethod;
 
   const note = state.note?.trim().toLowerCase() ?? "";
@@ -388,18 +389,8 @@ function buildScheduledCardPaymentEvents({
       sourceLabel: "Checking",
     } : null;
   };
-  const allManualPayments = cardPaymentStates
-    .filter((state) => state.itemKind === "credit_card_payment" && (
-      state.itemId.startsWith("scheduled-card-payment:")
-      || state.itemId.startsWith("opening-card-payment:")
-    ))
-    .map(paymentEventFromState)
-    .filter((event): event is NonNullable<typeof event> => Boolean(event));
-  const manualPayments = dockStates
-    .filter((state) => state.itemKind === "credit_card_payment" && (
-      state.itemId.startsWith("scheduled-card-payment:")
-      || state.itemId.startsWith("opening-card-payment:")
-    ))
+  const manualPayments = cardPaymentRecords(cardPaymentStates)
+    .filter((state) => state.monthKey === monthKey && !state.itemId.startsWith("projected-card-payment:"))
     .map(paymentEventFromState)
     .filter((event): event is NonNullable<typeof event> => Boolean(event));
 
@@ -428,10 +419,7 @@ function buildScheduledCardPaymentEvents({
   const projectedPayments = settings.creditCards.flatMap((card) => {
     const anchorDate = parseDateOnly(card.currentBalanceUpdatedAt);
     const anchorCycle = anchorDate ? cardCycleForDate(card, anchorDate) : null;
-    const allocatedClosedObligations = allManualPayments
-      .filter((event) => event.status !== "done" && event.cardId === card.id)
-      .filter((event) => anchorCycle ? event.date <= anchorCycle.dueDate : true)
-      .reduce((sum, event) => sum + event.amount, 0);
+    const allocatedClosedObligations = allocatedCardBalance(card, cardPaymentStates, anchorCycle ? isoDate(anchorCycle.dueDate) : "9999-12-31");
     const activeAnchorAmount = Math.max(0, Number(card.currentBalance ?? 0) - allocatedClosedObligations);
     const projectedEntries = new Map<string, { date: Date; amount: number }>();
 
@@ -896,12 +884,7 @@ export function buildCardObligations(settings: AppSettings, monthKey: string, sp
   return settings.creditCards.map((card) => {
     const anchorDate = parseDateOnly(card.currentBalanceUpdatedAt) ?? new Date();
     const activeCycle = cardCycleForDate(card, anchorDate);
-    const closedObligations = cashEvents
-      .filter((event) => event.kind === "cardPayment" && event.status !== "done" && (
-        event.itemId.startsWith("scheduled-card-payment:")
-        || event.itemId.startsWith("opening-card-payment:")
-      ) && (event.cardId === card.id || event.label.toLowerCase().includes(card.label.toLowerCase())))
-      .reduce((sum, event) => sum + event.amount, 0);
+    const closedObligations = allocatedCardBalance(card, cashEvents.flatMap((event) => event.state ? [event.state] : []), isoDate(activeCycle.dueDate));
     const anchorAmount = Math.max(0, Number(card.currentBalance ?? 0) - closedObligations);
     const newSpending = spendLogs
       .filter((entry) => {
