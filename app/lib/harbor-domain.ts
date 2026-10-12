@@ -447,7 +447,7 @@ function buildScheduledCardPaymentEvents({
 
     return [...projectedEntries.values()].flatMap(({ date, amount }) => {
       const projectedId = `projected-card-payment:${card.id}:${isoDate(date)}`;
-      const projectedState = dockStates.find((state) => state.itemId === projectedId && state.itemKind === "credit_card_payment");
+      const projectedState = cardPaymentStates.find((state) => state.itemId === projectedId && state.itemKind === "credit_card_payment");
       if (projectedState?.status === "skipped") return [];
       return [{
         id: projectedId,
@@ -710,7 +710,7 @@ export function buildCashEvents({
       if (amount <= 0) return;
 
       if (item.isIncome) {
-        lineItemOccurrenceDatesForWeek(item, weekIndex, week.start, week.end, month, weeks.length).forEach((date) => addEvent({
+        cashDatesForCheckingItem(item, state, weekIndex, week, month, weeks.length).forEach((date) => addEvent({
           id: `${monthKey}:${item.id}:${weekIndex}:${isoDate(date)}:income`,
           date,
           label: item.name,
@@ -799,23 +799,19 @@ export function buildCashEvents({
   buildScheduledCardPaymentEvents({ settings, monthKey, weeks, month, amounts, spendLogs, cardSpendLogs, dockStates, cardPaymentStates }).forEach(addEvent);
 
   buoys.forEach((buoy) => {
-    const amount = buoy.autoSave ?? 0;
-    if (amount <= 0 || !buoy.autoSaveDay) return;
     const sourceMonth = monthPartsFromKey(monthKey);
-    const date = dateForMonthDay(sourceMonth.year, sourceMonth.month, buoy.autoSaveDay);
+    if (!buoy.autoSaveDay) return;
+    const plannedDate = dateForMonthDay(sourceMonth.year, sourceMonth.month, buoy.autoSaveDay);
+    const sourceWeekIndex = weekIndexForDate(weeks, plannedDate);
+    const state = stateByItemWeek.get(stateKey(`transfer:${buoy.id}`, sourceWeekIndex));
+    const amount = Number(state?.actualAmount ?? buoy.autoSave ?? 0);
+    if (amount <= 0 || state?.status === "skipped") return;
+    const date = parseDateOnly(state?.pendingUntil) ?? plannedDate;
     addEvent({
-      id: `${monthKey}:${buoy.id}:transfer`,
-      date,
-      label: `${buoy.name} transfer`,
-      amount,
-      kind: "transfer",
-      status: "upcoming",
-      sourceMonthKey: monthKey,
-      itemId: `transfer:${buoy.id}`,
-      itemKind: "ripple",
-      weekIndex: weekIndexForDate(weeks, date),
-      chart: "Buoy",
-      sourceLabel: "Checking",
+      id: `${monthKey}:${buoy.id}:transfer`, date, label: `${buoy.name} transfer`, amount,
+      kind: "transfer", status: state?.status === "cleared" ? "done" : "upcoming",
+      sourceMonthKey: monthKey, itemId: `transfer:${buoy.id}`, itemKind: "ripple",
+      weekIndex: sourceWeekIndex, state, chart: "Buoy", sourceLabel: "Checking",
     });
   });
 

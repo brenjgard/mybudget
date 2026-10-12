@@ -377,18 +377,11 @@ async function getAnchorOverride(): Promise<number | null> {
 }
 
 async function getCheckingAnchor(): Promise<{ balance: number | null; updatedAt?: string }> {
-  try {
-    const user = await supabaseBudgetRepo.getUser();
-    if (user) {
-      const savedAnchor = await supabaseBudgetRepo.getCheckingAnchor();
-      localBudgetRepo.saveAnchorOverride(savedAnchor.balance);
-      return savedAnchor;
-    }
-  } catch {
-    // Fall through to local persistence if auth/Supabase is unavailable.
-  }
-
-  return localBudgetRepo.getCheckingAnchor();
+  const user = await supabaseBudgetRepo.getUser();
+  if (!user) return localBudgetRepo.getCheckingAnchor();
+  const saved = await supabaseBudgetRepo.getCheckingAnchor();
+  localBudgetRepo.saveAnchorOverride(saved.balance);
+  return saved;
 }
 
 async function saveAnchorOverride(override: number | null): Promise<number | null> {
@@ -408,18 +401,16 @@ async function saveAnchorOverride(override: number | null): Promise<number | nul
 }
 
 async function saveCheckingAnchor(override: number | null): Promise<{ balance: number | null; updatedAt: string }> {
-  try {
-    const user = await supabaseBudgetRepo.getUser();
-    if (user) {
-      const savedAnchor = await supabaseBudgetRepo.saveCheckingAnchor(override);
-      localBudgetRepo.saveCheckingAnchor(savedAnchor.balance);
-      return savedAnchor;
-    }
-  } catch {
-    // Fall through to local persistence if auth/Supabase is unavailable.
-  }
+  const user = await supabaseBudgetRepo.getUser();
+  if (!user) return localBudgetRepo.saveCheckingAnchor(override);
+  const saved = await supabaseBudgetRepo.saveCheckingAnchor(override);
+  localBudgetRepo.saveCheckingAnchor(saved.balance);
+  return saved;
+}
 
-  return localBudgetRepo.saveCheckingAnchor(override);
+async function getEarliestUnresolvedDockMonth(): Promise<string | null> {
+  const user = await supabaseBudgetRepo.getUser();
+  return user ? supabaseBudgetRepo.getEarliestUnresolvedDockMonth() : localBudgetRepo.getEarliestUnresolvedDockMonth();
 }
 
 async function getClosedWeeks(monthKey: string): Promise<Set<string>> {
@@ -633,6 +624,7 @@ export const budgetRepo = {
   closeWeek,
   getCCCharges,
   getDockItemStates,
+  getEarliestUnresolvedDockMonth,
   saveDockItemState,
   deleteDockItemState,
   getSpendLogs,

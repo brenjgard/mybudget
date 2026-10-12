@@ -1,9 +1,10 @@
 "use client";
 
+import { ActionSheet } from "../components/ActionSheet";
 import { FinancialInput } from "../components/FinancialInput";
 
 
-import { useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { budgetActions } from "../lib/budget-actions";
 import { DisclosureHeader } from "../components/DisclosureHeader";
@@ -27,6 +28,8 @@ import {
   paymentMethodLabel,
   weekIndexForDate,
 } from "../lib/harbor-domain";
+
+const BudgetHistoryContext = createContext<SpendLogEntry[]>([]);
 
 type SpendTarget = { itemId: string; weekIndex?: number } | "global";
 type WeekStatus = "left" | "saved" | "over";
@@ -60,6 +63,7 @@ function todayISODate() {
 
 export default function BudgetPage() {
   const router = useRouter();
+  const [showAddMenu, setShowAddMenu] = useState(false);
   const now = useMemo(() => new Date(), []);
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth());
@@ -154,6 +158,18 @@ export default function BudgetPage() {
         itemId: firstBudgetRow?.id ?? "",
         paymentMethod: firstBudgetRow?.paymentMethod ?? savedSettings.creditCards[0]?.id ?? "checking",
       }));
+      const request = new URLSearchParams(window.location.search);
+      const requestedItem = savedSettings.lineItems.find((item) => item.id === request.get("spend") && !item.isIncome);
+      const requestedDate = request.get("date") ?? todayISODate();
+      if (requestedItem && /^\d{4}-\d{2}-\d{2}$/.test(requestedDate)) {
+        const date = new Date(`${requestedDate}T00:00:00`);
+        if (!Number.isNaN(date.getTime())) {
+          setYear(date.getFullYear()); setMonth(date.getMonth());
+          setSpendDraft({ itemId: requestedItem.id, amount: "", paymentMethod: requestedItem.paymentMethod, date: requestedDate, note: "" });
+          setActiveSpend("global");
+          window.history.replaceState(null, "", window.location.pathname);
+        }
+      }
       setLoaded(true);
     }
     void loadInitial();
@@ -214,7 +230,7 @@ export default function BudgetPage() {
 
   function toggleWeek(weekIndex: number) {
     const hasSpendForm = activeSpend !== null && activeSpend !== "global" && activeSpend.weekIndex === weekIndex;
-    const expanded = Boolean(expandedWeeks[weekIndex]) || hasSpendForm || wrappingWeek === weekIndex;
+    const expanded = (expandedWeeks[weekIndex] ?? weekIndex === currentWeekIndex) || hasSpendForm || wrappingWeek === weekIndex;
     if (expanded) {
       if (hasSpendForm) setActiveSpend(null);
       if (wrappingWeek === weekIndex) setWrappingWeek(null);
@@ -504,35 +520,30 @@ export default function BudgetPage() {
   }
 
   return (
+    <BudgetHistoryContext.Provider value={spendLogs}>
     <main className="harbor-page flex-1 p-3 text-harbor-navy sm:p-4">
       <div className="mx-auto max-w-[1120px] space-y-4 sm:space-y-6">
-        <header className="harbor-hero rounded-xl px-4 py-4 sm:px-5">
-          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-white/70">Budget</p>
-              <h1 className="mt-1 text-2xl font-bold sm:text-3xl">Spending plan</h1>
+        <header className="grid grid-cols-[1fr_auto] items-center gap-2 sm:grid-cols-[auto_1fr_auto]">
+          <h1 className="text-2xl font-bold">Budget</h1>
+          <button type="button" aria-label="Add to Budget" aria-haspopup="dialog" onClick={() => setShowAddMenu(true)} className="col-start-2 row-start-1 min-h-11 min-w-11 rounded-xl border border-harbor-teal-light bg-white text-2xl text-harbor-teal sm:col-start-3">+</button>
+          <div className="col-span-2 flex flex-wrap items-center justify-center gap-1 sm:col-span-1 sm:col-start-2 sm:row-start-1">
+            <div className="flex w-full items-center justify-between gap-1 sm:w-auto">
+              <button type="button" aria-label="Previous month" disabled={monthLoading} onClick={() => nudgeMonth(-1)} className="min-h-11 min-w-11 rounded-lg text-2xl text-harbor-teal hover:bg-white disabled:opacity-45">&lsaquo;</button>
+              <label className="relative flex min-h-11 min-w-0 items-center rounded-lg bg-white px-4 font-semibold focus-within:outline-2 focus-within:outline-harbor-teal">
+                <span aria-hidden="true">{monthName}</span>
+                <input aria-label="Choose budget month" type="month" disabled={monthLoading} value={monthKey} onClick={(event) => { try { event.currentTarget.showPicker(); } catch { /* Native input fallback. */ } }} onChange={(event) => changeMonth(event.target.value)} className="absolute inset-0 h-full w-full cursor-pointer opacity-0 focus:opacity-100 focus:bg-white" />
+              </label>
+              <button type="button" aria-label="Next month" disabled={monthLoading} onClick={() => nudgeMonth(1)} className="min-h-11 min-w-11 rounded-lg text-2xl text-harbor-teal hover:bg-white disabled:opacity-45">&rsaquo;</button>
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex w-full items-center justify-between gap-1 sm:w-auto">
-                <button type="button" aria-label="Previous month" disabled={monthLoading} onClick={() => nudgeMonth(-1)} className="min-h-11 min-w-11 rounded-md text-2xl hover:bg-white/10 disabled:opacity-45">&lsaquo;</button>
-                <label className="relative flex min-h-11 min-w-0 items-center rounded-md px-2 text-lg font-semibold focus-within:outline-2 focus-within:outline-white">
-                  <span aria-hidden="true">{monthName}</span>
-                  <input aria-label="Choose budget month" type="month" disabled={monthLoading} value={monthKey} onClick={(event) => { try { event.currentTarget.showPicker(); } catch { /* Native month input remains available. */ } }} onChange={(event) => changeMonth(event.target.value)} className="absolute inset-0 h-full w-full cursor-pointer opacity-0 focus:opacity-100 focus:bg-white focus:text-harbor-navy" />
-                </label>
-                <button type="button" aria-label="Next month" disabled={monthLoading} onClick={() => nudgeMonth(1)} className="min-h-11 min-w-11 rounded-md text-2xl hover:bg-white/10 disabled:opacity-45">&rsaquo;</button>
-              </div>
-              {monthKey !== monthKeyFor(now.getFullYear(), now.getMonth()) && <button type="button" disabled={monthLoading} onClick={() => changeMonth(monthKeyFor(now.getFullYear(), now.getMonth()))} className="min-h-11 px-2 text-sm text-white/80">This month</button>}
-            </div>
+            {monthKey !== monthKeyFor(now.getFullYear(), now.getMonth()) && <button type="button" disabled={monthLoading} onClick={() => changeMonth(monthKeyFor(now.getFullYear(), now.getMonth()))} className="min-h-11 px-2 text-sm font-semibold text-harbor-teal">This month</button>}
           </div>
         </header>
-
+        <ActionSheet open={showAddMenu} title="Add to Budget" onClose={() => setShowAddMenu(false)}>
+          <button type="button" disabled={monthLoading} onClick={() => { setShowAddMenu(false); openGlobalSpend(); }} className="bg-harbor-teal/10 font-semibold text-harbor-teal">Log Spend</button>
+          <Link href="/settings?add=budget#ripples" onClick={() => setShowAddMenu(false)} className="bg-slate-50 font-semibold">Add Budget Item</Link>
+          <Link href="/settings#ripples" className="text-sm text-harbor-navy/65">Manage budget items</Link>
+        </ActionSheet>
         {actionError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-harbor-red">{actionError}</p>}
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-          <button type="button" disabled={monthLoading} onClick={openGlobalSpend} className="min-h-11 rounded-md border border-slate-200 bg-white px-3 font-semibold text-harbor-teal disabled:opacity-50">+ Log Spend</button>
-          <Link href="/settings#ripples" className="inline-flex min-h-11 items-center font-semibold text-harbor-teal">Manage budget items</Link>
-          <Link href="/fleet" className="inline-flex min-h-11 items-center text-harbor-teal">Card payments</Link>
-          <Link href="/dock" className="inline-flex min-h-11 items-center text-harbor-teal">Income</Link>
-        </div>
         {monthLoading && (
           <div className="rounded-lg border border-harbor-teal-light bg-white px-4 py-3 text-sm font-semibold text-harbor-navy/50 shadow-sm">
             Loading month...
@@ -546,13 +557,13 @@ export default function BudgetPage() {
               <button type="button" onClick={() => setSummaryScope("month")} className={`rounded-md px-3 py-1.5 text-xs font-semibold ${summaryScope === "month" ? "bg-harbor-teal text-white" : "text-harbor-navy/60"}`}>This Month</button>
             </div>
             {summaryScope === "week" ? (
-              <section className="grid gap-2 sm:gap-3 md:grid-cols-3">
+              <section className="grid grid-cols-3 gap-1.5 sm:gap-3">
                 <Metric label="Planned" value={currentForward.thisWeek.budgeted} detail="Budget for this week" />
                 <Metric label="Spent" value={currentForward.thisWeek.spent} tone="red" detail="Already recorded" />
                 <Metric label="Still Available" value={currentForward.thisWeek.remaining} tone={currentForward.thisWeek.remaining >= 0 ? "green" : "red"} detail="Planned minus spent" />
               </section>
             ) : (
-              <section className="grid gap-2 sm:gap-3 md:grid-cols-3">
+              <section className="grid grid-cols-3 gap-1.5 sm:gap-3">
                 <Metric label="Planned Left" value={currentForward.restOfMonth.remainingPlannedSpending} detail="Today through month end" />
                 <Metric label="Spent So Far" value={currentForward.restOfMonth.spent} tone="red" detail="Recorded from today forward" />
                 <Metric label="Still Available" value={currentForward.restOfMonth.availablePosition} tone={currentForward.restOfMonth.availablePosition >= 0 ? "green" : "red"} detail="Planned left minus spent" />
@@ -560,7 +571,7 @@ export default function BudgetPage() {
             )}
           </section>
         ) : (
-          <section className="grid gap-2 sm:gap-3 md:grid-cols-3">
+          <section className="grid grid-cols-3 gap-1.5 sm:gap-3">
             <Metric label="Budgeted" value={totals.budgeted} />
             <Metric label="Spent" value={totals.spent} tone="red" />
             <Metric label="Remaining" value={totals.remaining} tone={totals.remaining >= 0 ? "green" : "red"} />
@@ -599,7 +610,7 @@ export default function BudgetPage() {
             rows={weekRows(currentWeekIndex)}
             performance={weekPerformance(currentWeekIndex)}
             status={savedStatusForWeek(currentWeekIndex)}
-            isExpanded={Boolean(expandedWeeks[currentWeekIndex]) || activeSpend !== null && activeSpend !== "global" && activeSpend.weekIndex === currentWeekIndex || wrappingWeek === currentWeekIndex}
+            isExpanded={(expandedWeeks[currentWeekIndex] ?? true) || activeSpend !== null && activeSpend !== "global" && activeSpend.weekIndex === currentWeekIndex || wrappingWeek === currentWeekIndex}
             isFeatured
             isPast={false}
             isWrapping={wrappingWeek === currentWeekIndex}
@@ -734,6 +745,7 @@ export default function BudgetPage() {
         )}
       </div>
     </main>
+    </BudgetHistoryContext.Provider>
   );
 }
 
@@ -771,10 +783,10 @@ function Metric({ label, value, tone = "navy", detail }: { label: string; value:
   const toneClass = tone === "red" ? "text-harbor-red" : tone === "green" ? "text-harbor-teal" : "text-harbor-navy";
   const accentClass = tone === "red" ? "from-red-50 to-white border-red-100" : tone === "green" ? "from-emerald-50 to-white border-emerald-100" : "from-cyan-50 to-white border-cyan-100";
   return (
-    <div className={`rounded-lg border bg-gradient-to-br px-3 py-2.5 shadow-sm sm:px-4 sm:py-3 ${accentClass}`}>
+    <div className={`min-w-0 rounded-lg border bg-gradient-to-br px-2 py-2.5 shadow-sm sm:px-4 sm:py-3 ${accentClass}`}>
       <div className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/50">{label}</div>
-      <div className={`mt-1 text-xl font-bold tabular-nums sm:text-2xl ${toneClass}`}>{formatMoney(value)}</div>
-      {detail && <div className="mt-1 text-xs text-harbor-navy/50 sm:block">{detail}</div>}
+      <div className={`mt-1 text-sm font-bold tabular-nums sm:text-2xl ${toneClass}`}>{formatMoney(value)}</div>
+      {detail && <div className="mt-1 hidden text-xs text-harbor-navy/50 sm:block">{detail}</div>}
     </div>
   );
 }
@@ -917,7 +929,11 @@ function ChartRows({ chart, rows, weekIndex, onOpenSpend, onMarkRow, onAdjustRow
   onAdjustRow: (item: LineItem, weekIndex: number | undefined, amount: number) => void | Promise<void>;
   savingRowIds: Record<string, boolean>;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const history = useContext(BudgetHistoryContext);
+  const [detailItemId, setDetailItemId] = useState<string | null>(null);
+  const [allHistory, setAllHistory] = useState(false);
+  const [expanded, setExpanded] = useState(true);
+  const [menuItemId, setMenuItemId] = useState<string | null>(null);
   const [editingItemId, setEditingItemId] = useState<string | null>(null);
   const [amountDraft, setAmountDraft] = useState("");
   const subtotal = rows.reduce<WeekPerformance>((sum, row) => ({
@@ -954,28 +970,37 @@ function ChartRows({ chart, rows, weekIndex, onOpenSpend, onMarkRow, onAdjustRow
           return (
           <div key={row.item.id} className="grid gap-2 py-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
             <div className="min-w-0 sm:pr-4">
-              <div className="truncate text-base font-semibold text-harbor-navy sm:text-sm">{row.item.name}</div>
+              <div className="flex items-start justify-between gap-3"><button type="button" onClick={() => { setDetailItemId(row.item.id); setAllHistory(false); }} className="text-left text-base font-semibold text-harbor-navy hover:text-teal-700 sm:text-sm">{row.item.name}</button><span className="shrink-0 font-bold tabular-nums sm:hidden">{formatMoney(row.budgeted)}</span></div>
               <div className="mt-0.5 text-xs font-medium text-harbor-navy/50">
                 {row.dockState?.status === "skipped"
                   ? "Skipped"
                   : row.dockState?.status === "adjusted"
                     ? `${formatMoney(row.planned)} planned | ${formatMoney(row.budgeted)} current`
-                    : `${formatMoney(row.planned)} planned | ${formatMoney(row.spent)} ${actions.recordedLabel.toLowerCase()}`}
+                    : `${formatMoney(row.spent)} ${actions.recordedLabel.toLowerCase()} | ${formatMoney(row.remaining)} left`}
               </div>
+              {actions.recordedLabel !== "Spent" && row.spent === 0 && (row.dockState?.pendingUntil || row.item.preferredPaymentDate || row.item.paymentDueDate) && <p className="mt-1 text-xs text-harbor-navy/55">Due {formatShortDate(new Date(`${row.dockState?.pendingUntil || row.item.preferredPaymentDate || row.item.paymentDueDate}T00:00:00`))}</p>}
             </div>
             <div className="flex flex-wrap items-center justify-between gap-3 sm:justify-end">
-              <div className={`text-right text-base font-bold tabular-nums ${row.remaining < 0 ? "text-harbor-red" : "text-harbor-navy"}`}>
+              <div className={`hidden text-right text-base font-bold tabular-nums sm:block ${row.remaining < 0 ? "text-harbor-red" : "text-harbor-navy"}`}>
                 {formatMoney(row.remaining)}
                 <span className="ml-1 text-xs font-semibold text-harbor-navy/45">left</span>
               </div>
               <div className="flex flex-wrap justify-end gap-2">
                 {actions.done && <button type="button" disabled={saving} onClick={() => void onMarkRow(row.item, weekIndex, "cleared")} className="min-h-11 rounded-md bg-harbor-teal px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">{saving ? "Saving..." : actions.primaryLabel}</button>}
                 {actions.spend && <button type="button" disabled={saving} onClick={() => onOpenSpend(row.item, weekIndex)} className="min-h-11 rounded-md bg-harbor-teal px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50">{actions.primaryLabel}</button>}
-                {actions.edit && <button type="button" disabled={saving} onClick={() => {
-                  setEditingItemId(row.item.id);
-                  setAmountDraft(row.budgeted.toFixed(2));
-                }} className="min-h-11 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/55 disabled:opacity-50">Edit</button>}
-                {actions.skip && <button type="button" disabled={saving} onClick={() => void onMarkRow(row.item, weekIndex, "skipped")} className="min-h-11 rounded-md border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-harbor-navy/55 disabled:opacity-50">{saving ? "Saving..." : "Skip"}</button>}
+                {(actions.edit || actions.skip) && <button type="button" aria-label={`More actions for ${row.item.name}`} aria-haspopup="dialog" disabled={saving} onClick={() => setMenuItemId(row.item.id)} className="min-h-11 min-w-11 rounded-lg bg-slate-50 text-lg">&#8226;&#8226;&#8226;</button>}
+                <ActionSheet open={detailItemId === row.item.id} title={row.item.name} onClose={() => setDetailItemId(null)}>
+                  <div className="text-center"><p className="text-xl font-bold">{formatMoney(row.budgeted)} planned</p><p className="mt-1 text-xs text-slate-500">{row.item.category} &middot; {actions.recordedLabel === "Spent" ? "Allowance" : "Bill"}</p></div>
+                  <div className="my-2"><div className="h-1.5 overflow-hidden rounded-full bg-slate-100"><div className="h-full bg-harbor-teal" style={{ width: `${row.budgeted > 0 ? Math.min(100, row.spent / row.budgeted * 100) : 0}%` }} /></div><p className="mt-2 text-xs text-slate-500">{formatMoney(row.spent)} {actions.recordedLabel.toLowerCase()} &middot; {formatMoney(row.remaining)} left</p></div>
+                  {(actions.spend || actions.done) && <button disabled={saving} className="bg-harbor-teal font-semibold text-white" onClick={() => { setDetailItemId(null); if (actions.spend) onOpenSpend(row.item, weekIndex); else void onMarkRow(row.item, weekIndex, "cleared"); }}>{actions.primaryLabel}</button>}
+                  <section className="mt-3 border-t pt-3"><h3 className="text-sm font-bold">Spending in this month</h3>{history.filter((entry) => entry.rippleId === row.item.id).length ? <ul className="mt-2 divide-y divide-slate-100">{history.filter((entry) => entry.rippleId === row.item.id).sort((a, b) => b.date.localeCompare(a.date)).slice(0, allHistory ? undefined : 5).map((entry) => <li key={entry.id} className="flex items-center justify-between gap-3 py-2 text-xs"><span>{formatShortDate(new Date(`${entry.date}T00:00:00`))} &middot; {entry.note || row.item.name}</span><strong>{formatMoney(entry.amount)}</strong></li>)}</ul> : <p className="mt-2 text-xs text-slate-500">No recorded spending this month.</p>}{!allHistory && history.filter((entry) => entry.rippleId === row.item.id).length > 5 && <button onClick={() => setAllHistory(true)} className="min-h-11 text-sm text-teal-700">View all spending</button>}</section>
+                  {actions.edit && <button onClick={() => { setDetailItemId(null); setEditingItemId(row.item.id); setAmountDraft(row.budgeted.toFixed(2)); }} className="border-t text-sm">Edit this occurrence</button>}
+                  {actions.skip && <button disabled={saving} onClick={() => { setDetailItemId(null); void onMarkRow(row.item, weekIndex, "skipped"); }} className="text-sm text-red-600">Skip this occurrence</button>}
+                </ActionSheet>
+                <ActionSheet open={menuItemId === row.item.id} title={row.item.name} onClose={() => setMenuItemId(null)}>
+                  {actions.edit && <button type="button" disabled={saving} onClick={() => { setMenuItemId(null); setEditingItemId(row.item.id); setAmountDraft(row.budgeted.toFixed(2)); }} className="bg-slate-50">Edit this occurrence</button>}
+                  {actions.skip && <button type="button" disabled={saving} onClick={() => { setMenuItemId(null); void onMarkRow(row.item, weekIndex, "skipped"); }} className="text-harbor-red">Skip this occurrence</button>}
+                </ActionSheet>
                 {actions.restore && <button type="button" disabled={saving} onClick={() => void onMarkRow(row.item, weekIndex, "upcoming")} className="min-h-11 rounded-md border border-slate-200 px-3 text-xs font-semibold">Restore</button>}
               </div>
             </div>

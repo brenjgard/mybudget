@@ -116,3 +116,8 @@ input[type="number"] {
     font-size: max(16px, 1rem);
   }
 }
+
+/* Dock desktop workspace; phone navigation and safe-area rules stay intact. */
+@media (min-width: 1024px) {
+  body:has(aside[aria-label="Desktop navigation"]) > main { margin-left: 11rem; }
+}

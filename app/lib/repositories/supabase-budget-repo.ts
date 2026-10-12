@@ -1455,6 +1455,16 @@ async function getSpendLogs(monthKey: string): Promise<SpendLogEntry[]> {
   return (spendLogsResult.data ?? []).map((row) => fromSpendLogRow(row, accountKeysById));
 }
 
+async function getEarliestUnresolvedDockMonth(): Promise<string | null> {
+  const user = await getUser();
+  if (!user) return null;
+  const { data, error } = await createClient().from("dock_item_states").select("month_key")
+    .eq("user_id", user.id).in("status", ["upcoming", "pending", "adjusted"])
+    .order("month_key", { ascending: true }).limit(1);
+  if (error) throw error;
+  return data?.[0]?.month_key ?? null;
+}
+
 async function getDockItemStates(monthKey: string): Promise<DockItemState[]> {
   const user = await getUser();
   if (!user) return [];
@@ -1750,6 +1760,7 @@ export const supabaseBudgetRepo = {
   closeWeek,
   getCCCharges,
   getDockItemStates,
+  getEarliestUnresolvedDockMonth,
   saveDockItemState,
   deleteDockItemState,
   getSpendLogs,

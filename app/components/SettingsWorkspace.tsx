@@ -1,5 +1,7 @@
 "use client";
 
+import Link from "next/link";
+import { ActionSheet } from "./ActionSheet";
 import { FinancialInput } from "./FinancialInput";
 
 
@@ -299,10 +301,11 @@ function groupLineItemsByChart(items: LineItem[], charts: string[]) {
 export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }) {
   const router = useRouter();
   const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [activeSection, setActiveSection] = useState<SettingsSection>(fleet ? "fleet" : "ripples");
+  const [activeSection, setActiveSection] = useState<SettingsSection | null>(fleet ? "fleet" : null);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [savingActions, setSavingActions] = useState<Record<string, boolean>>({});
+  const [showAccountsMenu, setShowAccountsMenu] = useState(false);
   const [fleetLoading, setFleetLoading] = useState(false);
   const [rippleSearch, setRippleSearch] = useState("");
   const [collapsedRippleCharts, setCollapsedRippleCharts] = useState<Record<string, boolean>>({});
@@ -350,6 +353,10 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
       }).finally(() => {
         if (!cancelled) setFleetLoading(false);
       });
+      if (!fleet && new URLSearchParams(window.location.search).get("add") === "budget") {
+        setActiveSection("ripples");
+        setRippleForm(blankRipple(loadedSettings.categories, "checking"));
+      }
       const hash = window.location.hash.replace("#", "");
       if (!fleet && hash === "fleet") router.replace("/fleet");
       else if (!fleet && ["ripples", "waves", "charts"].includes(hash)) setActiveSection(hash as SettingsSection);
@@ -721,48 +728,33 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
   return (
     <main className="harbor-page flex-1 p-3 text-harbor-navy sm:p-4">
       <div className="mx-auto max-w-[1280px] space-y-4 sm:space-y-5">
-        <section className="harbor-hero flex flex-col gap-4 rounded-xl px-4 py-4 sm:px-5 lg:flex-row lg:items-end lg:justify-between">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-white/70">{fleet ? "Fleet" : "Settings"}</p>
-            <h1 className="mt-1 text-2xl font-bold sm:text-3xl">{fleet ? "Your Fleet" : "Chart Room"}</h1>
-            <p className="mt-1 text-sm text-white/70">{fleet ? "Card balances, statements, and payments in one place." : "Charts organize the plan. Ripples and Waves define what happens."}</p>
-          </div>
-          <div className="flex items-center gap-2">
-            {saved && <span className="rounded-full bg-white/15 px-3 py-1 text-xs font-semibold text-white">Saved</span>}
-            {SHOW_DEV_TOOLS && (
-              <button type="button" onClick={() => void loadDemoData()} className="rounded-lg border border-dashed border-white/30 px-3 py-2 text-xs font-semibold text-white/75 hover:bg-white/10">Load Demo</button>
-            )}
-          </div>
-        </section>
-
+        <header className="flex items-center justify-between gap-3 py-1">
+          <div className="flex items-center gap-2">{!fleet && activeSection && <button aria-label="Back to Settings" onClick={() => { setActiveSection(null); window.history.replaceState(null, "", "/settings"); }} className="min-h-11 min-w-11 rounded-lg text-2xl text-teal-700">&lsaquo;</button>}<h1 className="text-2xl font-bold">{fleet ? "Fleet" : "Settings"}</h1></div>
+          {fleet && <button aria-label="Add card" onClick={() => setShowAddCardForm(true)} className="min-h-11 min-w-11 rounded-xl bg-harbor-teal text-2xl text-white">+</button>}
+          {saved && <span className="text-xs font-semibold text-teal-700">Saved</span>}
+        </header>
         {saveError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-harbor-red">{saveError}</p>}
-        {!fleet && <nav className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+        {!fleet && !activeSection && <section aria-label="Settings sections" className="grid gap-3 sm:grid-cols-2">
+          <button onClick={() => setShowAccountsMenu(true)} className="flex min-h-20 items-center justify-between rounded-xl border border-slate-200 bg-white p-4 text-left"><div><h2 className="font-semibold">Accounts</h2><p className="mt-1 text-xs text-slate-500">Checking, savings and cards</p></div><span aria-hidden="true">&rsaquo;</span></button>
           {([
-            ["ripples", "Ripples", ripples.length],
-            ["waves", "Waves", waves.length],
-            ["charts", "Charts", settings.categories.length],
-          ] as const).map(([id, label, count]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setActiveSection(id)}
-              className={`min-h-11 rounded-lg border px-4 py-2 text-sm font-semibold shadow-sm ${activeSection === id ? "border-harbor-teal bg-harbor-teal text-white" : "border-white bg-white/85 text-harbor-navy/65 hover:border-harbor-teal-light hover:text-harbor-navy"}`}
-            >
-              {label} <span className="ml-1 opacity-70">{count}</span>
-            </button>
-          ))}
-        </nav>}
+            ["charts", "Categories", "Organize your budget categories"],
+            ["ripples", "Budget items", "Allowances, bills and one-time expenses"],
+            ["waves", "Income", "Recurring paychecks and one-time deposits"],
+          ] as const).map(([id, label, description]) => <button key={id} onClick={() => { setActiveSection(id); window.history.replaceState(null, "", `/settings#${id}`); }} className="flex min-h-20 items-center justify-between rounded-xl border border-slate-200 bg-white p-4 text-left"><div><h2 className="font-semibold">{label}</h2><p className="mt-1 text-xs text-slate-500">{description}</p></div><span aria-hidden="true">&rsaquo;</span></button>)}
+        </section>}
+        <ActionSheet open={showAccountsMenu} title="Accounts" onClose={() => setShowAccountsMenu(false)}><Link href="/dock" className="bg-slate-50">Checking account</Link><Link href="/fleet" className="bg-slate-50">Credit cards</Link><Link href="/buoys" className="bg-slate-50">Savings goals</Link></ActionSheet>
+        {!fleet && SHOW_DEV_TOOLS && <details className="rounded-lg border p-3 text-sm"><summary>Development tools</summary><button onClick={() => void loadDemoData()} className="mt-3 rounded-lg border px-3 py-2">Load Demo</button></details>}
 
         {activeSection === "ripples" && (
           <Section
-            title="Ripples"
+            title="Budget items"
             subtitle="Spending plans: allowances and scheduled expenses."
-            action={!rippleForm && <button type="button" onClick={() => setRippleForm(blankRipple(settings.categories, settings.creditCards[0]?.id ?? "checking"))} className="rounded-lg bg-harbor-red px-4 py-2 text-sm font-semibold text-white">Add Ripple</button>}
+            action={!rippleForm && <button type="button" onClick={() => setRippleForm(blankRipple(settings.categories, settings.creditCards[0]?.id ?? "checking"))} className="rounded-lg bg-harbor-red px-4 py-2 text-sm font-semibold text-white">Add Budget Item</button>}
           >
             <div className="mb-4">
               <input
                 className="field max-w-xl"
-                placeholder="Search Ripples, Charts, or payment source"
+                placeholder="Search items, categories, or payment source"
                 value={rippleSearch}
                 onChange={(event) => setRippleSearch(event.target.value)}
               />
@@ -816,9 +808,9 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
 
         {activeSection === "waves" && (
           <Section
-            title="Waves"
+            title="Income"
             subtitle="Income expected to arrive in checking."
-            action={!waveForm && <button type="button" onClick={() => setWaveForm(blankWave(settings.categories))} className="rounded-lg bg-harbor-green px-4 py-2 text-sm font-semibold text-white">Add Wave</button>}
+            action={!waveForm && <button type="button" onClick={() => setWaveForm(blankWave(settings.categories))} className="rounded-lg bg-harbor-green px-4 py-2 text-sm font-semibold text-white">Add Income</button>}
           >
             <div className="space-y-2">
               {waves.length === 0 && !waveForm && <EmptyState title="No Waves yet">Add recurring income or one-time deposits so Dock can forecast cash in.</EmptyState>}
@@ -849,7 +841,7 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
         )}
 
         {activeSection === "fleet" && (
-          <Section title="Fleet" subtitle="Credit cards that turn card spending into future checking obligations.">
+          <Section title="Credit cards" subtitle="Current balances and upcoming statements.">
             <div className="space-y-2">
               {fleetLoading && <div className="rounded-lg border border-harbor-teal-light bg-white px-4 py-3 text-sm font-semibold text-harbor-navy/50">Loading Fleet activity...</div>}
               {settings.creditCards.length === 0 && <EmptyState title="No Fleet cards yet">Add cards used for spending so Harbor can route future payments.</EmptyState>}
@@ -867,11 +859,11 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
                 };
                 const collapsed = collapsedFleetCards[card.id] ?? true;
                 return (
-                <div key={card.id} className="rounded-xl border border-indigo-100 bg-gradient-to-br from-indigo-50 to-white px-4 py-3 shadow-sm">
+                <div key={card.id} className="rounded-xl border border-slate-200 bg-white px-4 py-4 shadow-sm">
                   <div className="flex flex-col gap-4">
                     <DisclosureHeader expanded={!collapsed} onToggle={() => setCollapsedFleetCards((current) => ({ ...current, [card.id]: !collapsed }))} label={card.label} className="-mx-4 -my-3 rounded-xl px-4 py-3">
                       <div className="font-bold">{card.label}</div>
-                      <div className="text-xs text-harbor-navy/50">Balance {formatMoney(card.currentBalance ?? 0)} | Due day {card.paymentDueDay ?? 15}</div>
+                      <dl className="mt-3 space-y-2 text-xs"><div className="flex items-center justify-between gap-3"><dt className="text-slate-500">Current balance</dt><dd className="text-sm font-bold tabular-nums">{formatMoney(card.currentBalance ?? 0)}</dd></div><div className="flex items-center justify-between gap-3"><dt className="text-slate-500">{statement?.pendingUntil ? `Statement due ${formatShortDate(new Date(`${statement.pendingUntil}T00:00:00`))}` : "Upcoming statement"}</dt><dd className="text-sm font-semibold tabular-nums">{statement ? formatMoney(statementProgress(statement, fleetDockStates).outstanding) : "Not entered"}</dd></div></dl>
                     </DisclosureHeader>
                     {!collapsed && (
                       <>
@@ -925,9 +917,7 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
                 );
               })}
             </div>
-            {!showAddCardForm ? (
-              <button type="button" onClick={() => setShowAddCardForm(true)} className="mt-4 rounded-lg bg-harbor-navy px-4 py-2 text-sm font-semibold text-white">Add Card</button>
-            ) : (
+            {showAddCardForm && (
             <div className="mt-4 rounded-xl border border-teal-200 bg-teal-50 p-3 shadow-sm">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <h3 className="text-sm font-bold">Add Card</h3>
@@ -957,7 +947,7 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
         )}
 
         {activeSection === "charts" && (
-          <Section title="Charts" subtitle="Budget organization. Charts do not control cash timing.">
+          <Section title="Categories" subtitle="Organize your budget items.">
             <div className="space-y-2">
               {settings.categories.map((chart, index) => (
                 <div key={chart} className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-cyan-100 bg-gradient-to-br from-cyan-50 to-white px-4 py-3 shadow-sm">

@@ -223,6 +223,19 @@ export const localBudgetRepo = {
     return localRepo.loadSpendLogs(monthKey);
   },
 
+  getEarliestUnresolvedDockMonth(): string | null {
+    const months: string[] = [];
+    const suffix = scopedStorageKey("");
+    for (let index = 0; index < localStorage.length; index++) {
+      const key = localStorage.key(index);
+      if (!key?.startsWith("harbor_dock_item_states_") || !key.endsWith(suffix)) continue;
+      const month = key.slice("harbor_dock_item_states_".length, "harbor_dock_item_states_".length + 7);
+      const states = localRepo.loadDockItemStates(month);
+      if (states.some((state) => ["upcoming", "pending", "adjusted"].includes(state.status))) months.push(month);
+    }
+    return months.sort()[0] ?? null;
+  },
+
   getDockItemStates(monthKey: string): DockItemState[] {
     return localRepo.loadDockItemStates(monthKey);
   },

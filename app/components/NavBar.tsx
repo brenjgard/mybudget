@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { AccountActions } from "./AccountActions";
 
 const NAV_LINKS = [
+  { href: "/home", label: "Home", icon: <svg aria-hidden="true" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="m3 10 9-7 9 7v11h-6v-7H9v7H3z" /></svg> },
   {
     href: "/budget",
     label: "Budget",
@@ -23,9 +24,7 @@ const NAV_LINKS = [
     label: "Dock",
     icon: (
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M3 20h18"/>
-        <path d="M6 20V8l6-4 6 4v12"/>
-        <path d="M9 20v-6h6v6"/>
+        <circle cx="12" cy="5" r="2"/><path d="M12 7v14M8 11h8M4 14c0 9 16 9 16 0M2 16l2-2 2 2m12 0 2-2 2 2"/>
       </svg>
     ),
   },
@@ -48,14 +47,21 @@ const NAV_LINKS = [
 
 export default function NavBar() {
   const pathname = usePathname();
+  const isWorkspace = NAV_LINKS.some(({ href }) => pathname.startsWith(href));
   const isAuthPage = pathname === "/login" || pathname === "/signup" || pathname.startsWith("/beta");
 
   return (
-    <header className="sticky top-0 flex-shrink-0 z-40">
+    <>
+    {isWorkspace && <aside aria-label="Desktop navigation" className="fixed inset-y-0 left-0 z-40 hidden w-44 flex-col bg-harbor-navy px-3 py-6 text-white lg:flex">
+      <Link href="/home" className="mb-8 flex items-center gap-2 px-2 text-lg font-bold"><Image src="/harbor-logo.svg" alt="" width={32} height={32} className="brightness-0 invert" />Harbor</Link>
+      <nav aria-label="Primary desktop navigation" className="space-y-2">{NAV_LINKS.map(({ href, label, icon }) => <Link key={href} href={href} aria-current={pathname.startsWith(href) ? "page" : undefined} className={`flex items-center gap-3 rounded-lg px-3 py-3 text-sm font-semibold ${pathname.startsWith(href) ? "bg-white/15" : "text-white/75 hover:bg-white/10"}`}>{icon}{label}</Link>)}</nav>
+      <div className="mt-auto flex flex-col rounded-lg bg-white [&_button]:w-full"><AccountActions /></div>
+    </aside>}
+    <header className={`sticky top-0 flex-shrink-0 z-40 ${isWorkspace ? "lg:hidden" : ""}`}>
 
       {/* ── Row 1: Brand bar ── */}
-      <div className="bg-harbor-navy flex h-14 items-center px-3 sm:px-4 md:h-20 md:px-8">
-        <Link href={isAuthPage ? "/beta" : "/budget"} className="flex items-center gap-3 min-w-0">
+      <div className={`${isAuthPage ? "flex" : "hidden md:flex"} bg-harbor-navy h-14 items-center px-3 sm:px-4 md:h-20 md:px-8`}>
+        <Link href={isAuthPage ? "/beta" : "/home"} className="flex items-center gap-3 min-w-0">
           <Image
             src="/harbor-logo.svg"
             alt="Harbor"
@@ -97,11 +103,12 @@ export default function NavBar() {
       </div>
       )}
 
-      {!isAuthPage && <nav aria-label="Primary navigation" className="harbor-bottom-nav fixed inset-x-0 bottom-0 grid grid-cols-4 border-t border-slate-200 bg-white md:hidden">
-        {NAV_LINKS.map(({ href, label, icon }) => <Link key={href} href={href} aria-current={pathname.startsWith(href) ? "page" : undefined} className={`flex min-h-14 flex-col items-center justify-center gap-1 text-xs font-semibold ${pathname.startsWith(href) ? "bg-harbor-teal-light text-harbor-teal" : "text-harbor-navy/60"}`}>
-          <span aria-hidden="true">{icon}</span>{label}
+      {!isAuthPage && <nav aria-label="Primary navigation" className="harbor-bottom-nav fixed inset-x-0 bottom-0 grid grid-cols-5 border-t border-slate-200 bg-white md:hidden">
+        {NAV_LINKS.map(({ href, label, icon }) => <Link key={href} href={href} aria-current={pathname.startsWith(href) ? "page" : undefined} className={`flex min-h-14 flex-col items-center justify-center gap-1 text-[10px] font-semibold sm:text-xs ${pathname.startsWith(href) ? "text-harbor-teal" : "text-harbor-navy/60"}`}>
+          <span aria-hidden="true" className={`rounded-lg px-3 py-1 ${pathname.startsWith(href) ? "bg-harbor-teal-light" : ""}`}>{icon}</span>{label}
         </Link>)}
       </nav>}
     </header>
+    </>
   );
 }

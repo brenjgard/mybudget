@@ -122,3 +122,37 @@ This supersedes the original Budget action matrix above. Fixed and one-time obli
 Validation: 31 regression checks pass, including checking/card allowances, fixed/one-time bills, income labels, partial payments, completed/skipped action restrictions and existing forecast scenarios. TypeScript, lint and the production build pass; Next.js retains its existing middleware deprecation notice.
 
 Browser validation used headless Chrome with the production assets, synthetic fixture data and locally mocked authentication/API responses at 320px, 390px and 1280px. Checked horizontal overflow, individual bill/allowance action exclusivity, month navigation and This month reset, global Log Spend opening, and collapsed/expanded Dock contents. Inspected screenshots of mobile rows and weekly tiles. The temporary browser fixture was removed. These checks do not exercise live Supabase writes or physical iPhone/Safari behavior.
+
+## Week-first Dock and mobile Budget redesign
+
+Supersedes the earlier hierarchy notes where they differ. Production screens use saved settings, checking anchors, occurrence states, spend logs, savings plans and existing forecast calculations; mockup figures are not seeded into the app.
+
+- Dock: compact current/projected/lowest summary; checking edits apply after save; 4/8/12-week horizons and previous/next windows retain preceding cash flow. Desktop has selectable horizontal week tiles, incoming/outgoing counts and miniature flows. Mobile disclosures show only dates, This week, Low and Ends while collapsed, with Start/In/Out/Net in a 2x2 grid when expanded.
+- Weekly detail: chronological events with projected running balances, contextual actions, inline amount/date edits, category totals and a balance chart showing negative periods. Older unresolved events use a compact disclosure; completed and skipped occurrences remain available in recent history. Skipped occurrences can be restored.
+- Occurrence correctness: savings transfers now honor saved amount/date/status; income honors saved dates; projected card fragments are combined before applying a saved total/date override. Source occurrence keys remain intact across date moves. Distinct moved occurrences are not discarded when they share a destination date. Existing card-cycle and allowance replacement calculations remain in use.
+- Budget: title/plus header, separate mobile month navigation, accessible action sheet for Log Spend and Add Budget Item, one contextual item action and overflow for edit/skip. Compact mobile summaries and the expanded current week bring item actions forward. Dock allowance actions open the existing dated spending form. Bottom navigation is unchanged.
+
+Validation: production build, TypeScript and ESLint passed. The existing 31 domain/presentation checks, 9 card-payment checks, persistence-failure checks and 8 new Dock regression checks passed. New tests cover savings/income moves and reload, recurring skips/restores, paid bills, negative lows with positive endings, horizon continuity, projected-card overrides and distinct moved occurrences.
+
+Headless Chrome checks used production assets with isolated synthetic repository/auth responses at 320px, 390px and 1440px. Verified no page overflow, collapsed/expanded weeks, 4/8/12 horizons, checking save, occurrence amount/date persistence across reload, moving a savings transfer, Budget add/overflow sheets and a dated allowance logging link. Screenshots were inspected. No live account writes or physical iPhone/Safari tests were performed. The existing Next.js middleware deprecation warning remains.
+
+Known model boundary: multiple dates for the same item within one source weekly record share a persistence key. Dock blocks changing just one of those dates instead of silently changing the whole group; its error directs the user to the schedule in Settings. This redesign does not add a migration for per-date identities. Saved moves retain their source month; the existing month-loading lookback still governs how far back records are retrieved.
+
+## Desktop guide completion (October 12, 2026)
+
+The earlier implementation did not complete the desktop reference. This pass replaces its desktop day-card layout with the complete week workspace while retaining the separate mobile layout.
+
+| Reference requirement | Implementation |
+| --- | --- |
+| Sidebar and active Dock navigation | Desktop-only Dock sidebar reuses Harbor's actual Budget, Dock, Fleet and Settings routes plus existing account actions. No invented Reports route. Mobile bottom navigation remains unchanged. |
+| Compact title, time controls, checking | Sticky desktop Cash Flow header, week-by-week arrows, 4/8/12 horizons, checking amount/timestamp and edit control. Mobile retains Balance, Projected End and Lowest Point. |
+| Weekly tiles | Eight tiles fit the wide desktop view; narrower screens and longer horizons scroll within the tile strip. Seven-day inflow/outflow bars, transaction counts, ending balances, low balances and negative warnings use forecast data. |
+| Selected week | Start/In/Out/End/Low summary, risk badge, largest outflow and remaining/total transaction count. |
+| Spreadsheet-style detail | Date, description, category, signed amount, projected running balance, status and actions in a semantic desktop table. Completed events remain visible as recorded and do not reduce projections again. |
+| Quick actions | Row-level paid/received/transferred, move-date, amount edit and skip; checkbox selection supports batch move/skip. Amount edit operates on one selected row. Failed saves retain their draft and report errors. |
+| Add to selected week | Add transaction preselects the selected week's date (or the checking anchor for a partial first week). Uses existing one-time cash-event persistence. Available in mobile expanded weeks too. |
+| Direct allowance spending | Dock now opens a compact Log Spend form itself, with the existing spend-log repository. The source occurrence identity is retained if its planned date was moved, so the actual replaces that allowance once. |
+| Weekly visuals | Side-by-side desktop balance chart and inflow/outflow categories; axes, daily labels, zero baseline, negative line segments, lowest/end callouts and proportional category bars. Mobile stacks these within expanded cards. |
+| Other weeks | Compact desktop week summaries below the detail select another week. Mobile collapsed cards still show only dates/This week/Low/Ends/disclosure, and expanded cards retain the 2x2 Start/In/Out/Net layout. |
+
+Validation: production build, TypeScript and lint; 31 existing domain checks, 9 card-payment checks, persistence-failure checks and 9 Dock regression checks. `scripts/verify-dock-browser.cjs` exercises built production assets with mocked authentication/repositories: desktop table, single edits, batch moves/skips, contextual add, income receipt, direct spending, rejected-save recovery, reload, checking edits, horizons, navigation and mobile actions. Screenshots inspected at 1440px, 1024px and 390px; overflow checks also cover 320px. Requires a production build and Chrome (optional `CHROME_PATH` override). Fixtures and screenshots remain isolated from live account data; screenshots are written to a temporary folder. No live Supabase writes or physical iPhone checks were performed.
