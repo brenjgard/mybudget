@@ -46,9 +46,34 @@ const screenshot=async name=>{const out=path.join(work,name+'.png');fs.writeFile
 const viewport=async(width,mobile=false)=>{await send('Emulation.setDeviceMetricsOverride',{width,height:1000,deviceScaleFactor:1,mobile});await pause(150);};
 const check=async selector=>{assert.ok(await evaluate(`(()=>{const e=[...document.querySelectorAll(${JSON.stringify(selector)})].find(e=>e.checkVisibility());if(!e)return false;e.click();return true;})()`),selector);await pause(150);};
 const states=()=>evaluate("JSON.parse(localStorage.getItem('fixture:states')||'[]')");
+const waitFor=async expression=>{for(let i=0;i<100;i++){if(await evaluate(expression))return;await pause(100);}throw Error('Timed out: '+expression);};
+if(process.argv.includes('--cash-event-only')){
+ await viewport(390,true);await navigate('/dock');
+ const projected=()=>evaluate("[...document.querySelectorAll('div')].find(e=>!e.children.length && e.textContent==='Projected End').parentElement.nextElementSibling.textContent");
+ const money=value=>Number(value.replace(/[$,]/g,''));
+ const low=()=>evaluate("[...document.querySelectorAll('div')].find(e=>!e.children.length && e.textContent==='Lowest Point').parentElement.nextElementSibling.textContent");
+ const before=money(await projected());
+ assert.equal(money(await low()),-650,'fixture begins with an October 14 low of -650');
+ await click('+ Add Cash Event');await set('input[aria-label="Transaction description"]','New 330 payment');await set('dialog[open] input[type=number]','330');await set('input[aria-label="Transaction date"]','2026-10-13');await click('Add Event');
+ await waitFor("!document.querySelector('dialog[open]')");
+ assert.equal(money(await projected()),before-330,'330 payment changes projected ending immediately');
+ assert.equal(money(await low()),-980,'330 before payday creates a new lower point');
+ await check('button[aria-expanded="false"]');await click('More actions for New 330 payment');await click('Edit amount or move date');await set('input[aria-label="Occurrence amount"]','400');await click('Save occurrence');
+ assert.equal(money(await projected()),before-400,'editing 330 to 400 updates ending');
+ assert.equal(money(await low()),-1050,'editing the payment at the minimum updates the low by 70');
+ await click('More actions for New 330 payment');await click('Edit amount or move date');await set('input[aria-label="Occurrence date"]','2026-10-20');await click('Save occurrence');
+ assert.equal(money(await projected()),before-400,'moving 400 to next week preserves its single impact');
+ assert.equal(money(await low()),-650,'moving payment after the existing low restores that low while ending remains reduced');
+ await click('+ Add Cash Event');await set('input[aria-label="Transaction description"]','New 900 payment');await set('dialog[open] input[type=number]','900');await set('input[aria-label="Transaction date"]','2026-10-30');await click('Add Event');
+ await waitFor("!document.querySelector('dialog[open]')");
+ assert.equal(money(await projected()),before-1300,'October 30 payment adds to the 330 payment');
+ assert.equal(money(await low()),-650,'later expense does not change an earlier low when subsequent balances stay higher');
+ await navigate('/dock');assert.equal(money(await projected()),before-1300,'both payments survive reload');
+ assert.equal(errors.length,0,'browser exceptions');
+ console.log('PASS cash-event additions and moves update projected ending; lowest point changes only when a new minimum occurs; reload preserves balances.');return;
+}
 if(process.argv.includes('--reconcile-only')){
  await viewport(390,true);await navigate('/dock');
- const waitFor=async expression=>{for(let i=0;i<100;i++){if(await evaluate(expression))return;await pause(100);}throw Error('Timed out: '+expression);};
  assert.ok((await evaluate('document.body.innerText')).includes('Oct 11-Oct 17'));
  await click('Update Checking');await set('input[type=number]','1800');await click('Save');
  await waitFor('document.querySelector("dialog[open]")?.innerText.includes("Manage one by one") && !document.body.innerText.includes("Updating forecast")');
@@ -65,7 +90,11 @@ if(process.argv.includes('--reconcile-only')){
  const before=await evaluate("JSON.parse(localStorage.getItem('fixture:anchor')).checking_balance");await click('Update Checking');await set('input[type=number]','1900');await evaluate("localStorage.setItem('fixture:failAnchor','1')");await click('Save');await pause(400);assert.equal(await evaluate("JSON.parse(localStorage.getItem('fixture:anchor')).checking_balance"),before);
  await navigate('/home');assert.equal(await evaluate('document.querySelector(".harbor-bottom-nav").querySelectorAll("a").length'),5);assert.ok((await evaluate('document.body.innerText')).includes("This week's budget"));await screenshot('home-mobile');
  await navigate('/settings');assert.ok((await evaluate('document.body.innerText')).includes('Accounts'));await screenshot('settings-mobile');await evaluate("[...document.querySelectorAll('button')].find(e=>e.querySelector('h2')?.textContent==='Accounts').click()");await pause(150);await click('Close actions');
- await evaluate("localStorage.setItem('fixture:cards','1')");await navigate('/fleet');assert.ok((await evaluate('document.body.innerText')).includes('Credit cards'));assert.ok((await evaluate('document.body.innerText')).includes('$774.00'));await screenshot('fleet-mobile');await check('button[aria-expanded="false"]');assert.ok((await evaluate('document.body.innerText')).includes('Update Balance'));await evaluate("localStorage.removeItem('fixture:cards')");
+ await evaluate("localStorage.setItem('fixture:cards','1')");await navigate('/home');await waitFor("document.querySelector('[aria-labelledby=home-card-obligations]')?.innerText.includes('$774.00')");
+ await screenshot('home-card-obligations-mobile');await check('[aria-labelledby=home-card-obligations] summary');assert.ok((await evaluate("document.querySelector('[aria-labelledby=home-card-obligations]').innerText")).includes('Balance assigned to this cycle'));
+ await viewport(320,true);assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'),true,'card obligations overflow');await viewport(390,true);
+ await navigate('/dock');assert.equal((await evaluate('document.body.innerText')).includes('Card Obligations'),false);
+ await navigate('/fleet');assert.ok((await evaluate('document.body.innerText')).includes('Credit cards'));assert.ok((await evaluate('document.body.innerText')).includes('$774.00'));await screenshot('fleet-mobile');await check('button[aria-expanded="false"]');assert.ok((await evaluate('document.body.innerText')).includes('Update Balance'));await evaluate("localStorage.removeItem('fixture:cards')");
  await navigate('/budget');await click('Groceries');assert.ok((await evaluate('document.querySelector("dialog[open]").innerText')).includes('Spending in this month'));await screenshot('budget-item-detail-mobile');await click('Close actions');
  for(const route of ['/home','/budget','/dock','/fleet','/settings']){await viewport(320,true);await navigate(route);assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'),true,'overflow '+route);assert.equal(await evaluate('document.querySelector(".harbor-bottom-nav a[aria-current=page]")?.getAttribute("href")'),route);}
  assert.equal(errors.length,0,'browser exceptions');console.log('PASS August anchor opens current week; backlog survives update/reload; individual skip, partial bulk failure/retry, same-day preservation, anchor failure, Home and five-tab mobile navigation.');return;
@@ -86,7 +115,7 @@ await click('Mark Received');assert.ok((await states()).some(s=>s.item_id==='pay
 await click('Log Spend');await set('input[aria-label="Spend amount"]','35');await click('Save spending');assert.ok(await evaluate("JSON.parse(localStorage.getItem('fixture:logs')).some(s=>s.ripple_id==='00000000-0000-4000-8000-000000000101'&&s.amount===35)"));assert.ok((await evaluate('document.querySelector("table").innerText')).includes('Spent'));
 await click('Edit amount for Fixture one-time payment');await set('input[aria-label="Occurrence amount"]','30');await evaluate("localStorage.setItem('fixture:fail','1')");await click('Save occurrence');assert.equal(await evaluate('document.querySelector("input[aria-label=\\\"Occurrence amount\\\"]").value'),'30');assert.ok((await states()).some(s=>s.note==='Fixture one-time payment'&&s.actual_amount===25));await click('Save occurrence');assert.ok((await states()).some(s=>s.note==='Fixture one-time payment'&&s.actual_amount===30));
 await navigate('/dock');assert.ok((await evaluate('document.querySelector("table").innerText')).includes('Fixture one-time payment'));assert.ok((await evaluate('document.querySelector("table").innerText')).includes('Spent'));
-await click('Edit checking');await set('input[type=number]','1200');assert.ok((await evaluate('document.body.innerText')).includes('$1,000.00'));await click('Save');assert.equal(await evaluate("JSON.parse(localStorage.getItem('fixture:anchor')).checking_balance"),1200);await pause(300);await evaluate("[...document.querySelectorAll('dialog[open] button')].find(e=>e.textContent.startsWith('Keep unresolved'))?.click()");
+await click('Edit checking');await set('input[type=number]','1200');assert.ok((await evaluate('document.body.innerText')).includes('$1,000.00'));await click('Save');await waitFor("JSON.parse(localStorage.getItem('fixture:anchor') || '{}').checking_balance === 1200");assert.equal(await evaluate("JSON.parse(localStorage.getItem('fixture:anchor')).checking_balance"),1200);await pause(300);await evaluate("[...document.querySelectorAll('dialog[open] button')].find(e=>e.textContent.startsWith('Keep unresolved'))?.click()");
 for(const count of [4,12,8]){await set('select[aria-label="Forecast horizon"]',String(count));await pause(300);assert.equal(await evaluate('document.querySelectorAll("button[aria-pressed]").length'),count);}
 await click('Next weeks');assert.ok((await evaluate('document.body.innerText')).includes('Oct 18'));await click('Previous weeks');
 await viewport(1024);assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'),true,'1024 overflow');await screenshot('dock-desktop-1024');

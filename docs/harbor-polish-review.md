@@ -156,3 +156,25 @@ The earlier implementation did not complete the desktop reference. This pass rep
 | Other weeks | Compact desktop week summaries below the detail select another week. Mobile collapsed cards still show only dates/This week/Low/Ends/disclosure, and expanded cards retain the 2x2 Start/In/Out/Net layout. |
 
 Validation: production build, TypeScript and lint; 31 existing domain checks, 9 card-payment checks, persistence-failure checks and 9 Dock regression checks. `scripts/verify-dock-browser.cjs` exercises built production assets with mocked authentication/repositories: desktop table, single edits, batch moves/skips, contextual add, income receipt, direct spending, rejected-save recovery, reload, checking edits, horizons, navigation and mobile actions. Screenshots inspected at 1440px, 1024px and 390px; overflow checks also cover 320px. Requires a production build and Chrome (optional `CHROME_PATH` override). Fixtures and screenshots remain isolated from live account data; screenshots are written to a temporary folder. No live Supabase writes or physical iPhone checks were performed.
+
+## Home, mobile navigation and checking reconciliation (October 13, 2026)
+
+This completes the final reference pass and supersedes the earlier navigation notes.
+
+- Home is a separate overview at /home; / and /dashboard redirect there. It displays saved checking and its update time, this week's budget summary, recent spending and links to the working screens. Production data comes from the existing repositories.
+- Mobile navigation has five destinations: Home, Budget, Dock, Fleet and Settings. The duplicate mobile brand header is removed, active destinations are marked, and bottom safe-area spacing is retained. Desktop uses the same destinations in its sidebar.
+- Budget item details expose the contextual primary action, spending history and secondary edit/skip actions. Fleet's compact cards show actual current and statement balances. Settings opens organized sections and existing account controls; unsupported mockup features and credit limits are not fabricated.
+- Dock opens on the current week even when checking was last updated in August. Calculations retain the preceding cash flow from that saved anchor, while the top lowest-point summary describes the displayed forecast window.
+- Updating checking snapshots unresolved earlier occurrences before saving the new balance, then offers Manage one by one, Skip all past occurrences, or Keep unresolved / review later. Older activity is excluded from the new forecast so it is not deducted again. Same-day activity is not bulk reconciled.
+- The backlog survives reloads and later checking updates through existing occurrence records and an earliest-unresolved-month lookup. Skips retain history and future recurring instances. Shared weekly records containing future dates are excluded from bulk skipping.
+- Failed snapshot writes prevent advancing the checking anchor. Failed authenticated checking reads/writes remain visible rather than silently using local data. Partial bulk-skip failures retain successful saves and allow retrying the remainder. Event mutations are locked during checking reconciliation. No database migration is required.
+
+Final verification: production build (including TypeScript), ESLint, 6 checking-reconciliation checks, 9 Dock regression checks, 9 card-payment checks, 31 domain/presentation checks, and persistence-failure checks pass. Both production-asset Chrome suites pass: desktop edits/actions/charts/horizons and mobile navigation/reconciliation, including individual skip, partial bulk failure/retry, failed anchor save and reload persistence. Screenshots were reviewed; overflow and active navigation were checked on all five mobile routes at 320px, with additional 390px mobile and 1024/1440px desktop coverage. The browser harness now waits for checking-save completion instead of relying on a fixed delay.
+
+Browser fixtures are isolated synthetic data; production screens use saved account data. Live Supabase writes and physical iPhone/Safari behavior were not tested. The existing Next.js middleware deprecation notice remains.
+
+## Card obligations moved to Home
+
+Removed the obligations panel from Dock and added a compact Home list with card names, due dates, projected payment amounts, an expandable calculation and a View Fleet link. Saved card cycles and their payment months are loaded through the existing repositories and projection helpers; forecast arithmetic is unchanged. Empty, loading, error and retry states are included. Calculation details are collapsed on mobile.
+
+Validation: production build, TypeScript and ESLint passed. The isolated production-browser suite verified the real projection path with a fixture card, expanded calculation details, removal from Dock, and no horizontal overflow at 320px; a 390px screenshot was reviewed. No live account writes were performed.
