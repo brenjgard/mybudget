@@ -1,4 +1,4 @@
-import { statementProgress } from "./card-payments";
+import { statementProgress, statementPayments, paymentAmount } from "./card-payments";
 import { isoDate } from "./harbor-domain";
 import type { HarborCardObligation } from "./harbor-domain";
 import type { DockItemState } from "./types";
@@ -19,7 +19,13 @@ export function homeCardSummary(obligations: HarborCardObligation[], states: Doc
       const stillToPay = Math.max(0, progress.outstanding - scheduled);
       const base = { cardId: card.id, label: card.label, date: statement.pendingUntil ?? statement.itemId.split(":")[2] };
       if (stillToPay > 0) rows.push({ ...base, id: statement.itemId + ":remaining", status: "Statement still to pay", amount: stillToPay });
-      if (scheduled > 0) rows.push({ ...base, id: statement.itemId + ":scheduled", status: "Payment scheduled", amount: scheduled });
+      let coverage = scheduled;
+      const payments = statement.itemId.startsWith("opening-card-payment:") ? [statement] : statementPayments(statement, states);
+      for (const payment of payments.filter(row => row.status !== "cleared" && row.status !== "skipped")) {
+        const amount = Math.min(coverage, Math.max(0, paymentAmount(payment)));
+        if (amount > 0) rows.push({ ...base, date: payment.pendingUntil ?? base.date, id: payment.itemId + ":scheduled", status: "Payment scheduled", amount });
+        coverage -= amount;
+      }
       if (progress.isPaid) rows.push({ ...base, id: statement.itemId + ":paid", status: "Paid", amount: progress.paid });
     }
     // A recorded statement supersedes the estimate for that same due-date cycle.
@@ -35,5 +41,5 @@ export function homeCardSummary(obligations: HarborCardObligation[], states: Doc
   // Home shows the latest paid statement per card; Fleet retains the full history.
   const compactRows = rows.filter(row => row.status !== "Paid" || !rows.some(other => other.cardId === row.cardId && other.status === "Paid" && (other.date ?? "") > (row.date ?? "")));
   return { rows: compactRows, stillToPay: stillToPay.reduce((sum, row) => sum + row.amount, 0), scheduled: scheduled.reduce((sum, row) => sum + row.amount, 0),
-    stillToPayCards: new Set(stillToPay.map(row => row.cardId)).size, scheduledCards: new Set(scheduled.map(row => row.cardId)).size, next };
+    statementCount: stillToPay.length, paymentCount: scheduled.length, stillToPayCards: new Set(stillToPay.map(row => row.cardId)).size, scheduledCards: new Set(scheduled.map(row => row.cardId)).size, next };
 }

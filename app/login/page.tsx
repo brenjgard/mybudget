@@ -11,7 +11,7 @@ type LoginPageProps = {
 
 export default async function LoginPage({ searchParams }: LoginPageProps) {
   const params = await searchParams;
-  const next = params?.next && params.next.startsWith("/") ? params.next : "/dashboard";
+  const next = params?.next && params.next.startsWith("/") ? params.next : "/home";
   const initialMode = params?.mode === "signup" ? "signup" : "signin";
 
   return (

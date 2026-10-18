@@ -1,5 +1,6 @@
 "use client";
 
+import { lowestDockPoint, saveReconciledChecking } from "../lib/home-cash-outlook";
 import { currentDockWeekOffset, pastOccurrenceStates } from "../lib/dock-reconciliation";
 import { DesktopDockWeek, DockWeekInsights } from "../components/DockWeekDetail";
 import { ActionSheet } from "../components/ActionSheet";
@@ -171,7 +172,7 @@ export default function DockPage() {
   const projectionEndDate = rangeEnd;
   const projectionPoints = useMemo(() => buildDockProjection(activeCashEvents, startingChecking, anchorDate, projectionEndDate), [activeCashEvents, anchorDate, projectionEndDate, startingChecking]);
   const projectedPoint = projectionPoints.at(-1) ?? { date: projectionEndDate, balance: startingChecking };
-  const lowestPoint = visibleForecast.reduce((lowest, week) => week.lowest < lowest.balance ? { balance: week.lowest, date: week.lowestDate } : lowest, { balance: visibleForecast[0]?.lowest ?? startingChecking, date: visibleForecast[0]?.lowestDate ?? anchorDate });
+  const lowestPoint = lowestDockPoint(visibleForecast, startingChecking, anchorDate);
 
   useEffect(() => {
     let cancelled = false;
@@ -241,6 +242,13 @@ export default function DockPage() {
   }, [monthKeys, settings]);
 
   useEffect(() => {
+    if (timelineLoaded && window.location.hash === "#past-occurrence-review") {
+      setReviewPast(true);
+      window.requestAnimationFrame(() => document.getElementById("past-occurrence-review")?.scrollIntoView({ block: "start" }));
+    }
+  }, [timelineLoaded]);
+
+  useEffect(() => {
     if (!showCheckingForm) return;
     window.requestAnimationFrame(() => {
       checkingInputRef.current?.focus();
@@ -253,12 +261,8 @@ export default function DockPage() {
     if (!checkingDraft.trim() || !Number.isFinite(parsed) || !timelineLoaded || reconciling || savingChecking) return;
     setSavingChecking(true); setActionError(null);
     try {
-      const cutoff = startOfDate(new Date());
-      const past = pastOccurrenceStates(cashEvents, cutoff);
-      // Snapshot the backlog first. On any failure, keep the old checking anchor.
-      for (const state of past) await saveDockState(state);
+      const { saved, past } = await saveReconciledChecking(parsed, cashEvents, saveDockState);
       if (past.length) setHistoryFloor((floor) => [floor, ...past.map((state) => state.monthKey)].filter((value): value is string => Boolean(value)).sort()[0]);
-      const saved = await budgetRepo.saveCheckingAnchor(parsed);
       setCheckingBalance(String(saved.balance ?? 0)); setCheckingUpdatedAt(saved.updatedAt);
       setShowCheckingForm(false); setWeekOffset(0); setSelectedWeek(null);
       setReconcileError(null); setReconcilePrompt(past.length > 0);
@@ -550,7 +554,7 @@ export default function DockPage() {
         {timelineLoaded && overdueCashEvents.length > 0 && <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-sm"><span>{overdueCashEvents.length} earlier transactions need review; excluded from this forecast.</span><button onClick={() => { setReconcileError(null); setReconcilePrompt(true); }} className="min-h-11 rounded-lg border border-amber-200 bg-white px-3 font-semibold">Review earlier transactions</button></div>}
         {anchorDate < now && <p className="text-xs text-slate-500">Calculated from your {formatShortDate(anchorDate)} checking update. Update checking to reconcile older activity.</p>}
         <section className="space-y-3">
-          {loadingTimeline && <p className="text-sm text-harbor-navy/45">Updating forecast...</p>}
+          {loadingTimeline && <HarborLoading compact label="Updating forecast" />}
           <div className="flex flex-wrap items-center justify-between gap-2 lg:hidden">
             <div className="flex items-center gap-2">
               <button aria-label="Previous weeks" disabled={visibleOffset === 0} onClick={() => setWeekOffset((n) => Math.max(-currentOffset, n - 1))} className="min-h-11 rounded-lg border bg-white px-4 disabled:opacity-30">&lsaquo;</button>
@@ -629,7 +633,7 @@ function LoadingMetric({ label, detail }: { label: string; detail: string }) {
     <div className="rounded-lg border border-teal-100 bg-white px-4 py-3 shadow-sm">
       <div className="text-xs font-semibold uppercase tracking-wide text-harbor-navy/35">{label}</div>
       <div className="mt-1 text-2xl font-bold tabular-nums text-harbor-navy/30">--</div>
-      <div className="text-xs text-harbor-navy/45">{detail}</div>
+      <HarborLoading compact label={detail} />
     </div>
   );
 }

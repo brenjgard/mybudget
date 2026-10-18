@@ -56,20 +56,6 @@ export default function FeedbackButton() {
 
   return (
     <>
-      {!open && (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="fixed bottom-8 right-8 z-30 hidden items-center gap-2 rounded-full bg-harbor-navy px-4 py-2.5 text-sm font-medium text-white shadow-lg transition-colors hover:bg-harbor-teal xl:flex"
-          aria-label="Send feedback"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-          </svg>
-          Feedback
-        </button>
-      )}
-
       {open && (
         <div
           className="fixed inset-0 z-50 flex items-end justify-center bg-harbor-navy/45 p-4 backdrop-blur-sm sm:items-center"

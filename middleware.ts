@@ -51,7 +51,7 @@ export async function middleware(request: NextRequest) {
       redirect: !isApproved && pathname !== "/beta/pending" && !pathname.startsWith("/auth/")
         ? "/beta/pending"
         : isApproved && (isAuthEntry || pathname === "/beta" || pathname === "/beta/pending")
-          ? "/dashboard"
+          ? "/home"
           : null,
     });
 
@@ -60,7 +60,7 @@ export async function middleware(request: NextRequest) {
     }
 
     if (isApproved && (isAuthEntry || pathname === "/beta" || pathname === "/beta/pending")) {
-      return withCookies(response, NextResponse.redirect(new URL("/dashboard", request.url)));
+      return withCookies(response, NextResponse.redirect(new URL("/home", request.url)));
     }
   }
   return response;

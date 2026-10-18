@@ -121,3 +121,11 @@ input[type="number"] {
 @media (min-width: 1024px) {
   body:has(aside[aria-label="Desktop navigation"]) > main { margin-left: 11rem; }
 }
+
+/* Home's shell is identical before and after its data loads. */
+.home-page { background: #f3f9fd; padding: 0 !important; }
+.home-coastal-header { min-height: 170px; background-color: #e6f3fc; background-image: linear-gradient(90deg,rgba(240,249,255,.92),rgba(240,249,255,.15)), url('/Background_design.png'); background-size: cover; background-position: center 65%; }
+.home-panel { border: 1px solid #dfebf4; border-radius: 1rem; background: white; box-shadow: 0 3px 12px #1b3a5c05; }
+.home-link { display: inline-flex; align-items: center; min-height: 44px; border-radius: .5rem; padding: 0 .75rem; background: #effbf9; color: #087e82; font-size: .75rem; font-weight: 600; white-space: nowrap; }
+.home-skeleton { border-radius: .375rem; background: #e8f0f6; }
+@media (max-width: 767px) { .home-coastal-header { min-height: 150px; background-position: 65% 65%; } }

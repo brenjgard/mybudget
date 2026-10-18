@@ -200,3 +200,22 @@ Supersedes the expanded account-card layout above. Home uses light white cards a
 Unpaid statement dollars are partitioned: still to pay is outstanding less scheduled coverage, and scheduled coverage is capped at outstanding. Neither counts paid dollars. Partial scheduling can yield two explicitly labeled portions for the same statement. Next due aggregates those portions for the earliest card/date and is labeled as a dated view, not an additional obligation. Actual statements supersede same-cycle forecast rows. Only the latest paid statement per card appears on Home.
 
 Validation: build/TypeScript, lint, summary regression tests (partial/full/over-scheduling, paid/skipped/legacy records and same-cycle forecast suppression), and existing card-payment checks passed. Browser checks cover the 0 still-to-pay / 200 scheduled fixture, check-in failure/retry and persistence, Fleet account links, and responsive widths from 320 to 1440px. Screenshots reviewed; no live account writes.
+
+## Daily Home redesign (October 18, 2026)
+
+Home now follows the supplied daily-control-panel mockup and uses the exact supplied public/Background_design.png coastal artwork in a readable responsive header.
+
+- Checking and cash outlook share the first panel. Update balance works directly on Home, using the same extracted snapshot-before-anchor save operation as Dock. Earlier activity offers individual review in Dock, safe bulk skip, or review later. Failed saves remain visible.
+- The outlook uses the production Dock event, projection and weekly forecast functions. Its eight-week horizon matches Dock's default, including prior cash flow from an old checking anchor. It displays negative/healthy status, low/date, end/date and a small real-data visual; no timeline is duplicated.
+- Budget retains the existing weekly summary calculation and adds a simple spent progress indicator. Credit cards now prioritize saved balances, freshness labels, and direct update buttons using the existing Home check-in form and focused card persistence.
+- Upcoming payments use a unified strip and compact rows, not additional account tiles. Empty states use plain language; projections carry an estimate marker. Scheduled entries use their saved payment dates. Paid history and detailed calculations stay in Fleet.
+- Root already redirected to Home. The manifest now launches /home; sign-in, sign-up and authentication fallback destinations use /home while preserving intentional next-path and beta-approval flows.
+- The server-rendered Home shell immediately includes the new header, checking/outlook, Budget and credit-card skeletons. The old overview and recent-spending cards no longer render first. Floating Feedback was removed while retaining the sidebar/Settings-triggered feedback dialog. Existing bottom navigation remains.
+
+Validation: build/TypeScript and ESLint pass; existing 31 domain, 9 card-payment, 9 Dock, 6 reconciliation and persistence tests pass, plus summary tests covering actual scheduled dates. Isolated Chrome checks confirm Home/Dock low/end parity, healthy and negative states, checking-save failure/retry/reconciliation, hard refresh, real client navigation via production RSC assets, server skeleton content, and 320/390/768/1024/1440px layouts. Card updates, reload/Fleet persistence, and statement summary checks pass. Desktop and mobile screenshots were reviewed. Existing Dock browser regressions pass. Auth/manifest destinations were checked in code; physical installed-iPhone launch, live login and live Supabase writes were not performed. The existing Next.js middleware deprecation warning remains.
+
+### Section loading indicators
+
+Added a compact version of Harbor's existing animated boat/anchor loading indicator. Home checking, cash outlook, weekly Budget and card-payment loading now pair labeled indicators with the existing skeletons. Dock forecast refresh/metrics, Budget month changes, Fleet activity, Accounts and Spending use the same component. Existing reduced-motion behavior disables the anchor animation, and status labels remain available to assistive technology.
+
+Validation: production build/TypeScript, lint and the Home browser suite pass, including the server-rendered loading shell, hard refresh, client navigation and responsive widths.

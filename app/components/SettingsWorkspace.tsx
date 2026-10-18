@@ -847,7 +847,7 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
         {activeSection === "fleet" && (
           <Section title="Credit cards" subtitle="Current balances and upcoming statements.">
             <div className="space-y-2">
-              {fleetLoading && <div className="rounded-lg border border-harbor-teal-light bg-white px-4 py-3 text-sm font-semibold text-harbor-navy/50">Loading Fleet activity...</div>}
+              {fleetLoading && <div className="rounded-lg border border-harbor-teal-light bg-white px-4 py-3 text-sm font-semibold text-harbor-navy/50"><HarborLoading compact label="Loading Fleet activity" /></div>}
               {settings.creditCards.length === 0 && <EmptyState title="No Fleet cards yet">Add cards used for spending so Harbor can route future payments.</EmptyState>}
               {settings.creditCards.map((card) => {
                 const statement = upcomingStatementForCard(card, fleetDockStates);

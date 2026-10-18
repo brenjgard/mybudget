@@ -4,11 +4,11 @@ import { createClient } from "../../lib/supabase/server";
 
 function getNextPath(value: FormDataEntryValue | null) {
   if (typeof value !== "string" || !value.startsWith("/")) {
-    return "/dashboard";
+    return "/home";
   }
 
   if (value === "/beta" || value === "/beta/pending" || value.startsWith("/login") || value.startsWith("/signup")) {
-    return "/dashboard";
+    return "/home";
   }
 
   return value;

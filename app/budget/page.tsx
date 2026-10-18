@@ -546,7 +546,7 @@ export default function BudgetPage() {
         {actionError && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-harbor-red">{actionError}</p>}
         {monthLoading && (
           <div className="rounded-lg border border-harbor-teal-light bg-white px-4 py-3 text-sm font-semibold text-harbor-navy/50 shadow-sm">
-            Loading month...
+            <HarborLoading compact label="Loading month" />
           </div>
         )}
 

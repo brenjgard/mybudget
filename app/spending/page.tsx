@@ -1,5 +1,7 @@
 "use client";
 
+import { HarborLoading } from "../components/HarborLoading";
+
 import { BudgetForecastPanel } from "../components/BudgetForecastPanel";
 import { useHarborMonth } from "../lib/use-harbor-month";
 
@@ -7,7 +9,7 @@ export default function SpendingPage() {
   const harbor = useHarborMonth();
 
   if (!harbor.loaded || !harbor.settings) {
-    return <main className="flex-1 bg-harbor-offwhite p-4 text-sm text-harbor-navy/60">Loading Spending...</main>;
+    return <main className="flex-1 bg-harbor-offwhite p-4 text-sm text-harbor-navy/60"><HarborLoading label="Loading Spending" /></main>;
   }
 
   return (

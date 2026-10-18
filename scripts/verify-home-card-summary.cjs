@@ -20,3 +20,7 @@ assert.equal(result.rows.length,1);assert.equal(result.rows[0].status,'Projected
 result=homeCardSummary([forecast],[{...statement,status:'cleared'}]);
 assert.ok(result.rows.some(row=>row.status==='Paid'));assert.equal(result.stillToPay,0);
 console.log('PASS partial/full scheduling partitions unpaid dollars, over-scheduling caps coverage, paid/skipped/legacy records, next due and same-cycle estimate suppression.');
+
+result=homeCardSummary([forecast],[statement,{...payment('early',300,'upcoming'),pendingUntil:'2026-10-12'},payment('later',500,'upcoming')]);
+assert.equal(result.next.date,'2026-10-12');assert.equal(result.next.amount,300);assert.equal(result.paymentCount,2);
+console.log('PASS next scheduled payment uses its actual payment date, not the statement due date.');

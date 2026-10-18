@@ -8,7 +8,7 @@ const exp=Math.floor(Date.now()/1000)+7200;
 const token=Buffer.from(JSON.stringify({alg:'HS256',typ:'JWT'})).toString('base64url')+'.'+Buffer.from(JSON.stringify({sub:uid,exp,role:'authenticated'})).toString('base64url')+'.test';
 const session={access_token:token,refresh_token:'test-refresh',expires_at:exp,expires_in:7200,token_type:'bearer',user:{id:uid,email:'fixture@example.test',aud:'authenticated',role:'authenticated'}};
 const cookie=`sb-${host.split('.')[0]}-auth-token=base64-${Buffer.from(JSON.stringify(session)).toString('base64url')};path=/`;
-const server=http.createServer((req,res)=>{const url=new URL(req.url,'http://localhost');const file=url.pathname.startsWith('/_next/static/')?path.join(root,'.next/static',url.pathname.slice(14)):['/dock','/budget','/settings','/home','/fleet'].includes(url.pathname)?path.join(root,'.next/server/app',url.pathname.slice(1)+'.html'):path.join(root,'public',url.pathname);try{const body=fs.readFileSync(file);res.setHeader('Content-Type',({'.html':'text/html','.js':'application/javascript','.css':'text/css','.png':'image/png','.svg':'image/svg+xml','.woff2':'font/woff2'})[path.extname(file)]||'application/octet-stream');res.end(body);}catch{res.statusCode=404;res.end();}});
+const server=http.createServer((req,res)=>{const url=new URL(req.url,'http://localhost');const file=url.pathname.startsWith('/_next/static/')?path.join(root,'.next/static',url.pathname.slice(14)):['/dock','/budget','/settings','/home','/fleet'].includes(url.pathname)?path.join(root,'.next/server/app',url.pathname.slice(1)+(url.searchParams.has('_rsc')?'.rsc':'.html')):path.join(root,'public',url.pathname);try{const body=fs.readFileSync(file);res.setHeader('Content-Type',({'.rsc':'text/x-component','.html':'text/html','.js':'application/javascript','.css':'text/css','.png':'image/png','.svg':'image/svg+xml','.woff2':'font/woff2'})[path.extname(file)]||'application/octet-stream');res.end(body);}catch{res.statusCode=404;res.end();}});
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 let chrome,ws;
 (async()=>{await new Promise(r=>server.listen(webport,'127.0.0.1',r));chrome=spawn(process.env.CHROME_PATH || 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',['--headless=new','--disable-gpu','--no-first-run',`--remote-debugging-port=${port}`,`--user-data-dir=${path.join(work,'profile')}`,'about:blank'],{windowsHide:true,stdio:'ignore'});
@@ -46,7 +46,44 @@ const screenshot=async name=>{const out=path.join(work,name+'.png');fs.writeFile
 const viewport=async(width,mobile=false)=>{await send('Emulation.setDeviceMetricsOverride',{width,height:1000,deviceScaleFactor:1,mobile});await pause(150);};
 const check=async selector=>{assert.ok(await evaluate(`(()=>{const e=[...document.querySelectorAll(${JSON.stringify(selector)})].find(e=>e.checkVisibility());if(!e)return false;e.click();return true;})()`),selector);await pause(150);};
 const states=()=>evaluate("JSON.parse(localStorage.getItem('fixture:states')||'[]')");
-const waitFor=async expression=>{for(let i=0;i<100;i++){if(await evaluate(expression))return;await pause(100);}throw Error('Timed out: '+expression);};
+const waitFor=async expression=>{for(let i=0;i<100;i++){if(await evaluate("Boolean(" + expression + ")"))return;await pause(100);}throw Error('Timed out: '+expression);};
+if(process.argv.includes('--home-only')){
+ const initialHtml=fs.readFileSync('.next/server/app/home.html','utf8');
+ assert.ok(initialHtml.includes('home-coastal-header')&&initialHtml.includes('Loading checking')&&initialHtml.includes('Loading cash outlook')&&initialHtml.includes('Loading credit cards'),'server shell matches new Home before hydration');
+ assert.ok(!initialHtml.includes('Recent spending this month')&&!initialHtml.includes('Card obligations'),'no obsolete Home content in initial response');
+ assert.ok(fs.readFileSync('app/manifest.ts','utf8').includes('start_url: "/home"'));
+ assert.ok(fs.readFileSync('app/page.tsx','utf8').includes('redirect("/home")'));
+
+ await viewport(390,true);await navigate('/home');
+ await waitFor("document.querySelector('[data-home-low]')");
+ assert.ok((await evaluate('document.body.innerText')).includes('Negative balance projected'));
+ const low=await evaluate("document.querySelector('[data-home-low]').textContent");
+ const end=await evaluate("document.querySelector('[data-home-end]').textContent");
+ await screenshot('home-control-panel-mobile');
+ await navigate('/dock');
+ const dockMetric=label=>evaluate("[...document.querySelectorAll('div')].find(e=>!e.children.length && e.textContent==="+JSON.stringify(label)+").parentElement.nextElementSibling.textContent");
+ assert.equal(await dockMetric('Lowest Point'),low);assert.equal(await dockMetric('Projected End'),end);
+ await navigate('/home');await waitFor("document.querySelector('[data-home-low]')");
+ await click('Update balance');await set('dialog[open] input[type=number]','2000');await evaluate("localStorage.setItem('fixture:failAnchor','1')");await click('Save balance');
+ await waitFor("document.querySelector('dialog[open] [role=alert]')");
+ assert.equal(await evaluate("document.querySelector('dialog[open] input').value"),'2000');
+ await click('Save balance');await waitFor("document.querySelector('dialog[open]')?.innerText.includes('Keep unresolved')");
+ await click('Keep unresolved - review later');await waitFor("document.querySelector('[data-home-low]')");
+ assert.ok((await evaluate('document.body.innerText')).includes('No negative balance projected'));
+ assert.equal(await evaluate("JSON.parse(localStorage.getItem('fixture:anchor')).checking_balance"),2000);
+ await send('Page.reload',{ignoreCache:true});await waitFor("document.querySelector('[data-home-low]') && document.body.innerText.includes('$2,000.00')");
+ assert.ok((await evaluate('document.body.innerText')).includes('Credit cards'));
+ assert.equal(await evaluate("document.querySelector('button[aria-label=\"Send feedback\"]')"),null);
+ for(const width of [320,390,768,1024,1440]){await viewport(width,width<768);assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'),true,'Home overflow '+width);}
+ await screenshot('home-control-panel-desktop');
+ await evaluate("[...document.querySelectorAll('a')].find(e=>e.textContent.includes('View Budget')).click()");
+ await waitFor("document.querySelector('h1')?.textContent==='Budget'");
+ await evaluate("[...document.querySelectorAll('a[href=\"/home\"]')].find(e=>e.checkVisibility()).click()");
+ await waitFor("document.querySelector('h1')?.textContent==='Home' && document.querySelector('[data-home-low]')");
+ assert.ok((await evaluate('document.body.innerText')).includes('No negative balance projected'));
+ assert.equal(errors.length,0,'browser exceptions: '+errors.join(', '));
+ console.log('PASS Home/Dock forecast parity, checking update failure/retry/reconciliation, hard reload, client navigation, positive/negative state and responsive layout.');return;
+}
 if(process.argv.includes('--cash-event-only')){
  await viewport(390,true);await navigate('/dock');
  const projected=()=>evaluate("[...document.querySelectorAll('div')].find(e=>!e.children.length && e.textContent==='Projected End').parentElement.nextElementSibling.textContent");
@@ -95,15 +132,15 @@ if(process.argv.includes('--reconcile-only')){
  await viewport(1440);await screenshot('home-card-obligations-desktop');assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'),true,'desktop obligations overflow');await viewport(390,true);assert.equal(await evaluate("document.querySelector('[aria-labelledby=home-card-obligations] details')"),null);
  for(const width of [320,768,1024]){await viewport(width,width<768);assert.equal(await evaluate('document.documentElement.scrollWidth<=innerWidth'),true,'card obligations overflow '+width);}await viewport(390,true);
  assert.ok((await evaluate("document.querySelector('[aria-labelledby=home-card-obligations]').innerText")).includes('Payment scheduled'));
- assert.ok((await evaluate("document.querySelector('[data-summary=still-to-pay]').innerText")).includes('$0.00'));
+ assert.ok((await evaluate("document.querySelector('[data-summary=still-to-pay]').innerText")).includes('No statements need attention'));
  assert.ok((await evaluate("document.querySelector('[data-summary=scheduled]').innerText")).includes('$200.00'));
  const statementRows=JSON.stringify((await states()).filter(row=>row.item_id.includes('test-card')));
  const checkingBefore=await evaluate("localStorage.getItem('fixture:anchor')");
- await click('Check in balances');await check('dialog[open] button.bg-slate-50');await set('dialog[open] input[type=number]','700');await evaluate("localStorage.setItem('fixture:failCard','1')");await click('Save check-in');
+ await click('Update balance for Test Card');await set('dialog[open] input[type=number]','700');await evaluate("localStorage.setItem('fixture:failCard','1')");await click('Save check-in');
  await waitFor("document.querySelector('dialog[open] [role=alert]')?.innerText.includes('The balance could not be saved')");
  assert.equal(await evaluate("localStorage.getItem('fixture:card:test-card')"),null);
  await click('Save check-in');await waitFor("!document.querySelector('dialog[open]')");
- await navigate('/home');await waitFor("document.querySelector('[aria-labelledby=home-card-obligations]')?.innerText.includes('Payment scheduled')");await click('Check in balances');assert.ok((await evaluate("document.querySelector('dialog[open]').innerText")).includes('$700.00'));await click('Close actions');
+ await navigate('/home');await waitFor("document.querySelector('[aria-labelledby=home-card-obligations]')?.innerText.includes('Payment scheduled')");assert.ok((await evaluate("document.querySelector('[aria-labelledby=home-card-obligations]').innerText")).includes('$700.00'));
  assert.equal(JSON.stringify((await states()).filter(row=>row.item_id.includes('test-card'))),statementRows,'check-in leaves statement/payment history intact');
  assert.equal(await evaluate("localStorage.getItem('fixture:anchor')"),checkingBefore,'check-in leaves checking anchor intact');
  await navigate('/fleet?card=test-card');assert.ok(await evaluate("Boolean(document.querySelector('button[aria-expanded=true]'))"));assert.ok((await evaluate('document.body.innerText')).includes('Update Balance'));
