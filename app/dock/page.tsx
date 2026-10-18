@@ -1,5 +1,6 @@
 "use client";
 
+import { dockRisk } from "../lib/dock-risk";
 import { lowestDockPoint, saveReconciledChecking } from "../lib/home-cash-outlook";
 import { currentDockWeekOffset, pastOccurrenceStates } from "../lib/dock-reconciliation";
 import { DesktopDockWeek, DockWeekInsights } from "../components/DockWeekDetail";
@@ -565,17 +566,18 @@ export default function DockPage() {
           </div>
           {timelineLoaded && <>
             <div className="hidden gap-2 overflow-x-auto pb-2 lg:flex" aria-label="Forecast weeks">
-              {visibleForecast.map((week) => <button key={isoDate(week.week.start)} aria-controls="dock-selected-week" aria-pressed={selected === week} onClick={() => setSelectedWeek(isoDate(week.week.start))} className={`min-w-[132px] flex-1 rounded-xl border p-3 text-left ${selected === week ? "border-harbor-teal bg-teal-50" : week.lowest < 0 ? "border-red-200 bg-red-50" : "border-slate-200 bg-white"}`}>
+              {visibleForecast.map((week) => <button key={isoDate(week.week.start)} aria-controls="dock-selected-week" aria-pressed={selected === week} onClick={() => setSelectedWeek(isoDate(week.week.start))} className={`min-w-[132px] flex-1 rounded-xl border p-3 text-left ${dockRisk(week.lowest).surface} ${selected === week ? "ring-2 ring-harbor-navy ring-offset-2" : ""}`}>
                 <div className="text-xs font-bold">{week.week.label}</div>
-                <div className="mt-2 text-xs">Ending balance</div><div className={`text-lg font-bold ${week.ending < 0 ? "text-red-600" : "text-emerald-700"}`}>{formatMoney(week.ending)}</div>
-                <div className={`mt-2 text-xs ${week.lowest < 0 ? "font-bold text-harbor-red" : "text-harbor-navy/60"}`}>{week.lowest < 0 ? "Warning: " : ""}Low {formatMoney(week.lowest)}</div>
+                <span className={`mt-2 inline-block rounded-full px-2 py-1 text-xs font-bold ${dockRisk(week.lowest).badge}`}>{dockRisk(week.lowest).label}</span>
+                <div className={`mt-3 ${dockRisk(week.lowest).text}`}><div className="text-xs font-semibold">Low Point</div><div className="text-xl font-bold tabular-nums">{formatMoney(week.lowest)}</div></div>
+                <div className="mt-3 text-xs text-harbor-navy">Ending Balance</div><div className="text-base font-semibold tabular-nums text-harbor-navy">{formatMoney(week.ending)}</div>
                 <MiniFlow week={week} />
                 <div className="text-xs text-harbor-navy/60">{week.events.filter((event) => event.kind === "income").length} in / {week.events.filter((event) => event.kind !== "income").length} out</div>
               </button>)}
             </div>
             <div className="hidden space-y-3 lg:block">{selected && <>
               <DesktopDockWeek key={isoDate(selected.week.start)} week={selected} completed={historyEvents.filter((event) => event.state?.status !== "skipped" && event.date >= selected.week.start && event.date <= selected.week.end)} items={settings.lineItems} saving={eventSaving} onDone={setEventDone} onSkip={setEventSkipped} onUpdate={updateEventAmount} onAdd={openWeekAdd} onSpend={openSpend} />
-              {visibleForecast.filter((week) => week !== selected).map((week) => <button key={isoDate(week.week.start)} onClick={() => setSelectedWeek(isoDate(week.week.start))} className="flex w-full flex-wrap items-center gap-5 rounded-xl border border-slate-200 bg-white px-4 py-3 text-left"><strong className="min-w-36">{week.week.label}</strong><span className={`rounded-full px-2 py-1 text-xs ${week.lowest < 0 ? "bg-red-50 text-red-700" : "bg-teal-50 text-teal-700"}`}>{week.lowest < 0 ? "Below zero" : "On track"}</span><span className="flex-1 text-xs">Start <b>{formatMoney(week.starting)}</b></span><span className="flex-1 text-xs">In <b className="text-emerald-700">{formatMoney(week.inflows)}</b></span><span className="flex-1 text-xs">Out <b className="text-red-600">{formatMoney(week.outflows)}</b></span><span className="flex-1 text-xs">Ends <b>{formatMoney(week.ending)}</b></span><span className={`flex-1 text-xs ${week.lowest < 0 ? "text-red-600" : ""}`}>Low <b>{formatMoney(week.lowest)}</b></span><span aria-hidden="true">&#8964;</span></button>)}
+              {visibleForecast.filter((week) => week !== selected).map((week) => <button key={isoDate(week.week.start)} onClick={() => setSelectedWeek(isoDate(week.week.start))} className={`flex w-full flex-wrap items-center gap-5 rounded-xl border px-4 py-3 text-left ${dockRisk(week.lowest).surface}`}><strong className="min-w-36">{week.week.label}</strong><span className={`rounded-full px-2 py-1 text-xs ${dockRisk(week.lowest).badge}`}>{dockRisk(week.lowest).label}</span><span className={`flex-1 text-sm font-semibold ${dockRisk(week.lowest).text}`}>Low Point <b className="block text-xl">{formatMoney(week.lowest)}</b></span><span className="flex-1 text-xs">Start <b>{formatMoney(week.starting)}</b></span><span className="flex-1 text-xs">In <b className="text-emerald-700">{formatMoney(week.inflows)}</b></span><span className="flex-1 text-xs">Out <b className="text-red-600">{formatMoney(week.outflows)}</b></span><span className="flex-1 text-xs">Ends <b>{formatMoney(week.ending)}</b></span><span aria-hidden="true">&#8964;</span></button>)}
             </>}</div>
             <div className="space-y-3 lg:hidden">{visibleForecast.map((week) => <TimelineWeek key={isoDate(week.week.start)} week={week} isCurrent={now >= week.week.start && now <= week.week.end} isExpanded={Boolean(expandedWeeks[isoDate(week.week.start)])} onToggle={() => setExpandedWeeks((current) => ({ ...current, [isoDate(week.week.start)]: !current[isoDate(week.week.start)] }))} onAdd={() => openWeekAdd(week.week.start)} onSetDone={setEventDone} onSkip={setEventSkipped} onUpdateAmount={updateEventAmount} savingEventIds={eventSaving} />)}</div>
           </>}
@@ -651,19 +653,18 @@ function TimelineWeek({ staticHeader = false, onAdd, week, isCurrent, isExpanded
   savingEventIds: Record<string, boolean>;
 }) {
   const net = week.inflows - week.outflows;
-  const risk = week.lowest < 0 ? "text-harbor-red" : week.lowest < 500 ? "text-amber-700" : "text-harbor-navy";
-  const endingRisk = week.ending < 0 ? "text-harbor-red" : "text-harbor-navy";
+  const risk = dockRisk(week.lowest);
 
   return (
-    <section className={`${isCurrent ? "rounded-xl border border-harbor-teal bg-white shadow-sm" : "rounded-xl border border-white bg-white/75 shadow-sm"} overflow-hidden`}>
+    <section className={`rounded-xl border shadow-sm ${risk.surface} overflow-hidden`}>
       <DisclosureHeader expanded={isExpanded} onToggle={onToggle} label={week.week.label} className={`px-3 py-3 sm:px-4 ${staticHeader ? "[&_button]:hidden" : ""}`}>
         <div className="flex flex-wrap items-center gap-2">
           <h2 className="text-base font-bold">{week.week.label}</h2>
           {isCurrent && <span className="rounded-full bg-harbor-teal/10 px-2 py-0.5 text-xs font-semibold text-harbor-teal">This week</span>}
         </div>
         <div className="mt-2 grid grid-cols-2 gap-3 tabular-nums">
-          <div className={risk}><span className="text-xs font-semibold">Low</span><div className="text-lg font-bold">{formatMoney(week.lowest)}</div></div>
-          <div className={endingRisk}><span className="text-xs font-semibold">Ends</span><div className="text-lg font-bold">{formatMoney(week.ending)}</div></div>
+          <div className={`min-w-0 ${risk.text}`}><span className="text-xs font-semibold">Low Point</span><div className="break-words text-xl font-bold">{formatMoney(week.lowest)}</div><span className={`mt-1 inline-block rounded-full px-2 py-1 text-xs font-bold ${risk.badge}`}>{risk.label}</span></div>
+          <div className="min-w-0 text-harbor-navy"><span className="text-xs font-semibold">Ending Balance</span><div className="break-words text-lg font-semibold">{formatMoney(week.ending)}</div></div>
         </div>
       </DisclosureHeader>
       {isExpanded && (

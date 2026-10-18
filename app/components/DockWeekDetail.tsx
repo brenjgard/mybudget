@@ -1,5 +1,6 @@
 "use client";
 
+import { dockRisk } from "../lib/dock-risk";
 import { Fragment, useId, useState } from "react";
 import { FinancialInput } from "./FinancialInput";
 import { budgetActions } from "../lib/budget-actions";
@@ -52,8 +53,8 @@ export function DesktopDockWeek({ week, completed, items, saving, onDone, onSkip
   return <section className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm" id="dock-selected-week" aria-label="Selected week detail">
     <div className="flex items-start justify-between gap-4">
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-3"><h2 className="text-xl font-bold">{week.week.label}, {week.week.start.getFullYear()}</h2><span className={`rounded-full px-3 py-1 text-xs font-semibold ${week.lowest < 0 ? "bg-red-50 text-red-700" : "bg-teal-50 text-teal-700"}`}>{week.lowest < 0 ? "Below zero this week" : "On track"}</span></div>
-        <dl className="mt-3 grid grid-cols-5 gap-3 text-xs">{[["Starting balance", week.starting], ["Total in", week.inflows], ["Total out", -week.outflows], ["Ending balance", week.ending], ["Lowest balance", week.lowest]].map(([label, amount]) => <div key={label}><dt className="text-slate-500">{label}</dt><dd className={`mt-1 text-sm font-bold tabular-nums ${Number(amount) < 0 ? "text-red-600" : ""}`}>{formatMoney(Number(amount))}</dd></div>)}</dl>
+        <div className="flex items-center gap-3"><h2 className="text-xl font-bold">{week.week.label}, {week.week.start.getFullYear()}</h2><span className={`rounded-full px-3 py-1 text-xs font-semibold ${dockRisk(week.lowest).badge}`}>{dockRisk(week.lowest).label}</span></div>
+        <dl className="mt-3 grid grid-cols-5 gap-3 text-xs">{[["Starting balance", week.starting], ["Total in", week.inflows], ["Total out", -week.outflows], ["Ending balance", week.ending], ["Low Point", week.lowest]].map(([label, amount]) => <div key={label}><dt className="text-slate-500">{label}</dt><dd className={`mt-1 text-sm font-bold tabular-nums ${label === "Low Point" ? dockRisk(week.lowest).text + " text-lg" : label === "Ending balance" ? "text-harbor-navy" : Number(amount) < 0 ? "text-red-600" : ""}`}>{formatMoney(Number(amount))}</dd></div>)}</dl>
       </div>
       <aside className="w-56 shrink-0 rounded-lg bg-slate-50 p-3 text-xs"><strong>Week at a glance</strong><p className="mt-1 text-slate-600">{largest ? `Largest outflow: ${largest.label} (${formatMoney(largest.amount)})` : "No planned outflows"}</p><p className="mt-1">{week.events.length} of {events.length} transactions remaining</p></aside>
     </div>
