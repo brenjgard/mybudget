@@ -219,3 +219,14 @@ Validation: build/TypeScript and ESLint pass; existing 31 domain, 9 card-payment
 Added a compact version of Harbor's existing animated boat/anchor loading indicator. Home checking, cash outlook, weekly Budget and card-payment loading now pair labeled indicators with the existing skeletons. Dock forecast refresh/metrics, Budget month changes, Fleet activity, Accounts and Spending use the same component. Existing reduced-motion behavior disables the anchor animation, and status labels remain available to assistive technology.
 
 Validation: production build/TypeScript, lint and the Home browser suite pass, including the server-rendered loading shell, hard refresh, client navigation and responsive widths.
+
+
+## First-time onboarding ? October 18, 2026
+
+- `/setup` provides Welcome, Checking, Income, Bills, Credit cards, and Finish, using the existing coastal artwork. Navigation stays hidden during setup; forms use large controls, single-column mobile fields, and sticky actions.
+- Checking name and balance are required (including zero/negative balances). Multiple income sources, recurring bills, and cards save immediately through `budgetRepo`. Card statement dates are optional. Save failures keep the form open for retry; stable IDs prevent duplicate financial entries on retries.
+- Progress/completion/dismissal live in Supabase Auth `user_metadata.harbor_onboarding`; financial entries remain in the existing settings/account/category/line-item tables. No migration or onboarding financial tables are required. Local mode uses scoped storage for progress.
+- Middleware checks profile progress and existing financial data before rendering protected pages. Established users without onboarding metadata bypass setup. Incomplete users resume their saved step. Partial legacy account data with missing checking settings produces an error instead of being treated as an empty account and overwritten.
+- Completion opens `/home`. A compact, dismissible setup panel links to existing Income, Budget-item, and Fleet screens. It disappears when its remaining tasks are fulfilled or dismissed. Optional omissions are described as opportunities to improve the forecast.
+- Recurrence now respects `startDate` for weekly/monthly schedules as well as other frequencies, preventing new entries from appearing before their next expected date.
+- Validation: production build/typecheck, lint, onboarding domain checks, existing financial regressions, and isolated Chrome onboarding checks. Browser fixtures exercise production bundles and repositories without live account writes; they do not exercise hosted authentication redirects or a physical iOS device.

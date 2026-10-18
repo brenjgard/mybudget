@@ -1,790 +1,127 @@
 "use client";
 
-import { FinancialInput } from "../components/FinancialInput";
-
-
-import { useState, type Dispatch, type SetStateAction } from "react";
+import Image from "next/image";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { saveSettings } from "../lib/budget-settings";
-import { defaultRippleTypeForCategory, getRippleType } from "../lib/ripple-type";
-import { getDefaultRecurrence, recurrenceLabel } from "../lib/schedule";
-import { AppSettings, DayOfMonth, FrequencyType, LineItem, Recurrence, RecurrenceUnit, RippleType } from "../lib/types";
+import { FinancialInput } from "../components/FinancialInput";
+import { HarborLoading } from "../components/HarborLoading";
+import { budgetRepo } from "../lib/repositories/budget-repo";
+import { getOnboardingState, saveOnboardingState } from "../lib/onboarding-repo";
+import { needsOnboarding, remainingSetup } from "../lib/onboarding-state";
+import { recurringSetupItem } from "../lib/setup-records";
+import type { RecurringDraft } from "../lib/setup-records";
+import { formatMoney, isoDate } from "../lib/harbor-domain";
+import { recurrenceLabel } from "../lib/schedule";
+import type { AppSettings, CreditCardAccount, LineItem } from "../lib/types";
 
-// ── Types ──────────────────────────────────────────────────────────────────
-// ── Helpers ────────────────────────────────────────────────────────────────
-function uid() {
-  return Math.random().toString(16).slice(2) + Date.now().toString(16);
-}
-
-const DEFAULT_CATEGORIES = [
-  "Pay", "Standard Bills", "Food", "Pets", "Car Stuff",
-  "Subscriptions", "Savings", "Credit Cards", "Home Maintenance",
-  "Personal Care", "Donations", "Taxes", "Other",
-];
-
-function todayISODate() {
-  const today = new Date();
-  return [
-    today.getFullYear(),
-    String(today.getMonth() + 1).padStart(2, "0"),
-    String(today.getDate()).padStart(2, "0"),
-  ].join("-");
-}
-
-function dayOfMonthValue(day: DayOfMonth | undefined) {
-  return day === undefined ? "1" : String(day);
-}
-
-function parseDayOfMonth(value: string): DayOfMonth {
-  return value === "last" ? "last" : Number(value);
-}
-
-function frequencyForRecurrence(recurrence?: Recurrence): FrequencyType {
-  switch (recurrence?.type) {
-    case "biweekly":
-      return "every-other-week";
-    case "twiceMonthly":
-      return "twice-a-month";
-    case "monthly":
-    case "quarterly":
-    case "semiannual":
-    case "annual":
-      return "once-a-month-1";
-    default:
-      return "every-week";
-  }
-}
-
-const DAY_LABELS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-const MONTH_DAY_OPTIONS: DayOfMonth[] = [...Array.from({ length: 31 }, (_, index) => index + 1), "last"];
-
-// ── Icons ──────────────────────────────────────────────────────────────────
-function AnchorIcon() {
-  return (
-    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#1B3A5C" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="5" r="3" />
-      <line x1="12" y1="8" x2="12" y2="22" />
-      <path d="M5 15H2a10 10 0 0 0 20 0h-3" />
-    </svg>
-  );
-}
-
-function ArrowUpIcon() {
-  return (
-    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#2DC653" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="12" y1="19" x2="12" y2="5" />
-      <polyline points="5 12 12 5 19 12" />
-    </svg>
-  );
-}
-
-function ArrowDownIcon() {
-  return (
-    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#E63946" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="12" y1="5" x2="12" y2="19" />
-      <polyline points="19 12 12 19 5 12" />
-    </svg>
-  );
-}
-
-function DockIcon() {
-  return (
-    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#2A9D8F" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="2" y1="20" x2="22" y2="20" />
-      <line x1="2" y1="13" x2="22" y2="13" />
-      <line x1="6" y1="13" x2="6" y2="20" />
-      <line x1="12" y1="9" x2="12" y2="20" />
-      <line x1="18" y1="13" x2="18" y2="20" />
-      <path d="M9 9h6M12 5v4" />
-    </svg>
-  );
-}
-
-// ── Step metadata ──────────────────────────────────────────────────────────
-const STEP_META = [
-  { icon: <AnchorIcon />,    bg: "bg-blue-100", label: "Anchor"  },
-  { icon: <ArrowUpIcon />,   bg: "bg-green-50", label: "Waves"   },
-  { icon: <ArrowDownIcon />, bg: "bg-red-50",   label: "Ripples" },
-  { icon: <DockIcon />,      bg: "bg-teal-50",  label: "Dock"    },
-];
-
-// ── Item form ──────────────────────────────────────────────────────────────
-type FormState = {
-  name: string;
-  amount: string;
-  category: string;
-  frequency: FrequencyType;
-  anchorDate: string;
-  anchorMonth: number | undefined;
-  waveType: "recurring" | "oneTime";
-  oneTimeDate: string;
-  recurrence: Recurrence;
-  rippleType: RippleType;
-};
-
-function ItemForm({
-  form,
-  setForm,
-  onAdd,
-  isIncome,
-}: {
-  form: FormState;
-  setForm: Dispatch<SetStateAction<FormState>>;
-  onAdd: () => void;
-  isIncome: boolean;
-}) {
-  const waveType = form.waveType ?? "recurring";
-  const recurrence = form.recurrence ?? getDefaultRecurrence();
-
-  function setWaveType(nextWaveType: "recurring" | "oneTime") {
-    setForm((previous) => {
-      const nextRecurrence = previous.recurrence ?? getDefaultRecurrence();
-      return {
-        ...previous,
-        waveType: nextWaveType,
-        recurrence: nextRecurrence,
-        frequency: nextWaveType === "oneTime" ? "once-a-month-1" : frequencyForRecurrence(nextRecurrence),
-      };
-    });
-  }
-
-  function setRecurrence(nextRecurrence: Recurrence) {
-    setForm((previous) => ({
-      ...previous,
-      recurrence: nextRecurrence,
-      frequency: frequencyForRecurrence(nextRecurrence),
-      anchorDate: nextRecurrence.startDate ?? "",
-    }));
-  }
-
-  function setRecurrenceType(nextType: Recurrence["type"]) {
-    const startDate = recurrence.startDate ?? todayISODate();
-    const day = recurrence.daysOfMonth?.[0] ?? new Date(`${startDate}T00:00:00`).getDate();
-    const defaults: Record<Recurrence["type"], Recurrence> = {
-      weekly: { type: "weekly", daysOfWeek: recurrence.daysOfWeek ?? [5] },
-      biweekly: { type: "biweekly", daysOfWeek: recurrence.daysOfWeek ?? [5], startDate },
-      twiceMonthly: { type: "twiceMonthly", daysOfMonth: recurrence.daysOfMonth?.slice(0, 2) ?? [15, "last"] },
-      monthly: { type: "monthly", daysOfMonth: [recurrence.daysOfMonth?.[0] ?? 1] },
-      quarterly: { type: "quarterly", startDate, daysOfMonth: [day] },
-      semiannual: { type: "semiannual", startDate, daysOfMonth: [day] },
-      annual: { type: "annual", startDate, daysOfMonth: [day] },
-      custom: { type: "custom", interval: recurrence.interval ?? 1, unit: recurrence.unit ?? "weeks", startDate },
-    };
-    setRecurrence(defaults[nextType]);
-  }
-
-  return (
-    <div className="bg-slate-50 rounded-2xl p-4 space-y-3">
-      {/* Name */}
-      <div>
-        <label className="text-xs text-slate-500 block mb-1">Name</label>
-        <input
-          className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
-          placeholder={isIncome ? "e.g. Salary, Freelance..." : "e.g. Rent, Spotify, Groceries..."}
-          value={form.name}
-          onChange={(e) => setForm((p) => ({ ...p, name: e.target.value }))}
-          onKeyDown={(e) => e.key === "Enter" && onAdd()}
-        />
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
-        {/* Amount */}
-        <div>
-          <label className="text-xs text-slate-500 block mb-1">Amount</label>
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">$</span>
-            <FinancialInput
-              type="number"
-              className="w-full border-2 border-white focus:border-harbor-teal rounded-xl pl-7 pr-3 py-2.5 focus:outline-none bg-white transition-colors"
-              placeholder="0.00"
-              value={form.amount}
-              onChange={(e) => setForm((p) => ({ ...p, amount: e.target.value }))}
-            />
-          </div>
-        </div>
-
-        {/* Category */}
-        <div>
-          <label className="text-xs text-slate-500 block mb-1">Category</label>
-          <select
-            className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
-            value={form.category}
-            onChange={(e) => {
-              const category = e.target.value;
-              setForm((p) => ({
-                ...p,
-                category,
-                rippleType: isIncome ? p.rippleType : defaultRippleTypeForCategory(category),
-              }));
-            }}
-          >
-            {DEFAULT_CATEGORIES.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-        </div>
-
-        {!isIncome && (
-          <div className="col-span-2">
-            <label className="text-xs text-slate-500 block mb-1">Spend Style</label>
-            <select
-              className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
-              value={form.rippleType}
-              onChange={(e) => setForm((p) => ({ ...p, rippleType: e.target.value as RippleType }))}
-            >
-              <option value="fixed">Fixed obligation</option>
-              <option value="flexible">Flexible spending</option>
-            </select>
-          </div>
-        )}
-
-        <div className="col-span-2">
-          <label className="text-xs text-slate-500 block mb-1">{isIncome ? "Wave" : "Ripple"} Type</label>
-          <select
-            className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
-            value={waveType}
-            onChange={(e) => setWaveType(e.target.value as "recurring" | "oneTime")}
-          >
-            <option value="recurring">Recurring</option>
-            <option value="oneTime">One-time</option>
-          </select>
-        </div>
-        {waveType === "oneTime" && (
-          <div className="col-span-2">
-            <label className="text-xs text-slate-500 block mb-1">Date</label>
-            <input
-              type="date"
-              className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
-              value={form.oneTimeDate}
-              onChange={(e) => setForm((p) => ({ ...p, oneTimeDate: e.target.value }))}
-            />
-          </div>
-        )}
-
-        {/* Frequency */}
-        {waveType === "recurring" && (
-        <div className="col-span-2">
-          <label className="text-xs text-slate-500 block mb-1">Repeats</label>
-          <select
-            className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
-            value={recurrence.type}
-            onChange={(e) => setRecurrenceType(e.target.value as Recurrence["type"])}
-          >
-            <option value="weekly">Weekly</option>
-            <option value="biweekly">Every other week</option>
-            <option value="twiceMonthly">Twice a month</option>
-            <option value="monthly">Monthly</option>
-            <option value="quarterly">Quarterly</option>
-            <option value="semiannual">Every 6 months</option>
-            <option value="annual">Yearly</option>
-            <option value="custom">Custom</option>
-          </select>
-        </div>
-        )}
-
-
-
-        {waveType === "recurring" && (recurrence.type === "weekly" || recurrence.type === "biweekly") && (
-          <div>
-            <label className="text-xs text-slate-500 block mb-1">Day of Week</label>
-            <select
-              className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
-              value={recurrence.daysOfWeek?.[0] ?? 5}
-              onChange={(e) => setRecurrence({ ...recurrence, daysOfWeek: [Number(e.target.value)] })}
-            >
-              {DAY_LABELS.map((label, index) => <option key={label} value={index}>{label}</option>)}
-            </select>
-          </div>
-        )}
-
-        {waveType === "recurring" && recurrence.type === "biweekly" && (
-          <div className="col-span-2">
-            <label className="text-xs text-slate-500 block mb-1">Starting Date</label>
-            <input
-              type="date"
-              className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
-              value={recurrence.startDate ?? ""}
-              onChange={(e) => setRecurrence({ ...recurrence, startDate: e.target.value || undefined })}
-            />
-          </div>
-        )}
-
-        {waveType === "recurring" && recurrence.type === "twiceMonthly" && (
-          <>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">First Date</label>
-              <select
-                className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
-                value={dayOfMonthValue(recurrence.daysOfMonth?.[0])}
-                onChange={(e) => setRecurrence({ ...recurrence, daysOfMonth: [parseDayOfMonth(e.target.value), recurrence.daysOfMonth?.[1] ?? "last"] })}
-              >
-                {MONTH_DAY_OPTIONS.map((day) => <option key={day} value={day}>{day === "last" ? "Last day" : day}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">Second Date</label>
-              <select
-                className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
-                value={dayOfMonthValue(recurrence.daysOfMonth?.[1] ?? "last")}
-                onChange={(e) => setRecurrence({ ...recurrence, daysOfMonth: [recurrence.daysOfMonth?.[0] ?? 15, parseDayOfMonth(e.target.value)] })}
-              >
-                {MONTH_DAY_OPTIONS.map((day) => <option key={day} value={day}>{day === "last" ? "Last day" : day}</option>)}
-              </select>
-            </div>
-          </>
-        )}
-
-        {waveType === "recurring" && recurrence.type === "monthly" && (
-          <div className="col-span-2">
-            <label className="text-xs text-slate-500 block mb-1">Date of Month</label>
-            <select
-              className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
-              value={dayOfMonthValue(recurrence.daysOfMonth?.[0])}
-              onChange={(e) => setRecurrence({ ...recurrence, daysOfMonth: [parseDayOfMonth(e.target.value)] })}
-            >
-              {MONTH_DAY_OPTIONS.map((day) => <option key={day} value={day}>{day === "last" ? "Last day" : day}</option>)}
-            </select>
-          </div>
-        )}
-
-        {waveType === "recurring" && (recurrence.type === "quarterly" || recurrence.type === "semiannual" || recurrence.type === "annual") && (
-          <>
-            <div className="col-span-2">
-              <label className="text-xs text-slate-500 block mb-1">Starting Date</label>
-              <input
-                type="date"
-                className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
-                value={recurrence.startDate ?? todayISODate()}
-                onChange={(e) => setRecurrence({ ...recurrence, startDate: e.target.value || undefined })}
-              />
-            </div>
-            <div className="col-span-2">
-              <label className="text-xs text-slate-500 block mb-1">Date of Month</label>
-              <select
-                className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
-                value={dayOfMonthValue(recurrence.daysOfMonth?.[0])}
-                onChange={(e) => setRecurrence({ ...recurrence, daysOfMonth: [parseDayOfMonth(e.target.value)] })}
-              >
-                {MONTH_DAY_OPTIONS.map((day) => <option key={day} value={day}>{day === "last" ? "Last day" : day}</option>)}
-              </select>
-            </div>
-          </>
-        )}
-
-        {waveType === "recurring" && recurrence.type === "custom" && (
-          <>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">Every</label>
-              <input inputMode="numeric"
-                type="number"
-                min="1"
-                className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
-                value={recurrence.interval ?? 1}
-                onChange={(e) => setRecurrence({ ...recurrence, interval: Math.max(1, Number(e.target.value) || 1) })}
-              />
-            </div>
-            <div>
-              <label className="text-xs text-slate-500 block mb-1">Unit</label>
-              <select
-                className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
-                value={recurrence.unit ?? "weeks"}
-                onChange={(e) => setRecurrence({ ...recurrence, unit: e.target.value as RecurrenceUnit })}
-              >
-                <option value="days">Days</option>
-                <option value="weeks">Weeks</option>
-                <option value="months">Months</option>
-              </select>
-            </div>
-            <div className="col-span-2">
-              <label className="text-xs text-slate-500 block mb-1">Starting Date</label>
-              <input
-                type="date"
-                className="w-full border-2 border-white focus:border-harbor-teal rounded-xl px-3 py-2.5 focus:outline-none bg-white transition-colors"
-                value={recurrence.startDate ?? ""}
-                onChange={(e) => setRecurrence({ ...recurrence, startDate: e.target.value || undefined })}
-              />
-            </div>
-          </>
-        )}
-      </div>
-
-      <button
-        onClick={onAdd}
-        disabled={!form.name.trim() || (waveType === "oneTime" && !form.oneTimeDate)}
-        className={`w-full py-2.5 text-white rounded-xl font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
-          isIncome
-            ? "bg-harbor-green hover:bg-[#24b047]"
-            : "bg-harbor-red hover:bg-[#c9313d]"
-        }`}
-      >
-        + Add {isIncome ? "Wave" : "Ripple"}
-      </button>
-    </div>
-  );
-}
-
-// ── Item list (compact) ────────────────────────────────────────────────────
-function ItemList({
-  items,
-  onRemove,
-}: {
-  items: LineItem[];
-  onRemove: (id: string) => void;
-}) {
-  return (
-    <ul className="space-y-1.5">
-      {items.map((item) => (
-        <li key={item.id} className="flex items-center justify-between bg-white border border-slate-100 rounded-xl px-3 py-2">
-          <div className="min-w-0 flex-1">
-            <span className="font-medium text-sm">{item.name}</span>
-            <span className="text-xs text-slate-400 ml-2">{item.category}</span>
-            {!item.isIncome && (
-              <span className="text-xs text-slate-400 ml-2">
-                {getRippleType(item) === "flexible" ? "Flexible" : "Fixed"}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0 ml-3">
-            <span className={`text-sm font-semibold tabular-nums ${item.isIncome ? "text-harbor-green" : "text-harbor-red"}`}>
-              {item.isIncome ? "+" : "-"}${item.defaultAmount}
-            </span>
-            <span className="text-xs text-slate-400 hidden sm:inline">
-              {item.waveType === "oneTime" ? `One-time - ${item.oneTimeDate ?? "No date"}` : recurrenceLabel(item.recurrence)}
-            </span>
-            <button
-              onClick={() => onRemove(item.id)}
-              className="text-slate-300 hover:text-harbor-red transition-colors leading-none"
-            >
-              ✕
-            </button>
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-// ── Component ──────────────────────────────────────────────────────────────
-const BLANK_FORM: FormState = {
-  name: "",
-  amount: "",
-  category: "Pay",
-  frequency: "every-week",
-  anchorDate: "",
-  anchorMonth: undefined,
-  waveType: "recurring",
-  oneTimeDate: "",
-  recurrence: getDefaultRecurrence(),
-  rippleType: "fixed",
-};
+const STEPS = ["Welcome", "Checking", "Income", "Bills", "Credit cards", "Finish"];
+const EMPTY: AppSettings = { checkingBalance: 0, checkingAccountName: "Checking", categories: [], creditCards: [], lineItems: [] };
+const field = "mt-1 min-h-12 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-base focus:border-teal-500 focus:outline-2 focus:outline-teal-100";
+type CardDraft = { id: string; label: string; balance: string; close: string; due: string };
 
 export default function Setup() {
   const router = useRouter();
-  const [step, setStep] = useState(1);
-  const TOTAL_STEPS = 4;
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [step, setStep] = useState(0);
+  const [ready, setReady] = useState(false);
+  const [checkingSaved, setCheckingSaved] = useState(false);
+  const [accountName, setAccountName] = useState("Checking");
+  const [balance, setBalance] = useState("");
+  const [item, setItem] = useState<RecurringDraft | null>(null);
+  const [card, setCard] = useState<CardDraft | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
 
-  // Step 1 — Balance
-  const [checkingBalance, setCheckingBalance] = useState("");
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const [saved, progress] = await Promise.all([budgetRepo.loadSettings(), getOnboardingState()]);
+        if (cancelled) return;
+        if (!needsOnboarding(saved, progress)) { router.replace("/home"); return; }
+        if (!progress) await saveOnboardingState({ version: 1, step: 0, complete: false });
+        if (cancelled) return;
+        setSettings(saved ?? EMPTY); setCheckingSaved(Boolean(saved));
+        setAccountName(saved?.checkingAccountName ?? "Checking");
+        setBalance(saved ? String(saved.checkingBalance) : "");
+        setStep(progress ? saved ? progress.step : Math.min(progress.step, 1) : 0);
+        setError(null); setReady(true);
+      } catch (cause) { if (!cancelled) setError(cause instanceof Error ? cause.message : "Setup could not be loaded. Please retry."); }
+    }
+    void load(); return () => { cancelled = true; };
+  }, [router, retry]);
 
-  // Steps 2 & 3 — Line items (shared list, isIncome derived from step)
-  const [lineItems, setLineItems] = useState<LineItem[]>([]);
-  const [form, setForm] = useState<FormState>({ ...BLANK_FORM });
-
-  // ── Helpers ───────────────────────────────────────────────────────────
-  function addLineItem() {
-    if (!form.name.trim()) return;
-    const isIncome = step === 2;
-    setLineItems((p) => [
-      ...p,
-      {
-        id: uid(),
-        category: form.category || "Other",
-        name: form.name.trim(),
-        defaultAmount: Number(form.amount) || 0,
-        isIncome,
-        paymentMethod: "checking",
-        frequency: form.frequency,
-        anchorDate: form.waveType === "oneTime" ? undefined : form.anchorDate || undefined,
-        anchorMonth: form.waveType === "oneTime" ? undefined : form.anchorMonth,
-        waveType: form.waveType,
-        oneTimeDate: form.waveType === "oneTime" ? form.oneTimeDate || undefined : undefined,
-        recurrence: form.waveType === "oneTime" ? undefined : form.recurrence,
-        rippleType: isIncome ? undefined : form.rippleType,
-      },
-    ]);
-    setForm((p) => ({ ...p, name: "", amount: "", anchorDate: "", anchorMonth: undefined, oneTimeDate: "" }));
+  async function run(action: () => Promise<void>) {
+    if (busy) return;
+    setBusy(true); setError(null);
+    try { await action(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Your changes could not be saved. Please retry."); }
+    finally { setBusy(false); }
   }
-
-  function removeItem(id: string) {
-    setLineItems((p) => p.filter((i) => i.id !== id));
+  async function go(next: number) {
+    if (item || card) { setError("Save or cancel the open item before continuing."); return; }
+    await run(async () => {
+      if (next > 1 && !checkingSaved) throw new Error("Add your checking account before continuing.");
+      await saveOnboardingState({ version: 1, step: next, complete: false });
+      setStep(next); window.scrollTo({ top: 0 });
+    });
   }
-
-  function goNext() {
-    // Reset form with sensible defaults for the upcoming step
-    if (step === 2) setForm({ ...BLANK_FORM, category: "Standard Bills" });
-    else setForm({ ...BLANK_FORM });
-    setStep((s) => s + 1);
+  async function persist(next: AppSettings) {
+    const saved = await budgetRepo.saveSettings(next);
+    setSettings(saved); return saved;
   }
-
-  function goBack() {
-    if (step === 3) setForm({ ...BLANK_FORM, category: "Pay" });
-    else setForm({ ...BLANK_FORM });
-    setStep((s) => s - 1);
+  function addItem(existing?: LineItem) {
+    setError(null);
+    setItem({ id: existing?.id ?? crypto.randomUUID(), name: existing?.name ?? "", amount: existing ? String(existing.defaultAmount) : "", frequency: (existing?.recurrence?.type as RecurringDraft["frequency"]) ?? (step === 2 ? "biweekly" : "monthly"), date: existing?.recurrence?.startDate ?? isoDate(new Date()), paymentMethod: existing?.paymentMethod ?? "checking" });
   }
-
-  async function finish() {
-    // Derive categories from the items the user actually added
-    const categories = [...new Set(lineItems.map((i) => i.category).filter(Boolean))];
-    const settings: AppSettings = {
-      checkingBalance: Number(checkingBalance) || 0,
-      creditCards: [],
-      categories,
-      lineItems,
-    };
-    await saveSettings(settings);
-    router.push("/dashboard");
+  function addCard(existing?: CreditCardAccount) {
+    setError(null);
+    setCard({ id: existing?.id ?? crypto.randomUUID(), label: existing?.label ?? "", balance: existing ? String(existing.currentBalance ?? 0) : "", close: existing?.statementClosingDay ? String(existing.statementClosingDay) : "", due: existing?.paymentDueDay ? String(existing.paymentDueDay) : "" });
   }
+  const income = step === 2;
+  const items = settings?.lineItems.filter(row => row.isIncome === income) ?? [];
 
-  const meta = STEP_META[step - 1];
-
-  // Group items by category for Dock review
-  const grouped = lineItems.reduce<Record<string, LineItem[]>>((acc, item) => {
-    (acc[item.category] ??= []).push(item);
-    return acc;
-  }, {});
-
-  const waves   = lineItems.filter((i) => i.isIncome);
-  const ripples = lineItems.filter((i) => !i.isIncome);
-  const nextLabel =
-    (step === 2 && waves.length === 0) || (step === 3 && ripples.length === 0)
-      ? "Add later"
-      : "Next";
-
-  // ── Render ─────────────────────────────────────────────────────────────
-  return (
-    <main className="flex-1 bg-gradient-to-br from-blue-50 to-cyan-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl shadow-xl w-full max-w-2xl overflow-hidden">
-
-        {/* Top accent bar */}
-        <div className="h-1.5 bg-gradient-to-r from-harbor-navy via-harbor-teal to-harbor-teal-light" />
-
-        <div className="p-8 space-y-6">
-
-          {/* Progress dots */}
-          <div className="flex justify-center items-center gap-2">
-            {Array.from({ length: TOTAL_STEPS }).map((_, i) => (
-              <div
-                key={i}
-                className={`rounded-full transition-all duration-300 ${
-                  i + 1 === step   ? "w-6 h-2.5 bg-harbor-navy" :
-                  i + 1 < step     ? "w-2.5 h-2.5 bg-harbor-teal" :
-                                     "w-2.5 h-2.5 bg-slate-200"
-                }`}
-              />
-            ))}
-          </div>
-
-          {/* Step icon */}
-          <div className="flex justify-center">
-            <div className={`w-20 h-20 rounded-full ${meta.bg} flex items-center justify-center`}>
-              {meta.icon}
-            </div>
-          </div>
-
-          {/* Step content */}
-          <div key={step} style={{ animation: "stepFadeIn 0.25s ease-out" }} className="space-y-5">
-
-            {/* ── Step 1: Anchor ── */}
-            {step === 1 && (
-              <>
-                <div className="text-center space-y-1">
-                  <h2 className="text-2xl font-bold text-harbor-navy">Let&apos;s set your Current Anchor</h2>
-                  <p className="text-slate-500 text-sm">Start with your actual checking balance today.</p>
-                </div>
-                <div className="relative">
-                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 text-lg font-medium">$</span>
-                  <FinancialInput
-                    type="number"
-                    autoFocus
-                    placeholder="3,901.00"
-                    value={checkingBalance}
-                    onChange={(e) => setCheckingBalance(e.target.value)}
-                    className="w-full border-2 border-slate-200 focus:border-harbor-teal rounded-2xl pl-10 pr-4 py-4 text-xl font-semibold text-slate-700 focus:outline-none transition-colors text-right"
-                  />
-                </div>
-                <div className="bg-blue-50 rounded-2xl p-4">
-                  <p className="text-sm text-blue-700 text-center italic leading-relaxed">
-                    Your Current Anchor is the balance Harbor projects forward from.
-                  </p>
-                </div>
-              </>
-            )}
-
-            {/* ── Step 2: Waves (income) ── */}
-            {step === 2 && (
-              <>
-                <div className="text-center space-y-1">
-                  <h2 className="text-2xl font-bold text-harbor-navy">Add Income (Waves)</h2>
-                  <p className="text-slate-500 text-sm">Paychecks, freelance income, or other money coming in. You can add these later.</p>
-                </div>
-
-                <ItemForm form={form} setForm={setForm} onAdd={addLineItem} isIncome={true} />
-
-                {waves.length > 0 && (
-                  <div>
-                    <p className="text-xs text-slate-400 uppercase tracking-wide font-semibold mb-2">
-                      {waves.length} wave{waves.length !== 1 ? "s" : ""} added
-                    </p>
-                    <ItemList items={waves} onRemove={removeItem} />
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* ── Step 3: Ripples (expenses) ── */}
-            {step === 3 && (
-              <>
-                <div className="text-center space-y-1">
-                  <h2 className="text-2xl font-bold text-harbor-navy">Add Bills &amp; Spending (Ripples)</h2>
-                  <p className="text-slate-500 text-sm">Bills, subscriptions, groceries, and planned spending. You can add these later.</p>
-                </div>
-
-                <ItemForm form={form} setForm={setForm} onAdd={addLineItem} isIncome={false} />
-
-                {ripples.length > 0 && (
-                  <div>
-                    <p className="text-xs text-slate-400 uppercase tracking-wide font-semibold mb-2">
-                      {ripples.length} ripple{ripples.length !== 1 ? "s" : ""} added
-                    </p>
-                    <ItemList items={ripples} onRemove={removeItem} />
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* ── Step 4: Dock — categorized review ── */}
-            {step === 4 && (
-              <>
-                <div className="text-center space-y-1">
-                  <h2 className="text-2xl font-bold text-harbor-navy">Your first forecast is ready</h2>
-                  <p className="text-slate-500 text-sm">Harbor will use your Anchor, income, and spending to project each week.</p>
-                </div>
-
-                {lineItems.length === 0 ? (
-                  <div className="bg-slate-50 rounded-2xl p-8 text-center">
-                    <p className="text-slate-400 text-sm">No income or spending yet. That&apos;s okay; you can add them from Settings when you are ready.</p>
-                  </div>
-                ) : (
-                  <div className="space-y-4 max-h-80 overflow-y-auto pr-1">
-                    {Object.entries(grouped).map(([cat, items]) => (
-                      <div key={cat}>
-                        <p className="text-xs text-harbor-navy/50 uppercase tracking-wide font-semibold mb-1.5 px-1">
-                          {cat}
-                        </p>
-                        <div className="space-y-1.5">
-                          {items.map((item) => (
-                            <div key={item.id} className="flex items-center justify-between bg-slate-50 rounded-xl px-4 py-2.5">
-                              <div className="flex items-center gap-2 min-w-0">
-                                <span className={`text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0 ${
-                                  item.isIncome
-                                    ? "bg-harbor-green/15 text-harbor-green"
-                                    : "bg-harbor-red/10 text-harbor-red"
-                                }`}>
-                                  {item.isIncome ? "Wave" : "Ripple"}
-                                </span>
-                                <span className="font-medium text-sm truncate">{item.name}</span>
-                              </div>
-                              <div className="flex items-center gap-3 flex-shrink-0 ml-2">
-                                <span className={`text-sm font-semibold tabular-nums ${item.isIncome ? "text-harbor-green" : "text-harbor-red"}`}>
-                                  {item.isIncome ? "+" : "-"}${item.defaultAmount}
-                                </span>
-                                <span className="text-xs text-slate-400 hidden sm:inline">
-                                  {item.waveType === "oneTime" ? `One-time - ${item.oneTimeDate ?? "No date"}` : recurrenceLabel(item.recurrence)}
-                                </span>
-                                <button
-                                  onClick={() => removeItem(item.id)}
-                                  className="text-slate-300 hover:text-harbor-red transition-colors"
-                                >
-                                  ✕
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {/* Totals summary */}
-                {lineItems.length > 0 && (
-                  <div className="border-t border-slate-100 pt-3 flex gap-6 justify-center">
-                    <div className="text-center">
-                      <p className="text-xs text-slate-400 uppercase tracking-wide">Waves</p>
-                      <p className="text-harbor-green font-semibold">
-                        +${waves.reduce((s, i) => s + i.defaultAmount, 0).toLocaleString()}
-                        <span className="text-xs text-slate-400 font-normal ml-1">({waves.length})</span>
-                      </p>
-                    </div>
-                    <div className="w-px bg-slate-100" />
-                    <div className="text-center">
-                      <p className="text-xs text-slate-400 uppercase tracking-wide">Ripples</p>
-                      <p className="text-harbor-red font-semibold">
-                        -${ripples.reduce((s, i) => s + i.defaultAmount, 0).toLocaleString()}
-                        <span className="text-xs text-slate-400 font-normal ml-1">({ripples.length})</span>
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                <p className="text-xs text-slate-400 text-center">
-                  You can always edit or add more from Settings.
-                </p>
-              </>
-            )}
-
-          </div>
-
-          {/* Navigation */}
-          <div className="flex items-center justify-between pt-2">
-            {step > 1 ? (
-              <button
-                onClick={goBack}
-                className="px-5 py-2.5 rounded-xl border-2 border-slate-200 text-slate-600 font-medium hover:border-slate-300 transition-colors"
-              >
-                ← Back
-              </button>
-            ) : (
-              <div />
-            )}
-
-            {step < TOTAL_STEPS ? (
-              <button
-                onClick={goNext}
-                disabled={step === 1 && !checkingBalance}
-                className="px-6 py-2.5 rounded-xl bg-harbor-navy text-white font-semibold hover:bg-harbor-navy/90 disabled:opacity-40 disabled:cursor-not-allowed transition-colors ml-auto"
-              >
-                {nextLabel} →
-              </button>
-            ) : (
-              <button
-                onClick={finish}
-                className="px-8 py-2.5 rounded-xl bg-harbor-green text-white font-semibold hover:bg-[#24b047] transition-colors ml-auto"
-              >
-                Go to My Harbor
-              </button>
-            )}
-          </div>
-
-        </div>
+  return <main className="min-h-screen bg-sky-50/70 px-3 py-5 text-harbor-navy sm:px-6 sm:py-10">
+    <div className="mx-auto max-w-2xl overflow-hidden rounded-2xl border border-sky-100 bg-white shadow-sm">
+      {(step === 0 || step === 5) && <div className="home-coastal-header flex min-h-40 items-start p-5"><span className="flex items-center gap-2 text-xl font-bold"><Image src="/harbor-logo.svg" alt="" width={35} height={35} />Harbor</span></div>}
+      <div className="p-5 sm:p-8">
+        <div className="mb-6" aria-label="Setup progress"><p className="text-xs font-semibold text-slate-500">Step {step + 1} of 6 <span className="ml-2">{STEPS[step]}</span></p><ol className="mt-2 grid grid-cols-6 gap-2">{STEPS.map((label, index) => <li key={label} aria-current={index === step ? "step" : undefined} aria-label={label} className={"h-1.5 rounded-full " + (index <= step ? "bg-teal-600" : "bg-slate-100")} />)}</ol></div>
+        {error && <p role="alert" className="mb-4 rounded-lg bg-rose-50 p-3 text-sm text-rose-700">{error}{!ready && <button className="ml-2 min-h-11 underline" onClick={() => setRetry(value => value + 1)}>Retry</button>}</p>}
+        {!ready || !settings ? <HarborLoading label="Loading setup" /> : <>
+          {step === 0 && <><h1 className="text-2xl font-bold">Welcome to Harbor</h1><p className="mt-2 text-slate-500">A calmer way to plan, track, and see what&apos;s ahead.</p><ul className="my-8 space-y-5">{[["Know where you stand", "See your checking balance and what's ahead."], ["Plan with confidence", "Track bills, income, and spending in one place."], ["Stay on course", "See potential cash-flow problems before they happen."]].map(([title, description]) => <li key={title}><h2 className="font-semibold">{title}</h2><p className="mt-1 text-sm text-slate-500">{description}</p></li>)}</ul><p className="text-sm text-slate-500">Start with checking. Everything else can wait.</p></>}
+          {step === 1 && <><h1 className="text-2xl font-bold">Add your checking account</h1><p className="mt-2 text-sm text-slate-500">This is the account you use to pay your bills. Harbor will use it to track your balance and forecast what&apos;s coming.</p><form id="checking-setup" className="mt-6 space-y-4" onSubmit={event => { event.preventDefault(); void run(async () => {
+            const amount = Number(balance);
+            if (!accountName.trim() || !balance.trim() || !Number.isFinite(amount)) throw new Error("Enter an account name and a valid current balance.");
+            await persist({ ...settings, checkingAccountName: accountName.trim(), checkingBalance: amount });
+            await budgetRepo.saveCheckingAnchor(amount);
+            setCheckingSaved(true);
+            await saveOnboardingState({ version: 1, step: 2, complete: false });
+            setStep(2);
+          }); }}><label className="block text-sm font-medium">Account name<input required disabled={busy} className={field} value={accountName} onChange={event => setAccountName(event.target.value)} /></label><label className="block text-sm font-medium">Current balance<FinancialInput required disabled={busy} type="number" step="0.01" className={field} value={balance} onChange={event => setBalance(event.target.value)} /></label></form><p className="mt-6 rounded-lg bg-sky-50 p-3 text-sm text-slate-500">You can update this anytime. A zero or negative balance is okay.</p></>}
+          {(step === 2 || step === 3) && <><h1 className="text-2xl font-bold">{income ? "Add your income" : "Add your bills and recurring payments"}</h1><p className="mt-2 text-sm text-slate-500">{income ? "Add regular income so Harbor can plan ahead. You can add multiple sources." : "Start with the monthly essentials. You can always add more later."}</p>
+            <ul className="mt-5 space-y-2">{items.map(row => <li key={row.id} className="rounded-xl border border-slate-200 p-3"><div className="flex items-start justify-between gap-3"><div className="min-w-0"><h2 className="break-words font-semibold">{row.name}</h2><p className="mt-1 text-xs text-slate-500">{formatMoney(row.defaultAmount)} &middot; {row.recurrence ? recurrenceLabel(row.recurrence) : row.frequency} &middot; {row.paymentMethod === "checking" ? accountName : settings.creditCards.find(c => c.id === row.paymentMethod)?.label}</p></div><div className="flex shrink-0 gap-1"><button disabled={busy || Boolean(item)} aria-label={"Edit " + row.name} onClick={() => addItem(row)} className="min-h-11 px-2 text-xs font-semibold text-teal-700">Edit</button><button disabled={busy || Boolean(item)} aria-label={"Remove " + row.name} onClick={() => void run(async () => { await persist({ ...settings, lineItems: settings.lineItems.filter(candidate => candidate.id !== row.id) }); })} className="min-h-11 px-2 text-xs text-rose-700">Remove</button></div></div></li>)}</ul>
+            {item ? <form className="mt-4 space-y-4 rounded-xl bg-slate-50 p-4" onSubmit={event => { event.preventDefault(); void run(async () => {
+              const record = recurringSetupItem(item, income);
+              await persist({ ...settings, categories: [...new Set([...settings.categories, record.category])], lineItems: [...settings.lineItems.filter(row => row.id !== record.id), record] }); setItem(null);
+            }); }}><label className="block text-sm font-medium">Name<input required autoFocus disabled={busy} className={field} value={item.name} onChange={event => setItem({ ...item, name: event.target.value })} /></label><label className="block text-sm font-medium">Amount<FinancialInput required min="0.01" step="0.01" type="number" disabled={busy} className={field} value={item.amount} onChange={event => setItem({ ...item, amount: event.target.value })} /></label><div className="grid gap-4 sm:grid-cols-2"><label className="block text-sm font-medium">Frequency<select disabled={busy} className={field} value={item.frequency} onChange={event => setItem({ ...item, frequency: event.target.value as RecurringDraft["frequency"] })}>{[["weekly", "Weekly"], ["biweekly", "Every two weeks"], ["monthly", "Monthly"], ["quarterly", "Every three months"], ["annual", "Yearly"]].map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label><label className="block text-sm font-medium">{income ? "Next expected date" : "Next due date"}<input required disabled={busy} type="date" className={field} value={item.date} onChange={event => setItem({ ...item, date: event.target.value })} /></label></div>{!income && <label className="block text-sm font-medium">Pay from<select disabled={busy} className={field} value={item.paymentMethod} onChange={event => setItem({ ...item, paymentMethod: event.target.value })}><option value="checking">{accountName}</option>{settings.creditCards.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}</select></label>}<div className="flex gap-3"><button disabled={busy} className="min-h-11 rounded-lg bg-teal-700 px-4 text-sm font-semibold text-white">{busy ? "Saving..." : income ? "Save income" : "Save bill"}</button><button type="button" disabled={busy} onClick={() => setItem(null)} className="min-h-11 px-3 text-sm">Cancel</button></div></form> : <button disabled={busy} onClick={() => addItem()} className="mt-4 min-h-11 rounded-lg bg-teal-50 px-4 text-sm font-semibold text-teal-800">+ {income ? "Add another income source" : "Add another bill"}</button>}
+            <p className="mt-6 text-sm text-slate-500">You can skip this for now. Your forecast will be more complete when {income ? "income is" : "bills are"} added.</p>
+          </>}
+          {step === 4 && <><h1 className="text-2xl font-bold">Add your credit cards</h1><p className="mt-2 text-sm text-slate-500">Add your cards and current balances. Statement dates help projections, but you can add them later.</p><ul className="mt-5 space-y-2">{settings.creditCards.map(row => <li key={row.id} className="flex items-center justify-between gap-3 rounded-xl border p-3"><div className="min-w-0"><h2 className="break-words font-semibold">{row.label}</h2><p className="text-sm text-slate-500">{formatMoney(row.currentBalance ?? 0)}</p></div><div className="flex"><button disabled={busy || Boolean(card)} onClick={() => addCard(row)} className="min-h-11 px-2 text-xs font-semibold text-teal-700">Edit</button><button disabled={busy || Boolean(card)} onClick={() => void run(async () => { if (settings.lineItems.some(row2 => row2.paymentMethod === row.id)) throw new Error("Change bills using this card to another account before removing it."); await persist({ ...settings, creditCards: settings.creditCards.filter(c => c.id !== row.id) }); })} className="min-h-11 px-2 text-xs text-rose-700">Remove</button></div></li>)}</ul>
+            {card ? <form className="mt-4 space-y-4 rounded-xl bg-slate-50 p-4" onSubmit={event => { event.preventDefault(); void run(async () => {
+              const amount = Number(card.balance);
+              if (!card.label.trim() || !card.balance.trim() || !Number.isFinite(amount) || amount < 0) throw new Error("Enter a card name and a non-negative balance.");
+              for (const day of [card.close, card.due]) if (day && (!Number.isInteger(Number(day)) || Number(day) < 1 || Number(day) > 31)) throw new Error("Statement days must be between 1 and 31, or left blank.");
+              await persist({ ...settings, creditCards: [...settings.creditCards.filter(row => row.id !== card.id), { id: card.id, label: card.label.trim(), currentBalance: amount, currentBalanceUpdatedAt: new Date().toISOString(), statementClosingDay: card.close ? Number(card.close) : undefined, paymentDueDay: card.due ? Number(card.due) : undefined }] }); setCard(null);
+            }); }}><label className="block text-sm font-medium">Card name<input autoFocus required disabled={busy} className={field} value={card.label} onChange={event => setCard({ ...card, label: event.target.value })} /></label><label className="block text-sm font-medium">Current card balance<FinancialInput required min="0" step="0.01" type="number" disabled={busy} className={field} value={card.balance} onChange={event => setCard({ ...card, balance: event.target.value })} /></label><div className="grid gap-4 sm:grid-cols-2"><label className="block text-sm font-medium">Statement close day (optional)<input inputMode="numeric" type="number" min="1" max="31" disabled={busy} className={field} value={card.close} onChange={event => setCard({ ...card, close: event.target.value })} /></label><label className="block text-sm font-medium">Payment due day (optional)<input inputMode="numeric" type="number" min="1" max="31" disabled={busy} className={field} value={card.due} onChange={event => setCard({ ...card, due: event.target.value })} /></label></div><div className="flex gap-3"><button disabled={busy} className="min-h-11 rounded-lg bg-teal-700 px-4 text-sm font-semibold text-white">{busy ? "Saving..." : "Save card"}</button><button type="button" disabled={busy} onClick={() => setCard(null)} className="min-h-11 px-3 text-sm">Cancel</button></div></form> : <button disabled={busy} onClick={() => addCard()} className="mt-4 min-h-11 rounded-lg bg-teal-50 px-4 text-sm font-semibold text-teal-800">+ Add another card</button>}<p className="mt-6 text-sm text-slate-500">No credit cards? You can skip this step. Unknown statement dates can be added later in Fleet.</p>
+          </>}
+          {step === 5 && <><h1 className="text-2xl font-bold">You&apos;re ready to start</h1><p className="mt-2 text-sm text-slate-500">Your checking account is ready. Harbor will build on the details you add over time.</p><ul className="my-6 space-y-3 rounded-xl bg-teal-50 p-4">{[["Checking account", checkingSaved], ["Income", settings.lineItems.some(row => row.isIncome)], ["Bills and recurring payments", settings.lineItems.some(row => !row.isIncome)], ["Credit cards", settings.creditCards.length > 0]].map(([label, complete]) => <li key={String(label)} className="text-sm"><span className={complete ? "font-semibold text-teal-800" : "text-slate-500"}>{String(label)} {complete ? "added" : "- add later if needed"}</span></li>)}</ul>{remainingSetup(settings).length > 0 && <><h2 className="font-semibold">Finish setting up Harbor</h2><p className="mt-1 text-sm text-slate-500">Optional next steps, available from Home and Settings:</p><ul className="mt-3 space-y-2 text-sm text-slate-500">{remainingSetup(settings).map(task => <li key={task.label}>{task.label}</li>)}</ul></>}</>}
+          <footer className="sticky bottom-0 -mx-5 mt-8 flex flex-wrap items-center gap-3 border-t border-slate-100 bg-white/95 px-5 pb-[max(1rem,env(safe-area-inset-bottom))] pt-4 backdrop-blur sm:-mx-8 sm:px-8">
+            {step > 0 && <button disabled={busy || Boolean(item || card)} onClick={() => void go(step - 1)} className="min-h-12 rounded-lg bg-slate-50 px-5 text-sm font-semibold disabled:opacity-40">Back</button>}
+            {step === 1 ? <button form="checking-setup" disabled={busy} className="min-h-12 flex-1 rounded-lg bg-harbor-navy px-5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Saving..." : "Continue"}</button> : <button disabled={busy || Boolean(item || card)} onClick={() => step === 5 ? void run(async () => { if (!checkingSaved) throw new Error("Checking is required."); await saveOnboardingState({ version: 1, step: 5, complete: true }); router.replace("/home"); router.refresh(); }) : void go(step + 1)} className="min-h-12 flex-1 rounded-lg bg-harbor-navy px-5 text-sm font-semibold text-white disabled:opacity-40">{busy ? "Saving..." : step === 0 ? "Let's get started" : step === 5 ? "Go to Home" : "Continue"}</button>}
+            {step >= 2 && step <= 4 && <button disabled={busy || Boolean(item || card)} onClick={() => void go(step + 1)} className="min-h-11 w-full text-sm font-semibold text-teal-700 disabled:opacity-40">Skip for now</button>}
+          </footer>
+        </>}
       </div>
-
-      <style>{`
-        @keyframes stepFadeIn {
-          from { opacity: 0; transform: translateY(10px); }
-          to   { opacity: 1; transform: translateY(0); }
-        }
-      `}</style>
-    </main>
-  );
+    </div>
+  </main>;
 }

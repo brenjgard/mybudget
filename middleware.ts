@@ -1,3 +1,4 @@
+import { parseOnboarding } from "./app/lib/onboarding-state";
 import { NextResponse, type NextRequest } from "next/server";
 import { getSupabaseProjectHost, isApprovedBetaUserWithClient, type SupabaseLikeClient } from "./app/lib/beta-access-core";
 import { updateSession } from "./app/lib/supabase/middleware";
@@ -61,6 +62,22 @@ export async function middleware(request: NextRequest) {
 
     if (isApproved && (isAuthEntry || pathname === "/beta" || pathname === "/beta/pending")) {
       return withCookies(response, NextResponse.redirect(new URL("/home", request.url)));
+    }
+  }
+  if (user && !isPublic && !pathname.startsWith("/auth/")) {
+    const progress = parseOnboarding(user.user_metadata?.harbor_onboarding);
+    // Check the established account data as well as progress, never a single empty amount.
+    const [budget, accounts, items] = await Promise.all([
+      supabase.from("budget_settings").select("checking_balance").eq("user_id", user.id).maybeSingle(),
+      supabase.from("payment_accounts").select("id").eq("user_id", user.id).limit(1),
+      supabase.from("line_items").select("id").eq("user_id", user.id).limit(1),
+    ]);
+    // Let the page show a retryable data error rather than misclassifying failed reads as a new user.
+    if (!budget.error && !accounts.error && !items.error) {
+      const established = budget.data?.checking_balance != null || Boolean(accounts.data?.length || items.data?.length);
+      const setup = !established || Boolean(progress && !progress.complete);
+      if (setup && pathname !== "/setup") return withCookies(response, NextResponse.redirect(new URL("/setup", request.url)));
+      if (!setup && pathname === "/setup") return withCookies(response, NextResponse.redirect(new URL("/home", request.url)));
     }
   }
   return response;

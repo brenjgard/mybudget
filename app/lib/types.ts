@@ -130,6 +130,7 @@ export type DockItemState = {
 };
 
 export type AppSettings = {
+  checkingAccountName?: string;
   checkingBalance: number;
   creditCards: CreditCardAccount[];
   categories: string[];

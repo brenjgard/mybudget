@@ -1,6 +1,8 @@
 "use client";
 
 import Link from "next/link";
+import { getOnboardingState, saveOnboardingState } from "../lib/onboarding-repo";
+import { needsOnboarding, remainingSetup, type OnboardingState } from "../lib/onboarding-state";
 import { HarborLoading } from "../components/HarborLoading";
 import { HomeCardObligations } from "../components/HomeCardObligations";
 import { useEffect, useState } from "react";
@@ -13,6 +15,8 @@ import type { AppSettings } from "../lib/types";
 type Overview = { settings: AppSettings; planned: number; spent: number; remaining: number };
 export default function HomePage() {
   const [overview, setOverview] = useState<Overview | null>(null);
+  const [setup, setSetup] = useState<OnboardingState | null>(null);
+  const [dismissing, setDismissing] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -21,8 +25,9 @@ export default function HomePage() {
       try {
         setError(null);
         const today = new Date(); const year = today.getFullYear(); const month = today.getMonth(); const monthKey = monthKeyFor(year, month);
-        const [settings, savedAmounts, logs, states] = await Promise.all([budgetRepo.loadSettings(), budgetRepo.getMonthlyAmounts(monthKey), budgetRepo.getSpendLogs(monthKey), budgetRepo.getDockItemStates(monthKey)]);
-        if (!settings) { window.location.assign("/setup"); return; }
+        const [settings, savedAmounts, logs, states, progress] = await Promise.all([budgetRepo.loadSettings(), budgetRepo.getMonthlyAmounts(monthKey), budgetRepo.getSpendLogs(monthKey), budgetRepo.getDockItemStates(monthKey), getOnboardingState()]);
+        if (needsOnboarding(settings, progress) || !settings) { window.location.assign("/setup"); return; }
+        if (!cancelled) setSetup(progress);
         const weeks = getCalendarWeeksForMonth(year, month);
         const summary = buildCurrentForwardBudgetSummary({ settings, weeks, year, month, amounts: buildProjectedAmounts(settings, weeks, month, savedAmounts), spendLogs: logs, dockStates: states, today });
         if (!cancelled) setOverview({ settings, planned: summary.thisWeek.budgeted, spent: summary.thisWeek.spent, remaining: summary.thisWeek.remaining });
@@ -36,6 +41,8 @@ export default function HomePage() {
     <div className="mx-auto max-w-6xl space-y-4 px-3 pb-8 sm:space-y-5 sm:px-8">
       {error && <div role="alert" className="home-panel p-4 text-sm text-rose-700">{error}<button onClick={() => setAttempt(value => value + 1)} className="ml-3 min-h-11 font-semibold underline">Retry Home</button></div>}
       <HomeChecking settings={overview?.settings ?? null} />
+      {overview && setup?.complete && !setup.dismissed && remainingSetup(overview.settings).length > 0 && <section className="home-panel p-4 sm:p-5" aria-labelledby="finish-setup"><div className="flex items-center justify-between gap-3"><h2 id="finish-setup" className="font-bold">Finish setting up Harbor</h2><button disabled={dismissing} className="min-h-11 px-2 text-sm text-slate-500 underline" onClick={async () => { setDismissing(true); try { setSetup(await saveOnboardingState({ ...setup, dismissed: true })); } catch { setError("Could not dismiss setup. Please try again."); } finally { setDismissing(false); } }}>{dismissing ? "Saving..." : "Dismiss"}</button></div><p className="text-sm text-slate-500">Your forecast will get more accurate as you add income, spending, and card details.</p><div className="mt-3 flex flex-wrap gap-2">{remainingSetup(overview.settings).map(task => <Link key={task.label} href={task.href} className="inline-flex min-h-11 items-center rounded-lg border border-teal-200 bg-teal-50 px-3 text-sm font-semibold text-teal-800">{task.label} &rarr;</Link>)}</div></section>}
+
       <section aria-labelledby="home-budget" className="home-panel p-4 sm:p-6"><div className="flex items-center justify-between gap-3"><h2 id="home-budget" className="text-lg font-bold">This week&apos;s budget</h2><Link href="/budget" className="home-link">View Budget &rarr;</Link></div>
         <dl className="mt-4 grid grid-cols-3 divide-x divide-slate-200">{[["Planned", overview?.planned], ["Spent", overview?.spent], ["Left", overview?.remaining]].map(([label, amount]) => <div key={label} className="min-w-0 px-2 first:pl-0 sm:px-5"><dt className="text-xs text-slate-500">{label}</dt><dd className={"mt-1 text-sm font-bold tabular-nums sm:text-xl " + (Number(amount) < 0 ? "text-rose-700" : "")}>{amount === undefined ? <div className="home-skeleton h-6 w-full" /> : formatMoney(Number(amount))}</dd></div>)}</dl>
         <div className="mt-4 flex items-center gap-3"><div role="progressbar" aria-label="Weekly budget spent" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100,Math.max(0,percent))} className="h-2 flex-1 overflow-hidden rounded-full bg-slate-100"><div className={"h-full rounded-full " + (percent > 100 ? "bg-amber-500" : "bg-harbor-teal")} style={{ width: Math.min(100,Math.max(0,percent)) + "%" }} /></div><span className="text-xs text-slate-500">{overview ? overview.planned > 0 ? percent + "% spent" : "No planned budget" : error ? "Unavailable" : <HarborLoading compact label="Loading budget" />}</span></div>

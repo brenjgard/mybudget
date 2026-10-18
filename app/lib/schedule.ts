@@ -137,6 +137,7 @@ function dayMatchesDayOfMonth(date: Date, day: DayOfMonth) {
 
 function recurrenceHasOccurrenceOnDate(recurrence: Recurrence, date: Date) {
   const startDate = parseISODateOnly(recurrence.startDate);
+  if (startDate && date < startDate) return false;
   const dayOfWeek = date.getDay();
   if (recurrence.activeMonths?.length && !recurrence.activeMonths.includes(date.getMonth() + 1)) {
     return false;

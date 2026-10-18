@@ -47,6 +47,7 @@ const NAV_LINKS = [
 
 export default function NavBar() {
   const pathname = usePathname();
+  if (pathname === "/setup") return null;
   const isWorkspace = NAV_LINKS.some(({ href }) => pathname.startsWith(href));
   const isAuthPage = pathname === "/login" || pathname === "/signup" || pathname.startsWith("/beta");
 

@@ -285,6 +285,7 @@ function buildSettingsFromSupabase({
   lineItems: LineItemRow[];
 }): AppSettings | null {
   if (!budgetSettings || budgetSettings.checking_balance === null) {
+    if (paymentAccounts.length || lineItems.length) throw new Error("Your existing account data could not be loaded with its checking balance. Please retry or restore the missing budget settings.");
     return null;
   }
 
@@ -293,6 +294,7 @@ function buildSettingsFromSupabase({
 
   return {
     checkingBalance: Number(budgetSettings.checking_balance),
+    checkingAccountName: paymentAccounts.find(account => account.account_key === "checking")?.label ?? "Checking",
     creditCards: paymentAccounts
       .filter((account) => account.kind === "credit")
       .map((account) => ({
@@ -925,7 +927,7 @@ async function saveSettings(settings: AppSettings): Promise<AppSettings> {
       user_id: user.id,
       account_key: "checking",
       kind: "checking",
-      label: "Checking",
+      label: settings.checkingAccountName?.trim() || "Checking",
       current_balance: settings.checkingBalance,
       current_balance_updated_at: null,
       sort_order: 0,
