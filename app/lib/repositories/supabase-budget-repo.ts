@@ -1727,10 +1727,24 @@ async function closeWeek({
   return getClosedWeeks(monthKey);
 }
 
+async function saveCardBalance(cardId: string, balance: number) {
+  const user = await getUser();
+  if (!user) throw new Error("Not authenticated");
+  if (!Number.isFinite(balance) || balance < 0) throw new Error("Enter a valid card balance.");
+  const updatedAt = new Date().toISOString();
+  const { data, error } = await createClient().from("payment_accounts")
+    .update({ current_balance: balance, current_balance_updated_at: updatedAt })
+    .eq("user_id", user.id).eq("account_key", cardId).eq("kind", "credit")
+    .select("current_balance, current_balance_updated_at").single();
+  if (error) throw error;
+  return { balance: Number(data.current_balance), updatedAt: String(data.current_balance_updated_at) };
+}
+
 export const supabaseBudgetRepo = {
   getUser,
   loadSettings,
   saveSettings,
+  saveCardBalance,
   getBudgetItems,
   saveBudgetItem,
   deleteBudgetItem,

@@ -592,9 +592,21 @@ async function closeWeek({
   return localBudgetRepo.closeWeek({ monthKey, cardId, weekIndex, charges });
 }
 
+async function saveCardBalance(cardId: string, balance: number) {
+  if (!Number.isFinite(balance) || balance < 0) throw new Error("Enter a valid card balance.");
+  const user = await supabaseBudgetRepo.getUser();
+  if (user) return supabaseBudgetRepo.saveCardBalance(cardId, balance);
+  const settings = localBudgetRepo.loadSettings();
+  if (!settings?.creditCards.some(card => card.id === cardId)) throw new Error("Card not found.");
+  const saved = { balance, updatedAt: new Date().toISOString() };
+  localBudgetRepo.saveSettings({ ...settings, creditCards: settings.creditCards.map(card => card.id === cardId ? { ...card, currentBalance: saved.balance, currentBalanceUpdatedAt: saved.updatedAt } : card) });
+  return saved;
+}
+
 export const budgetRepo = {
   loadSettings,
   saveSettings,
+  saveCardBalance,
   getBudgetItems,
   saveBudgetItem,
   deleteBudgetItem,

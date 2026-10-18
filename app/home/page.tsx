@@ -27,15 +27,15 @@ export default function HomePage() {
     }
     void load(); return () => { cancelled = true; };
   }, []);
-  return <main className="harbor-page min-w-0 flex-1 p-3 text-harbor-navy sm:p-6"><div className="mx-auto max-w-5xl space-y-5">
+  return <main className="harbor-page min-w-0 flex-1 bg-gradient-to-b from-sky-50/80 to-slate-50 p-3 text-harbor-navy sm:p-6"><div className="mx-auto max-w-5xl space-y-5">
     <header><h1 className="text-2xl font-bold">Home</h1><p className="mt-1 text-sm text-slate-500">Your checking and spending at a glance.</p></header>
     {error && <p role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
     {!overview && !error && <HarborLoading label="Loading Home" />}
     {overview && <>
       <section className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-slate-200 bg-white p-4"><div><h2 className="text-sm text-slate-500">Checking balance</h2><p className="mt-1 text-3xl font-bold tabular-nums">{formatMoney(overview.balance)}</p><p className="mt-1 text-xs text-slate-500">{overview.updatedAt ? `Updated ${new Date(overview.updatedAt).toLocaleString()}` : "No checking update recorded"}</p></div><Link href="/dock" className="min-h-11 rounded-lg bg-teal-50 px-4 py-3 text-sm font-semibold text-teal-700">Review cash flow &rarr;</Link></section>
       <section className="rounded-xl border border-slate-200 bg-white p-4"><div className="mb-4 flex items-center justify-between"><h2 className="font-bold">This week&apos;s budget</h2><Link href="/budget" className="text-sm font-semibold text-teal-700">View Budget &rarr;</Link></div><dl className="grid grid-cols-3 gap-2">{[["Planned", overview.planned], ["Spent", overview.spent], ["Left", overview.remaining]].map(([label, amount]) => <div key={label}><dt className="text-xs text-slate-500">{label}</dt><dd className={`mt-1 text-sm font-bold tabular-nums sm:text-xl ${Number(amount) < 0 ? "text-red-600" : ""}`}>{formatMoney(Number(amount))}</dd></div>)}</dl></section>
-      <HomeCardObligations settings={overview.settings} />
-      <div className="grid gap-3 sm:grid-cols-2"><Link href="/fleet" className="rounded-xl border border-slate-200 bg-white p-4"><h2 className="font-bold">Fleet &rarr;</h2><p className="mt-1 text-sm text-slate-500">Review card balances, statements and payments.</p></Link><Link href="/settings" className="rounded-xl border border-slate-200 bg-white p-4"><h2 className="font-bold">Settings &rarr;</h2><p className="mt-1 text-sm text-slate-500">Manage accounts, categories and recurring items.</p></Link></div>
+      <HomeCardObligations settings={overview.settings} onSettingsChange={settings => setOverview(current => current ? { ...current, settings } : current)} />
+
       <section className="rounded-xl border border-slate-200 bg-white p-4"><h2 className="mb-3 font-bold">Recent spending this month</h2>{overview.logs.length ? <ul className="divide-y divide-slate-100">{overview.logs.map((entry) => <li key={entry.id} className="flex items-center justify-between gap-3 py-3 text-sm"><div><p className="font-semibold">{entry.note || overview.names[entry.rippleId] || "Spending"}</p><p className="text-xs text-slate-500">{formatShortDate(new Date(`${entry.date}T00:00:00`))}</p></div><strong className="tabular-nums">{formatMoney(entry.amount)}</strong></li>)}</ul> : <p className="text-sm text-slate-500">No spending recorded this month.</p>}</section>
     </>}
   </div></main>;

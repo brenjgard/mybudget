@@ -341,6 +341,10 @@ export default function SettingsWorkspace({ fleet = false }: { fleet?: boolean }
         return;
       }
       setSettings(loadedSettings);
+      const requestedCard = new URLSearchParams(window.location.search).get("card");
+      if (fleet && requestedCard && loadedSettings.creditCards.some(card => card.id === requestedCard)) {
+        setCollapsedFleetCards(current => ({ ...current, [requestedCard]: false }));
+      }
       setCardBalanceDrafts(Object.fromEntries(loadedSettings.creditCards.map((card) => [card.id, String(card.currentBalance ?? 0)])));
       const today = new Date();
       const monthKeys = monthKeysFrom(new Date(today.getFullYear(), today.getMonth() - 2, 1), 6);

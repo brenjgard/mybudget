@@ -178,3 +178,25 @@ Browser fixtures are isolated synthetic data; production screens use saved accou
 Removed the obligations panel from Dock and added a compact Home list with card names, due dates, projected payment amounts, an expandable calculation and a View Fleet link. Saved card cycles and their payment months are loaded through the existing repositories and projection helpers; forecast arithmetic is unchanged. Empty, loading, error and retry states are included. Calculation details are collapsed on mobile.
 
 Validation: production build, TypeScript and ESLint passed. The isolated production-browser suite verified the real projection path with a fixture card, expanded calculation details, removal from Dock, and no horizontal overflow at 320px; a 390px screenshot was reviewed. No live account writes were performed.
+
+### Home obligations visual expansion
+
+Expanded the compact obligations list into a Home dashboard section: a navy summary with total projected payments and earliest projected due date, followed by spacious account cards with large amounts, billing cycles, due-date bands and expandable calculation details. Cards stack on mobile and use two columns on desktop. All values remain derived from saved data and existing calculations.
+
+Validation: production build/TypeScript and lint passed. Production-browser checks passed at 320px mobile and 1440px desktop, with screenshots reviewed at 390px and 1440px. Disclosure controls and the Fleet link remain accessible; existing bottom navigation is preserved.
+
+### Statements and card balance check-in on Home
+
+Home now separates current-cycle forecasts from recorded actual statements. Each account shows its saved balance and check-in timestamp, projected payment and due date, and statement totals with paid, outstanding and scheduled amounts using Fleet's shared statement-progress logic. Missing statements are labeled as not entered. Statement management remains in Fleet. Zero-balance cards remain available for check-in.
+
+Check in balance opens a mobile sheet with the expected balance from recorded activity, an input for the provider's actual balance and a difference explanation. Saving updates only the selected payment account's balance/timestamp through a focused authenticated repository update. It does not change checking, mark statements paid, or rewrite other settings. Failed saves retain the draft for retry; successful saves refresh Home and persist to Fleet. No migration is required.
+
+Validation: production build/TypeScript, ESLint, card-payment and repository failure tests passed. The isolated browser suite exercised a partially paid statement, check-in failure/retry, reload and Fleet persistence, and asserted unchanged statement history and checking anchor. Mobile/desktop layout checks passed. No live account data was changed.
+
+## Refined Home obligations summary
+
+Supersedes the expanded account-card layout above. Home uses light white cards and rose/blue/teal summary tiles, compact actionable account rows, and the statuses Statement still to pay, Payment scheduled, Paid, and Projected next cycle. Full statement/payment/calculation details remain in Fleet; card links open the selected account. Check in balances remains available through a card chooser and the existing protected save flow. Existing five-tab mobile navigation is preserved.
+
+Unpaid statement dollars are partitioned: still to pay is outstanding less scheduled coverage, and scheduled coverage is capped at outstanding. Neither counts paid dollars. Partial scheduling can yield two explicitly labeled portions for the same statement. Next due aggregates those portions for the earliest card/date and is labeled as a dated view, not an additional obligation. Actual statements supersede same-cycle forecast rows. Only the latest paid statement per card appears on Home.
+
+Validation: build/TypeScript, lint, summary regression tests (partial/full/over-scheduling, paid/skipped/legacy records and same-cycle forecast suppression), and existing card-payment checks passed. Browser checks cover the 0 still-to-pay / 200 scheduled fixture, check-in failure/retry and persistence, Fleet account links, and responsive widths from 320 to 1440px. Screenshots reviewed; no live account writes.
