@@ -1,4 +1,5 @@
 import { allocatedCardBalance, cardPaymentRecords } from "./card-payments";
+import { calendarDate } from "./calendar-date";
 import type { Buoy } from "./local-repo";
 import { getItemBehavior, getRipplePlanType } from "./ripple-type";
 import { lineItemAppliesToWeek, lineItemOccurrenceDatesForWeek } from "./schedule";
@@ -119,11 +120,7 @@ export function addMonths(year: number, month: number, delta: number) {
 }
 
 export function parseDateOnly(value?: string) {
-  if (!value) return null;
-  const [datePart] = value.split("T");
-  const [year, month, day] = datePart.split("-").map(Number);
-  if (!year || !month || !day) return null;
-  return new Date(year, month - 1, day);
+  return calendarDate(value);
 }
 
 export function getCalendarWeeksForMonth(year: number, month: number): HarborWeek[] {
@@ -156,7 +153,8 @@ export function getCalendarWeeksForRange(startDate: Date, weekCount: number): Ha
 }
 
 export function weekIndexForDate(weeks: HarborWeek[], date: Date) {
-  return weeks.findIndex((week) => date >= week.start && date <= week.end);
+  const day = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  return weeks.findIndex((week) => day >= week.start && day <= week.end);
 }
 
 export function isCardMethod(method: PaymentMethod) {
@@ -182,14 +180,14 @@ export function budgetedForItemWeek(amounts: Record<string, Record<number, numbe
     const applies = item.recurrence
       ? lineItemAppliesToWeek(item, weekIndex, week.start, week.end, month, totalWeeks) || hasWeekAmount(amounts, item, weekIndex)
       : true;
-    return applies ? amountForWeek(amounts, item, weekIndex) || item.defaultAmount : 0;
+    return applies ? amounts[item.id]?.[weekIndex] ?? item.defaultAmount : 0;
   }
   if (planType === "monthly_allowance") {
     const oneTimeDate = parseDateOnly(item.oneTimeDate);
     if (oneTimeDate && (oneTimeDate.getMonth() !== month || (year !== undefined && oneTimeDate.getFullYear() !== year))) return 0;
-    if (item.waveType === "oneTime") return weekIndexForDate([week], oneTimeDate ?? week.start) === 0 ? item.defaultAmount : 0;
+    if (item.waveType === "oneTime") return weekIndexForDate([week], oneTimeDate ?? week.start) === 0 ? amounts[item.id]?.[weekIndex] ?? item.defaultAmount : 0;
     const applies = lineItemAppliesToWeek(item, weekIndex, week.start, week.end, month, totalWeeks) || hasWeekAmount(amounts, item, weekIndex);
-    return applies ? amountForWeek(amounts, item, weekIndex) || item.defaultAmount : 0;
+    return applies ? amounts[item.id]?.[weekIndex] ?? item.defaultAmount : 0;
   }
 
   const applies = lineItemAppliesToWeek(item, weekIndex, week.start, week.end, month, totalWeeks) || hasWeekAmount(amounts, item, weekIndex);
@@ -320,9 +318,8 @@ function cardBudgetForecastByDueDate({
       if (state?.status === "skipped") return;
 
       const stateAmount = Number(state?.actualAmount ?? state?.plannedAmount ?? 0);
-      const planned = stateAmount
-        || budgetedForItemWeek(amounts, item, week, weekIndex, month, weeks.length, week.start.getFullYear())
-        || item.defaultAmount;
+      const planned = state?.actualAmount ?? state?.plannedAmount
+        ?? budgetedForItemWeek(amounts, item, week, weekIndex, month, weeks.length, weeks[0]?.end.getFullYear());
       if (planned <= 0 && stateAmount <= 0) return;
 
       lineItemOccurrenceDatesForWeek(item, weekIndex, week.start, week.end, month, weeks.length).forEach((occurrenceDate) => {
@@ -402,7 +399,7 @@ function buildScheduledCardPaymentEvents({
       if (!card || !purchaseDate) return totals;
       if (!dateIsInMonth(purchaseDate, sourceMonth.year, sourceMonth.month)) return totals;
       const anchorDate = parseDateOnly(card.currentBalanceUpdatedAt);
-      if (anchorDate && purchaseDate < anchorDate) return totals;
+      if (anchorDate && purchaseDate <= anchorDate) return totals;
       const dueDate = cardCycleForDate(card, purchaseDate).dueDate;
       const key = `${card.id}:${isoDate(dueDate)}`;
       return { ...totals, [key]: (totals[key] ?? 0) + entry.amount };
@@ -887,7 +884,7 @@ export function buildCardObligations(settings: AppSettings, monthKey: string, sp
         if (entry.paymentMethod !== card.id) return false;
         const date = parseDateOnly(entry.date);
         if (!date) return false;
-        return date >= anchorDate && cardCycleForDate(card, date).dueDate.getTime() === activeCycle.dueDate.getTime();
+        return date > anchorDate && cardCycleForDate(card, date).dueDate.getTime() === activeCycle.dueDate.getTime();
       })
       .reduce((sum, entry) => sum + entry.amount, 0);
     const dueDate = activeCycle.dueDate;

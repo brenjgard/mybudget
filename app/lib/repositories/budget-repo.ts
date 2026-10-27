@@ -231,16 +231,10 @@ async function deleteCashFlowEvent(eventId: string) {
 }
 
 async function getMonthlyAmounts(monthKey: string): Promise<Record<string, Record<number, number>>> {
-  try {
-    const user = await supabaseBudgetRepo.getUser();
-    if (user) {
-      return await supabaseBudgetRepo.getMonthlyAmounts(monthKey);
-    }
-  } catch {
-    // Fall through to local persistence if auth/Supabase is unavailable.
-  }
-
-  return localBudgetRepo.getMonthlyAmounts(monthKey);
+  // A failed cloud read must not silently replace saved amounts with defaults
+  // or an older browser copy and present a different forecast as current.
+  const user = await supabaseBudgetRepo.getUser();
+  return user ? supabaseBudgetRepo.getMonthlyAmounts(monthKey) : localBudgetRepo.getMonthlyAmounts(monthKey);
 }
 
 async function saveMonthlyAmounts(monthKey: string, amounts: Record<string, Record<number, number>>) {

@@ -1,4 +1,5 @@
 import type { CreditCardAccount, DockItemState, SpendLogEntry } from "./types";
+import { calendarDay } from "./calendar-date";
 
 export function paymentAmount(state: DockItemState) {
   return Number(state.actualAmount ?? state.plannedAmount ?? 0);
@@ -41,18 +42,18 @@ export function cardPaymentRecords(states: DockItemState[]) {
 export function paymentIsAfterSnapshot(state: DockItemState, snapshot?: string) {
   if (!snapshot) return true;
   const scheduledDay = state.pendingUntil?.slice(0, 10);
-  const clearedDay = state.clearedAt?.slice(0, 10);
+  const clearedDay = calendarDay(state.clearedAt);
   // A late check-off must not re-subtract a payment already in the snapshot.
   // An early payment, however, happened by the time it was marked paid.
   const paymentDay = scheduledDay && clearedDay ? (scheduledDay < clearedDay ? scheduledDay : clearedDay) : scheduledDay ?? clearedDay;
   if (!paymentDay) return false;
-  const snapshotDay = snapshot.slice(0, 10);
+  const snapshotDay = calendarDay(snapshot);
   if (paymentDay !== snapshotDay) return paymentDay > snapshotDay;
   return clearedDay === paymentDay && Boolean(state.clearedAt && new Date(state.clearedAt).getTime() > new Date(snapshot).getTime());
 }
 
 export function expectedCardBalance(card: CreditCardAccount, spendLogs: SpendLogEntry[], states: DockItemState[]) {
-  const snapshotDay = card.currentBalanceUpdatedAt?.slice(0, 10) ?? "";
+  const snapshotDay = calendarDay(card.currentBalanceUpdatedAt);
   const spending = spendLogs.filter((entry) => entry.paymentMethod === card.id && entry.date > snapshotDay)
     .reduce((sum, entry) => sum + entry.amount, 0);
   const payments = cardPaymentRecords(states).filter((state) => state.itemId.split(":")[1] === card.id

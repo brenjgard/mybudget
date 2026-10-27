@@ -7,6 +7,7 @@ import { DesktopDockWeek, DockWeekInsights } from "../components/DockWeekDetail"
 import { ActionSheet } from "../components/ActionSheet";
 import { mergeDockEvents, weekProjection, occurrenceKey } from "../lib/dock-view";
 import { FinancialInput } from "../components/FinancialInput";
+import { forecastHistoryStart } from "../lib/forecast-history";
 
 
 import { DisclosureHeader } from "../components/DisclosureHeader";
@@ -123,10 +124,8 @@ export default function DockPage() {
   const visibleOffset = Math.max(0, currentOffset + weekOffset);
   const weeks = useMemo(() => getCalendarWeeksForRange(anchorDate, horizonWeeks + visibleOffset), [anchorDate, horizonWeeks, visibleOffset]);
   const lookbackDate = useMemo(() => {
-    const recent = addDays(anchorDate, -21);
-    const floor = historyFloor ? new Date(`${historyFloor}-01T00:00:00`) : recent;
-    return floor < recent ? floor : recent;
-  }, [anchorDate, historyFloor]);
+    return forecastHistoryStart(anchorDate, settings ?? { creditCards: [] }, historyFloor);
+  }, [anchorDate, historyFloor, settings]);
   const rangeEnd = weeks.at(-1)?.end ?? addDays(anchorDate, 55);
   const monthKeys = useMemo(() => monthKeysForRange(lookbackDate, rangeEnd), [lookbackDate, rangeEnd]);
   const startingChecking = Number(checkingBalance || 0);

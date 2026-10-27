@@ -3,6 +3,7 @@ import { buildProjectedAmounts } from "./schedule";
 import { buildCashEvents, buildDockForecast, buildDockProjection, getCalendarWeeksForMonth, getCalendarWeeksForRange, monthKeyFor, monthPartsFromKey } from "./harbor-domain";
 import { mergeDockEvents } from "./dock-view";
 import { currentDockWeekOffset, pastOccurrenceStates } from "./dock-reconciliation";
+import { forecastHistoryStart } from "./forecast-history";
 import type { AppSettings, DockItemState } from "./types";
 import type { HarborCashEvent, HarborWeekForecast } from "./harbor-domain";
 
@@ -21,9 +22,7 @@ export async function loadHomeCashOutlook(settings: AppSettings, today = new Dat
   const offset = currentDockWeekOffset(anchor, today);
   const weeks = getCalendarWeeksForRange(anchor, offset + 8);
   const end = weeks[weeks.length - 1].end;
-  const recent = new Date(anchor); recent.setDate(recent.getDate() - 21);
-  const floor = oldest ? new Date(oldest + "-01T00:00:00") : recent;
-  const start = floor < recent ? floor : recent;
+  const start = forecastHistoryStart(anchor, settings, oldest);
   const keys: string[] = [];
   for (const d = new Date(start.getFullYear(), start.getMonth(), 1); d <= end; d.setMonth(d.getMonth() + 1)) keys.push(monthKeyFor(d.getFullYear(), d.getMonth()));
   const [records, buoys] = await Promise.all([Promise.all(keys.map(async monthKey => {

@@ -308,7 +308,7 @@ export function lineItemAppliesToWeek(
   if (item.waveType === "oneTime") {
     const oneTimeDate = parseISODateOnly(item.oneTimeDate);
     if (!oneTimeDate) return false;
-    return oneTimeDate >= weekStart && oneTimeDate <= weekEnd;
+    return oneTimeDate.getMonth() === month && oneTimeDate >= weekStart && oneTimeDate <= weekEnd;
   }
 
   if (item.recurrence) {
@@ -338,7 +338,7 @@ export function lineItemOccurrenceDatesForWeek(
 
   if (item.waveType === "oneTime") {
     const oneTimeDate = parseISODateOnly(item.oneTimeDate);
-    return oneTimeDate && oneTimeDate >= weekStart && oneTimeDate <= weekEnd ? [oneTimeDate] : [];
+    return oneTimeDate && oneTimeDate.getMonth() === month && oneTimeDate >= weekStart && oneTimeDate <= weekEnd ? [oneTimeDate] : [];
   }
 
   if (item.recurrence) {
